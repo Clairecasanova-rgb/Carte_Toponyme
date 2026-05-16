@@ -568,26 +568,37 @@
     // Liste des ~360 communes 2A/2B mise en cache localStorage 30j.
     var _communesCorseCache = null;
     function loadCommunesCorse() {
-        if (_communesCorseCache) return Promise.resolve(_communesCorseCache);
-        // Cache localStorage
+        if (_communesCorseCache && _communesCorseCache.length > 0) {
+            return Promise.resolve(_communesCorseCache);
+        }
+        // Cache localStorage (uniquement si non vide, sinon ignore et re-fetch)
         try {
             var stored = localStorage.getItem('pwaCommunesCorse');
             if (stored) {
                 var parsed = JSON.parse(stored);
-                if (parsed.ts && (Date.now() - parsed.ts < 30 * 24 * 3600 * 1000)) {
+                if (parsed.ts && parsed.data && parsed.data.length > 0
+                        && (Date.now() - parsed.ts < 30 * 24 * 3600 * 1000)) {
                     _communesCorseCache = parsed.data;
                     return Promise.resolve(parsed.data);
                 }
             }
         } catch(_e) {}
-        return fetch('https://geo.api.gouv.fr/communes?codeDepartement=2A,2B&fields=code,nom,centre&format=json')
-            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-            .then(function(data) {
-                data.sort(function(a, b) { return a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }); });
-                _communesCorseCache = data;
-                try { localStorage.setItem('pwaCommunesCorse', JSON.stringify({ ts: Date.now(), data: data })); } catch(_e) {}
-                return data;
-            });
+        // L'API geo.api.gouv.fr ne supporte PAS codeDepartement=2A,2B (renvoie []).
+        // On doit fetch les 2 departements separement puis fusionner.
+        var url2A = 'https://geo.api.gouv.fr/communes?codeDepartement=2A&fields=code,nom,centre&format=json';
+        var url2B = 'https://geo.api.gouv.fr/communes?codeDepartement=2B&fields=code,nom,centre&format=json';
+        function fetchDep(u) {
+            return fetch(u)
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status + ' (' + u + ')'); return r.json(); });
+        }
+        return Promise.all([fetchDep(url2A), fetchDep(url2B)]).then(function(parts) {
+            var data = (parts[0] || []).concat(parts[1] || []);
+            if (data.length === 0) throw new Error('Liste vide (API en panne ?)');
+            data.sort(function(a, b) { return a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }); });
+            _communesCorseCache = data;
+            try { localStorage.setItem('pwaCommunesCorse', JSON.stringify({ ts: Date.now(), data: data })); } catch(_e) {}
+            return data;
+        });
     }
 
     function fetchCommuneContour(code) {
