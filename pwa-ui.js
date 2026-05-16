@@ -132,15 +132,25 @@
             console.warn('[PWA Sync] Echec reseau, mise en queue :', method, url);
             // Identifiant lisible (nom du point pour REST, nom de fichier pour Storage)
             var summary = '';
+            var parsedBody = null;
             try {
                 if (isStorageMut) {
                     var fileMatch = /\/object\/[^\/]+\/(.+)$/.exec(url);
                     summary = fileMatch ? '[Photo] ' + decodeURIComponent(fileMatch[1]) : '[Photo]';
                 } else if (init.body && typeof init.body === 'string') {
-                    var parsed = JSON.parse(init.body);
-                    summary = parsed.name || parsed.nom || '';
+                    parsedBody = JSON.parse(init.body);
+                    summary = parsedBody.name || parsedBody.nom || '';
                 }
             } catch(e) {}
+
+            // === Affichage immediat du point offline sur la carte ===
+            // Pour les POST custom_features avec geometry Point, on cree un marker
+            // visible (orange + badge "en attente") meme avant le sync Supabase.
+            // L'utilisateur sait ainsi que son point a ete pris en compte.
+            if (method === 'POST' && /\/rest\/v1\/custom_features\b/.test(url) && parsedBody && parsedBody.geometry) {
+                try { addOfflineFeatureToMap(parsedBody); }
+                catch(e) { console.warn('[PWA] Affichage offline echoue :', e); }
+            }
             var bodySer = await serializeBody(init.body);
             return dbAdd({
                 url: url,
@@ -224,6 +234,16 @@
         } finally {
             _replaying = false;
             updateQueueBadge();
+            // Si la queue est vide ou partiellement videe, nettoyer les markers
+            // offline + recharger les features (recupere les vrais ID Supabase)
+            dbAll().then(function(remaining) {
+                if (remaining.length === 0) {
+                    clearOfflineLayer();
+                    if (typeof window.loadCustomFeatures === 'function') {
+                        setTimeout(function() { window.loadCustomFeatures(); }, 300);
+                    }
+                }
+            });
         }
     }
 
@@ -1206,6 +1226,65 @@
     });
 
 
+    // ===== Affichage des points crees offline =====
+    // Layer dedie pour les points en attente de sync. Visible immediatement
+    // sur la carte avec un style distinctif (orange + bordure pointillee).
+    // Nettoye au retour online apres reload des features Supabase.
+    var _offlineLayer = null;
+
+    function _ensureOfflineLayer() {
+        if (_offlineLayer) return _offlineLayer;
+        var map = findLeafletMap();
+        if (!map) return null;
+        _offlineLayer = L.layerGroup().addTo(map);
+        return _offlineLayer;
+    }
+
+    function addOfflineFeatureToMap(body) {
+        var map = findLeafletMap();
+        var layer = _ensureOfflineLayer();
+        if (!map || !layer) return;
+        var g = body.geometry;
+        var name = body.name || body.nom || 'Point en attente';
+        var labelHtml = '<span style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;">En attente</span> <strong>' + escapeHtml(name) + '</strong>';
+
+        if (g.type === 'Point' && g.coordinates) {
+            var lat = g.coordinates[1], lon = g.coordinates[0];
+            var icon = L.divIcon({
+                className: 'pwa-offline-marker',
+                html: '<div style="width:22px;height:22px;border-radius:50%;background:#f39c12;border:3px solid #fff;box-shadow:0 0 0 2px #f39c12,0 2px 6px rgba(0,0,0,0.4);position:relative;">' +
+                      '<div style="position:absolute;top:-8px;right:-8px;width:14px;height:14px;border-radius:50%;background:#fff;color:#f39c12;font:bold 10px sans-serif;display:flex;align-items:center;justify-content:center;">⏱</div>' +
+                      '</div>',
+                iconSize: [22, 22],
+                iconAnchor: [11, 11]
+            });
+            var marker = L.marker([lat, lon], { icon: icon, zIndexOffset: 9999 }).addTo(layer);
+            marker.bindPopup(labelHtml + '<br><small style="color:#888;">Sera sync au retour reseau</small>');
+        } else if (g.type === 'Polygon' && g.coordinates && g.coordinates[0]) {
+            var latlngs = g.coordinates[0].map(function(c) { return [c[1], c[0]]; });
+            var poly = L.polygon(latlngs, {
+                color: '#f39c12', weight: 3, dashArray: '6,6', fillOpacity: 0.2
+            }).addTo(layer);
+            poly.bindPopup(labelHtml);
+        } else if (g.type === 'LineString' && g.coordinates) {
+            var lls = g.coordinates.map(function(c) { return [c[1], c[0]]; });
+            var line = L.polyline(lls, {
+                color: '#f39c12', weight: 4, dashArray: '6,6'
+            }).addTo(layer);
+            line.bindPopup(labelHtml);
+        }
+        console.log('[PWA] Point offline ajoute a la carte :', name);
+    }
+
+    function clearOfflineLayer() {
+        if (_offlineLayer) {
+            _offlineLayer.clearLayers();
+        }
+    }
+
+    // Au sync reussi, nettoyer la couche offline + recharger les vraies features
+    // Listener QUEUE_SYNCED deja en place plus haut, on l'enrichit.
+
     // ===== Toast notification =====
     function showToast(msg, dur) {
         dur = dur || 4000;
@@ -1426,6 +1505,11 @@
                 if (d.processed > 0) {
                     showToast(d.processed + ' modification(s) synchronisee(s)' +
                               (d.dropped > 0 ? ' (' + d.dropped + ' rejetee(s))' : ''));
+                    // Nettoyer les markers offline + recharger les vraies features
+                    clearOfflineLayer();
+                    if (typeof window.loadCustomFeatures === 'function') {
+                        setTimeout(function() { window.loadCustomFeatures(); }, 300);
+                    }
                 }
             }
         });
