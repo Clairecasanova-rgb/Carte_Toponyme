@@ -753,50 +753,73 @@
     }
 
     // Liste TOUS les TileLayer disponibles via le LayerControl (actifs + inactifs).
-    // Folium attache les couches inactives au layer control. On les retrouve via
-    // l'instance Leaflet du LayerControl (cherche dans window.*).
+    // Folium attache les couches inactives au layer control. On parcourt :
+    // - map._layers (actifs)
+    // - le LayerControl Leaflet (actifs + inactifs)
+    // - aussi les layers refs dans les variables globales Folium (layer_xxx)
     function listAvailableLayers(map) {
         var out = [];
         var seen = new Set();
-        // 1. Layers actifs (via eachLayer)
-        map.eachLayer(function(l) {
-            if (l instanceof L.TileLayer && l._url && l._url.indexOf('{z}') !== -1) {
-                var id = L.stamp(l);
-                if (!seen.has(id)) {
-                    seen.add(id);
-                    out.push({
-                        id: id,
-                        name: layerDisplayName(l),
-                        url: l._url,
-                        active: true
-                    });
+        function tryAdd(lyr, name, active) {
+            if (!lyr || !lyr._url || lyr._url.indexOf('{z}') === -1) return;
+            var id = L.stamp(lyr);
+            if (seen.has(id)) {
+                // Mettre a jour active si on l'avait classe inactif et qu'on le voit actif
+                if (active) {
+                    out.forEach(function(o) { if (o.id === id) o.active = true; });
                 }
+                return;
             }
+            seen.add(id);
+            out.push({
+                id: id,
+                name: name || layerDisplayName(lyr),
+                url: lyr._url,
+                active: !!active
+            });
+        }
+
+        // 1. Tous les layers Leaflet actifs sur la map
+        map.eachLayer(function(l) {
+            if (l instanceof L.TileLayer) tryAdd(l, null, true);
         });
-        // 2. Layers inactifs (via le LayerControl Leaflet)
+
+        // 2. LayerControl Leaflet : cherche les references aux layers (actifs + inactifs)
+        // Folium genere une variable globale type `layer_control_xxx` qui contient
+        // les overlays et basemaps via `.options` ou `._layers`.
+        var controls = [];
         for (var k in window) {
             try {
                 var ctl = window[k];
-                if (ctl && ctl._layers && typeof ctl._layers === 'object' && ctl.options && typeof ctl.options.position === 'string') {
-                    var entries = ctl._layers;
-                    // Array dans certaines versions Leaflet, object dans d'autres
-                    var iter = Array.isArray(entries) ? entries : Object.values(entries);
-                    iter.forEach(function(e) {
-                        var lyr = e.layer;
-                        if (!lyr || !(lyr instanceof L.TileLayer) || !lyr._url) return;
-                        if (lyr._url.indexOf('{z}') === -1) return;
-                        var id = L.stamp(lyr);
-                        if (!seen.has(id)) {
-                            seen.add(id);
-                            out.push({
-                                id: id,
-                                name: e.name || layerDisplayName(lyr),
-                                url: lyr._url,
-                                active: false
-                            });
-                        }
-                    });
-                    break;
+                if (!ctl || typeof ctl !== 'object') continue;
+                // Pattern Folium : variable nommee 'layer_control_*'
+                if (k.indexOf('layer_control') === 0 && ctl._layers) controls.push(ctl);
+                // Sinon : detection generique par presence de _layers + addBaseLayer/addOverlay
+                else if (ctl._layers && (typeof ctl.addBaseLayer === 'function' || typeof ctl.addOverlay === 'function')) controls.push(ctl);
+            } catch(e) {}
+        }
+        controls.forEach(function(ctl) {
+            try {
+                var entries = ctl._layers;
+                if (!entries) return;
+                // Differents formats selon version Leaflet : array ou object
+                var iter = Array.isArray(entries) ? entries : Object.keys(entries).map(function(k) { return entries[k]; });
+                iter.forEach(function(e) {
+                    if (!e || !e.layer) return;
+                    if (!(e.layer instanceof L.TileLayer)) return;
+                    var isActive = map.hasLayer(e.layer);
+                    tryAdd(e.layer, e.name, isActive);
+                });
+            } catch(e) {}
+        });
+
+        // 3. Backup : parcourir aussi les variables globales `tile_layer_*` Folium
+        // (au cas ou un layer ne serait dans aucun control)
+        for (var k2 in window) {
+            try {
+                var v = window[k2];
+                if (v && v instanceof L.TileLayer && k2.indexOf('tile_layer') === 0) {
+                    tryAdd(v, null, map.hasLayer(v));
                 }
             } catch(e) {}
         }
