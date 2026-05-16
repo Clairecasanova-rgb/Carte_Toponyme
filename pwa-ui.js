@@ -587,10 +587,16 @@
     }
 
     // ===== Outil : tracer un rectangle pour la zone a pre-cacher =====
-    // Strategie : si L.Draw.Rectangle dispo, l'utiliser. Sinon implementation
-    // native avec mousedown/mousemove/mouseup (+ touchstart/move/end pour mobile).
+    // Strategie : Leaflet.Draw a un mauvais support tactile sur smartphone
+    // (gele souvent l'UI). On utilise donc TOUJOURS l'implementation native
+    // sur mobile, et Leaflet.Draw uniquement sur desktop si dispo.
+    function _isMobile() {
+        return /Mobi|Android|iPhone|iPad|iPod|Touch/.test(navigator.userAgent)
+            || ('ontouchstart' in window)
+            || (navigator.maxTouchPoints > 0);
+    }
     function activateRectangleDraw(map) {
-        if (typeof L !== 'undefined' && L.Draw && L.Draw.Rectangle) {
+        if (!_isMobile() && typeof L !== 'undefined' && L.Draw && L.Draw.Rectangle) {
             return activateLeafletDrawRect(map);
         }
         return activateNativeRect(map);
@@ -654,90 +660,119 @@
         if (b) b.remove();
     }
 
-    // Implementation native sans Leaflet.draw : capture touch/mouse, desactive
-    // temporairement le drag de la carte, dessine un rectangle overlay.
+    // Implementation native sans Leaflet.Draw : overlay DOM dedie capturant
+    // les events touch/mouse. Sur, isole de Leaflet, fonctionne sur mobile.
     function activateNativeRect(map) {
-        showToast('Touche et glisse pour dessiner un rectangle', 5000);
         var container = map.getContainer();
-        var dragWas = map.dragging.enabled();
-        map.dragging.disable();
-        map.touchZoom.disable();
-        map.doubleClickZoom.disable();
-        var startPoint = null;
-        var rectLayer = null;
+        var containerRect = container.getBoundingClientRect();
+        var startPoint = null;     // point conteneur (x,y)
+        var rectLayer = null;       // L.rectangle pour le preview live
+        var rectDiv = null;         // div pour preview tres rapide (rendu local)
+
+        // 1. Overlay capture : div plein-ecran par-dessus la carte (z-index < bouton annuler)
+        var overlay = document.createElement('div');
+        overlay.id = 'pwaDrawOverlay';
+        overlay.style.cssText =
+            'position:fixed !important;inset:0;z-index:100060;cursor:crosshair;' +
+            'background:transparent;touch-action:none;pointer-events:auto;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(overlay);
+
+        // 2. Bouton annuler (z-index plus haut que l'overlay)
         showDrawCancelButton(function() {
             cleanup();
-            if (rectLayer) map.removeLayer(rectLayer);
             openPrecacheModal();
         });
+        showToast('Touche et glisse sur la carte pour tracer un rectangle', 5000);
 
-        function getPoint(ev) {
-            var rect = container.getBoundingClientRect();
+        function getEventPoint(ev) {
             var x, y;
             if (ev.touches && ev.touches[0]) {
-                x = ev.touches[0].clientX - rect.left;
-                y = ev.touches[0].clientY - rect.top;
+                x = ev.touches[0].clientX;
+                y = ev.touches[0].clientY;
+            } else if (ev.changedTouches && ev.changedTouches[0]) {
+                x = ev.changedTouches[0].clientX;
+                y = ev.changedTouches[0].clientY;
             } else {
-                x = ev.clientX - rect.left;
-                y = ev.clientY - rect.top;
+                x = ev.clientX; y = ev.clientY;
             }
-            return L.point(x, y);
+            return { px: x, py: y };
         }
 
         function onStart(ev) {
             ev.preventDefault();
-            startPoint = getPoint(ev);
+            ev.stopPropagation();
+            var p = getEventPoint(ev);
+            startPoint = p;
+            // Creer un div de preview local (plus rapide que L.rectangle)
+            rectDiv = document.createElement('div');
+            rectDiv.style.cssText =
+                'position:fixed;border:2px solid #8b4513;background:rgba(139,69,19,0.15);' +
+                'pointer-events:none;z-index:100061;';
+            rectDiv.style.left = p.px + 'px';
+            rectDiv.style.top = p.py + 'px';
+            rectDiv.style.width = '0px';
+            rectDiv.style.height = '0px';
+            overlay.appendChild(rectDiv);
         }
         function onMove(ev) {
-            if (!startPoint) return;
+            if (!startPoint || !rectDiv) return;
             ev.preventDefault();
-            var cur = getPoint(ev);
-            var sw = map.containerPointToLatLng(L.point(Math.min(startPoint.x, cur.x), Math.max(startPoint.y, cur.y)));
-            var ne = map.containerPointToLatLng(L.point(Math.max(startPoint.x, cur.x), Math.min(startPoint.y, cur.y)));
-            var b = L.latLngBounds(sw, ne);
-            if (rectLayer) rectLayer.setBounds(b);
-            else {
-                rectLayer = L.rectangle(b, { color: '#8b4513', weight: 2, fillOpacity: 0.15 }).addTo(map);
-            }
+            var p = getEventPoint(ev);
+            var x1 = Math.min(startPoint.px, p.px);
+            var y1 = Math.min(startPoint.py, p.py);
+            var w = Math.abs(p.px - startPoint.px);
+            var h = Math.abs(p.py - startPoint.py);
+            rectDiv.style.left = x1 + 'px';
+            rectDiv.style.top = y1 + 'px';
+            rectDiv.style.width = w + 'px';
+            rectDiv.style.height = h + 'px';
         }
         function onEnd(ev) {
-            if (!startPoint) return;
-            cleanup();
-            if (rectLayer) {
-                var b = rectLayer.getBounds();
-                setTimeout(function() { if (rectLayer) map.removeLayer(rectLayer); }, 200);
-                openPrecacheModal(b);
-            } else {
-                openPrecacheModal();
+            if (!startPoint) { cleanup(); openPrecacheModal(); return; }
+            ev.preventDefault();
+            var p = getEventPoint(ev);
+            // Convertir les coords ecran en latlng via container
+            var crect = container.getBoundingClientRect();
+            var pt1 = L.point(startPoint.px - crect.left, startPoint.py - crect.top);
+            var pt2 = L.point(p.px - crect.left, p.py - crect.top);
+            // Si rectangle trop petit (tap simple), annuler
+            if (Math.abs(pt2.x - pt1.x) < 10 || Math.abs(pt2.y - pt1.y) < 10) {
+                cleanup();
+                showToast('Rectangle trop petit, recommence en glissant');
+                setTimeout(function() { activateNativeRect(map); }, 400);
+                return;
             }
+            var ll1 = map.containerPointToLatLng(pt1);
+            var ll2 = map.containerPointToLatLng(pt2);
+            var b = L.latLngBounds(ll1, ll2);
+            cleanup();
+            openPrecacheModal(b);
         }
         function onEsc(e) {
             if (e.key === 'Escape') {
                 cleanup();
-                if (rectLayer) map.removeLayer(rectLayer);
                 openPrecacheModal();
             }
         }
         function cleanup() {
-            container.removeEventListener('mousedown', onStart);
-            container.removeEventListener('mousemove', onMove);
-            container.removeEventListener('mouseup', onEnd);
-            container.removeEventListener('touchstart', onStart);
-            container.removeEventListener('touchmove', onMove);
-            container.removeEventListener('touchend', onEnd);
+            if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            if (rectLayer) try { map.removeLayer(rectLayer); } catch(e) {}
             document.removeEventListener('keydown', onEsc);
             hideDrawCancelButton();
-            if (dragWas) map.dragging.enable();
-            map.touchZoom.enable();
-            map.doubleClickZoom.enable();
+            startPoint = null;
+            rectLayer = null;
+            rectDiv = null;
         }
 
-        container.addEventListener('mousedown', onStart);
-        container.addEventListener('mousemove', onMove);
-        container.addEventListener('mouseup', onEnd);
-        container.addEventListener('touchstart', onStart, { passive: false });
-        container.addEventListener('touchmove', onMove, { passive: false });
-        container.addEventListener('touchend', onEnd);
+        // 3. Attacher les listeners SUR L'OVERLAY (pas sur la carte)
+        overlay.addEventListener('mousedown', onStart);
+        overlay.addEventListener('mousemove', onMove);
+        overlay.addEventListener('mouseup', onEnd);
+        overlay.addEventListener('touchstart', onStart, { passive: false });
+        overlay.addEventListener('touchmove', onMove, { passive: false });
+        overlay.addEventListener('touchend', onEnd, { passive: false });
+        overlay.addEventListener('touchcancel', onEnd, { passive: false });
         document.addEventListener('keydown', onEsc);
     }
 
