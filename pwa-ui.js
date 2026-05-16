@@ -388,11 +388,29 @@
             var totalTiles = totalT * nLayers + corseTiles;
             var nProjects = getCheckedProjects().length;
             var estMo = (totalTiles * 0.04).toFixed(1);
-            var summary = '<strong>' + totalTiles + ' tuiles</strong> (~' + estMo + ' Mo, ' + nLayers + ' couche(s)';
+
+            // Estimation du temps : ~10 tuiles/sec en 4G avec parallelisme x8 SW
+            // (debit reel limite par le serveur tuile, pas par la bande passante).
+            // Si online : utiliser ~12 tuiles/s ; si reseau lent (Save-Data) : ~5/s.
+            var rate = 10;
+            if (navigator.connection) {
+                if (navigator.connection.saveData) rate = 5;
+                else if (navigator.connection.effectiveType === '4g') rate = 12;
+                else if (navigator.connection.effectiveType === '3g') rate = 4;
+                else if (navigator.connection.effectiveType === '2g') rate = 1;
+            }
+            var seconds = Math.ceil(totalTiles / rate);
+            var timeStr;
+            if (seconds < 60) timeStr = '~' + seconds + ' s';
+            else if (seconds < 3600) timeStr = '~' + Math.ceil(seconds / 60) + ' min';
+            else timeStr = '~' + (seconds / 3600).toFixed(1) + ' h';
+
+            var summary = '<strong>' + totalTiles + ' tuiles</strong> · ~' + estMo + ' Mo · ' + nLayers + ' couche(s)';
             if (includeCorse) summary += ' + contexte Corse';
-            summary += ')';
+            summary += '<br><strong>Duree estimee : ' + timeStr + '</strong>';
+            summary += ' <span style="color:#999;">(' + rate + ' tuiles/s)</span>';
             if (nProjects > 0) {
-                summary += ' + <strong>' + nProjects + ' projet(s)</strong> (data Supabase + photos, taille variable)';
+                summary += '<br>+ <strong>' + nProjects + ' projet(s)</strong> (data + photos, +qq sec a +qq min selon volume)';
             }
             document.getElementById('pwaPEstim').innerHTML = summary;
             m._cache = {
