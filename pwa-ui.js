@@ -371,6 +371,10 @@
         return urls;
     }
 
+    // Bounds approximatifs de la Corse (pour pre-cache automatique du contexte
+    // dezoomé : tu peux toujours voir la Corse complete meme hors-ligne).
+    var CORSE_BOUNDS = { south: 41.30, west: 8.50, north: 43.05, east: 9.65 };
+
     async function startPrecache(map, bounds, zmin, zmax) {
         if (!navigator.serviceWorker.controller) {
             alert('Service Worker non actif (la page doit etre en HTTPS et rechargee).');
@@ -382,9 +386,9 @@
             return;
         }
         var tileUrls = [];
-        for (var z = zmin; z <= zmax; z++) {
+
+        function addTilesForBounds(z, nb, sb, wb, eb) {
             var n = Math.pow(2, z);
-            var nb = bounds.getNorth(), sb = bounds.getSouth(), wb = bounds.getWest(), eb = bounds.getEast();
             var xmin = Math.floor((wb + 180) / 360 * n);
             var xmax = Math.floor((eb + 180) / 360 * n);
             var ymin = Math.floor((1 - Math.log(Math.tan(nb * Math.PI / 180) + 1 / Math.cos(nb * Math.PI / 180)) / Math.PI) / 2 * n);
@@ -392,11 +396,32 @@
             for (var x = Math.min(xmin, xmax); x <= Math.max(xmin, xmax); x++) {
                 for (var y = Math.min(ymin, ymax); y <= Math.max(ymin, ymax); y++) {
                     layerUrls.forEach(function(tpl) {
-                        var u = tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{s}', 'a');
-                        tileUrls.push(u);
+                        // Generer toutes les variantes de subdomain si pattern {s}
+                        if (tpl.indexOf('{s}') !== -1) {
+                            ['a','b','c'].forEach(function(sub) {
+                                tileUrls.push(tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{s}', sub));
+                            });
+                        } else {
+                            tileUrls.push(tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y));
+                        }
                     });
                 }
             }
+        }
+
+        // 1. Zone selectionnee aux zooms demandes
+        var nb = bounds.getNorth(), sb = bounds.getSouth();
+        var wb = bounds.getWest(), eb = bounds.getEast();
+        for (var z = zmin; z <= zmax; z++) {
+            addTilesForBounds(z, nb, sb, wb, eb);
+        }
+
+        // 2. Contexte Corse : zooms 8-10 sur toute l'ile (~50 tuiles, ~3 Mo)
+        // pour ne jamais "perdre" la carte au dezoom hors-ligne. Saute si deja
+        // couvert par la selection ci-dessus.
+        for (var cz = 8; cz <= 10; cz++) {
+            if (cz >= zmin && cz <= zmax) continue;  // deja inclus si overlap
+            addTilesForBounds(cz, CORSE_BOUNDS.north, CORSE_BOUNDS.south, CORSE_BOUNDS.west, CORSE_BOUNDS.east);
         }
 
         var modal = document.getElementById('pwaPrecacheModal');

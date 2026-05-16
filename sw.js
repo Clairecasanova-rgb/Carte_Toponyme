@@ -85,11 +85,27 @@ async function trimCache(cacheName, maxEntries) {
     }
 }
 
+// Helper : detecte si on est offline ET court-circuite le fetch reseau pour
+// eviter les timeouts longs (~30s) en mode offline. Aussi : limite duree fetch
+// a 5s en mode online pour ne pas freezer la UI quand le reseau est tres lent.
+function _isOffline() { return !navigator.onLine; }
+
+function _fetchWithTimeout(request, opts, ms) {
+    opts = opts || {};
+    return Promise.race([
+        fetch(request, opts),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('fetch-timeout')), ms))
+    ]);
+}
+
 // === Stale-While-Revalidate ===
 async function staleWhileRevalidate(request, cacheName) {
     const cache = await caches.open(cacheName);
     const cached = await cache.match(request);
-    const networkPromise = fetch(request).then(resp => {
+    if (_isOffline()) {
+        return cached || new Response('Offline', { status: 503 });
+    }
+    const networkPromise = _fetchWithTimeout(request, {}, 8000).then(resp => {
         if (resp && resp.ok) cache.put(request, resp.clone());
         return resp;
     }).catch(() => null);
@@ -101,9 +117,12 @@ async function cacheFirst(request, cacheName, opts = {}) {
     const cache = await caches.open(cacheName);
     const cached = await cache.match(request);
     if (cached) return cached;
+    // Offline + cache miss : reponse immediate, evite timeout reseau long
+    if (_isOffline()) {
+        return new Response('Offline (tile not cached)', { status: 503 });
+    }
     try {
-        const resp = await fetch(request, opts);
-        // Pour les tuiles cross-origin, on accepte les reponses opaques
+        const resp = await _fetchWithTimeout(request, opts, 8000);
         if (resp) cache.put(request, resp.clone()).catch(() => null);
         return resp;
     } catch (e) {
@@ -114,8 +133,14 @@ async function cacheFirst(request, cacheName, opts = {}) {
 // === Network-First ===
 async function networkFirst(request, cacheName) {
     const cache = await caches.open(cacheName);
+    // Offline : retomber direct sur le cache (pas de tentative reseau)
+    if (_isOffline()) {
+        const cached = await cache.match(request);
+        return cached || new Response(JSON.stringify({ offline: true }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } });
+    }
     try {
-        const resp = await fetch(request);
+        const resp = await _fetchWithTimeout(request, {}, 5000);
         if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => null);
         return resp;
     } catch (e) {
