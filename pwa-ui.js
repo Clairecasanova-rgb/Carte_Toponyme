@@ -1246,12 +1246,10 @@
             m.remove();
             if (onSave) onSave(v);
             else {
-                // Proposer de recharger pour appliquer
-                if (confirm('Nom sauvegarde. Recharger la carte maintenant pour mettre a jour le manifest ?')) {
-                    location.reload();
-                } else {
-                    showToast('Recharge la page pour appliquer le nouveau nom au raccourci.');
-                }
+                // Renommage simple : pas de reload obligatoire, juste sauvegarde.
+                // Le nouveau nom sera applique au prochain chargement de page
+                // (manifest regenere au load).
+                showToast('Nom enregistre. Sera applique a la prochaine installation du raccourci.', 5000);
             }
         };
     }
@@ -1341,10 +1339,20 @@
     });
 
     function openInstallFlow() {
-        // On force d'abord le rename, puis on declenche l'install
+        // Si deja installee, pas la peine de tout faire
+        if (isPwaInstalled()) {
+            showToast('App deja installee sur l\'ecran d\'accueil. Pour renommer, desinstalle d\'abord.', 6000);
+            return;
+        }
         openRenameShortcutModal(function(newName) {
-            // Si nouveau nom sauve : reload pour mettre a jour le manifest AVANT install
             if (newName) {
+                // Verifier si le nom a vraiment change vs le manifest courant
+                var cur = getCurrentCustomName();
+                if (cur.name === newName) {
+                    // Meme nom, pas besoin de reload, install direct
+                    triggerInstall();
+                    return;
+                }
                 showToast('Rechargement pour appliquer le nom...');
                 setTimeout(function() {
                     sessionStorage.setItem('pwaInstallAfterReload', '1');
@@ -1401,15 +1409,44 @@
     }
 
     // Si on a reload pour appliquer le nouveau nom, declencher l'install
+    // avec un polling actif (jusqu'a 10s) pour attendre beforeinstallprompt.
     window.addEventListener('load', function() {
         try {
             if (sessionStorage.getItem('pwaInstallAfterReload') === '1') {
                 sessionStorage.removeItem('pwaInstallAfterReload');
-                // Attendre un peu que beforeinstallprompt arrive
-                setTimeout(function() { triggerInstall(); }, 1500);
+                showToast('Preparation de l\'installation...', 3000);
+                _pollInstallPrompt();
             }
         } catch(_e) {}
     });
+
+    function _pollInstallPrompt() {
+        var maxWait = 10000;
+        var interval = 300;
+        var elapsed = 0;
+        var poll = setInterval(function() {
+            elapsed += interval;
+            if (_deferredInstallPrompt) {
+                clearInterval(poll);
+                triggerInstall();
+            } else if (elapsed >= maxWait) {
+                clearInterval(poll);
+                // Pas de prompt natif disponible apres 10s
+                if (isPwaInstalled()) {
+                    showToast('App deja installee sur l\'ecran d\'accueil.', 5000);
+                } else if (isIosSafari()) {
+                    showIosInstallModal();
+                } else {
+                    // Chrome / Android : afficher instructions manuelles
+                    alert('L\'installation n\'a pas ete proposee automatiquement.\n\n' +
+                          'Pour installer manuellement :\n' +
+                          '1. Ouvre le menu Chrome (3 points en haut a droite)\n' +
+                          '2. Choisis "Installer l\'application" ou "Ajouter a l\'ecran d\'accueil"\n' +
+                          '3. Confirme avec ton nom personnalise');
+                }
+            }
+        }, interval);
+    }
 
 
     // ===== Affichage des points crees offline =====
