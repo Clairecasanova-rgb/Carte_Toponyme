@@ -66,52 +66,109 @@
     }
 
     // ===== Sync queue : wrapper fetch =====
-    // Intercepte les fetch POST/PATCH/DELETE vers Supabase et, si offline ou
-    // si l'appel echoue, met l'operation en queue pour replay au retour reseau.
+    // Intercepte les fetch vers Supabase REST + Storage et, si offline ou si
+    // l'appel echoue, met l'operation en queue pour replay au retour reseau.
+    // Le body peut etre une string (JSON REST), un FormData (upload Storage)
+    // ou un Blob -- on les serialise au mieux pour IndexedDB.
     var _origFetch = window.fetch.bind(window);
+
+    async function serializeBody(body) {
+        if (!body) return { type: 'null', value: null };
+        if (typeof body === 'string') return { type: 'string', value: body };
+        if (body instanceof Blob) {
+            return { type: 'blob', value: body, mime: body.type };
+        }
+        if (typeof FormData !== 'undefined' && body instanceof FormData) {
+            // Serialise FormData en tableau d'entries (blobs inclus)
+            var entries = [];
+            var iter = body.entries();
+            for (var pair = iter.next(); !pair.done; pair = iter.next()) {
+                var key = pair.value[0], val = pair.value[1];
+                if (val instanceof Blob) {
+                    entries.push({ key: key, kind: 'blob', value: val,
+                        filename: val.name || 'file', mime: val.type });
+                } else {
+                    entries.push({ key: key, kind: 'string', value: String(val) });
+                }
+            }
+            return { type: 'formdata', value: entries };
+        }
+        // ArrayBuffer / URLSearchParams / autre : fallback string
+        try { return { type: 'string', value: String(body) }; }
+        catch(e) { return { type: 'null', value: null }; }
+    }
+
+    function deserializeBody(s) {
+        if (!s || s.type === 'null') return null;
+        if (s.type === 'string') return s.value;
+        if (s.type === 'blob') return s.value;
+        if (s.type === 'formdata') {
+            var fd = new FormData();
+            (s.value || []).forEach(function(e) {
+                if (e.kind === 'blob') {
+                    fd.append(e.key, e.value, e.filename);
+                } else {
+                    fd.append(e.key, e.value);
+                }
+            });
+            return fd;
+        }
+        return null;
+    }
+
     window.fetch = function(input, init) {
         init = init || {};
         var url = typeof input === 'string' ? input : (input.url || '');
         var method = (init.method || 'GET').toUpperCase();
-        var isSupabaseMutation = /supabase\.co\/rest\/v1\//.test(url) &&
-                                 (method === 'POST' || method === 'PATCH' || method === 'DELETE');
-        if (!isSupabaseMutation) return _origFetch(input, init);
+        // Intercepter : REST mutations + Storage uploads (PUT/POST)
+        var isRestMut = /supabase\.co\/rest\/v1\//.test(url) &&
+                        (method === 'POST' || method === 'PATCH' || method === 'DELETE');
+        var isStorageMut = /supabase\.co\/storage\/v1\//.test(url) &&
+                           (method === 'POST' || method === 'PUT' || method === 'DELETE');
+        if (!isRestMut && !isStorageMut) return _origFetch(input, init);
 
-        // Si online, tenter le reseau normalement. Sinon, queue direct.
         var attempt = _origFetch(input, init);
-        return attempt.catch(function(err) {
-            // Erreur reseau -> queue
+        return attempt.catch(async function(err) {
             console.warn('[PWA Sync] Echec reseau, mise en queue :', method, url);
-            // Snapshot d'identification (nom du point pour affichage modal)
+            // Identifiant lisible (nom du point pour REST, nom de fichier pour Storage)
             var summary = '';
             try {
-                if (init.body) {
-                    var parsed = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+                if (isStorageMut) {
+                    var fileMatch = /\/object\/[^\/]+\/(.+)$/.exec(url);
+                    summary = fileMatch ? '[Photo] ' + decodeURIComponent(fileMatch[1]) : '[Photo]';
+                } else if (init.body && typeof init.body === 'string') {
+                    var parsed = JSON.parse(init.body);
                     summary = parsed.name || parsed.nom || '';
                 }
             } catch(e) {}
+            var bodySer = await serializeBody(init.body);
             return dbAdd({
                 url: url,
                 method: method,
                 headers: init.headers || {},
-                body: init.body || null,
+                bodySer: bodySer,
                 summary: summary,
+                kind: isStorageMut ? 'storage' : 'rest',
                 createdAt: Date.now(),
                 attempts: 0
             }).then(function() {
                 updateQueueBadge();
-                // Enregistrer un Background Sync (Chrome/Edge/Samsung)
-                // Permet le replay meme app fermee des le retour reseau.
+                ensureQueuePolling();
                 if ('serviceWorker' in navigator && 'SyncManager' in window) {
                     navigator.serviceWorker.ready.then(function(reg) {
                         return reg.sync.register('sync-queue');
-                    }).then(function() {
-                        console.log('[PWA Sync] Background Sync enregistre');
                     }).catch(function(e) {
                         console.warn('[PWA Sync] Background Sync non dispo :', e.message);
                     });
                 }
-                // Faux Response OK pour ne pas casser le flux client
+                // Pour les uploads Storage : retourner une fausse reponse avec
+                // l'URL publique attendue, pour que le code appelant continue.
+                if (isStorageMut && method === 'POST') {
+                    var pathMatch = /\/object\/([^\/]+)\/(.+)$/.exec(url);
+                    var fakeUrl = pathMatch ? url.replace('/object/', '/object/public/') : url;
+                    return new Response(JSON.stringify({ Key: pathMatch ? pathMatch[2] : '', queued: true, offline: true, publicUrl: fakeUrl }),
+                        { status: 202, headers: { 'Content-Type': 'application/json' } });
+                }
                 return new Response(JSON.stringify({ queued: true, offline: true }),
                     { status: 202, headers: { 'Content-Type': 'application/json' } });
             });
@@ -119,30 +176,43 @@
     };
 
     // ===== Replay queue au retour online =====
+    // Trie les items par ordre chronologique pour que les photos (storage POST)
+    // soient envoyees AVANT le feature REST qui les reference. Pas de remap
+    // d'URL pour l'instant : si une photo n'a pas pu etre uploadee au moment
+    // de la creation, elle est uploadee plus tard mais le feature aura quand
+    // meme la URL publique attendue (l'objet n'existait pas pendant le offline,
+    // mais l'URL Supabase Storage est deterministe si on connait le chemin).
     var _replaying = false;
     async function replayQueue() {
         if (_replaying || !navigator.onLine) return;
         _replaying = true;
         try {
             var items = await dbAll();
+            items.sort(function(a, b) {
+                // Storage avant rest pour le meme timestamp (uploads photos en premier)
+                if (Math.abs(a.createdAt - b.createdAt) < 500) {
+                    if (a.kind === 'storage' && b.kind !== 'storage') return -1;
+                    if (b.kind === 'storage' && a.kind !== 'storage') return 1;
+                }
+                return a.createdAt - b.createdAt;
+            });
             console.log('[PWA Sync] Replay : ' + items.length + ' operation(s)');
             for (var i = 0; i < items.length; i++) {
                 var it = items[i];
                 try {
+                    var body = deserializeBody(it.bodySer);
                     var resp = await _origFetch(it.url, {
                         method: it.method,
                         headers: it.headers,
-                        body: it.body
+                        body: body
                     });
-                    if (resp.ok || resp.status === 201) {
+                    if (resp.ok || resp.status === 201 || resp.status === 204) {
                         await dbDel(it.id);
-                        console.log('[PWA Sync] OK :', it.method, it.url);
+                        console.log('[PWA Sync] OK :', it.method, it.url.split('?')[0]);
                     } else if (resp.status >= 500 || resp.status === 429) {
-                        // Erreur serveur : on garde en queue
                         console.warn('[PWA Sync] Server error ' + resp.status + ', reessai plus tard');
                         break;
                     } else {
-                        // Erreur client (400, 403...) : on retire pour eviter loop
                         console.warn('[PWA Sync] Drop (status ' + resp.status + ') :', it.method, it.url);
                         await dbDel(it.id);
                     }
@@ -223,6 +293,7 @@
             '<button id="pwaMPrecache" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Pre-charger la zone visible</button>' +
             '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Voir les modifs en attente</button>' +
             '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer la synchro</button>' +
+            '<button id="pwaMReload" style="background:#3498db;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Actualiser la page</button>' +
             '<button id="pwaMClear" style="background:#e74c3c;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Vider le cache local</button>' +
             '</div>' +
             '</div>';
@@ -254,9 +325,13 @@
             if (!navigator.onLine) { showToast('Pas de connexion reseau'); return; }
             replayQueue().then(function() { showToast('Synchro terminee'); m.remove(); });
         };
+        document.getElementById('pwaMReload').onclick = function() {
+            m.remove();
+            location.reload();
+        };
         document.getElementById('pwaMClear').onclick = function() {
             if (!confirm('Vider tout le cache offline ? Tu auras besoin de reseau au prochain demarrage.')) return;
-            clearCache().then(function() { alert('Cache vide.'); m.remove(); });
+            clearCache().then(function() { showToast('Cache vide.'); m.remove(); });
         };
     }
 
@@ -987,19 +1062,56 @@
         });
     }
 
-    // ===== Bootstrap =====
+    // ===== Bootstrap + auto-sync robuste =====
+    // L'event 'online' ne tire que si la page est OUVERTE pendant la transition
+    // offline -> online. Insuffisant car l'utilisateur ferme souvent l'app
+    // entre la modif offline et le retour reseau. On ajoute donc :
+    //   - replay au load si queue non vide
+    //   - replay au focus (utilisateur revient sur l'onglet)
+    //   - replay au visibilitychange (Android : passe en avant-plan)
+    //   - polling toutes les 30s tant que queue non vide
+    //   - register Background Sync (SW prend le relais meme app fermee)
+    var _queuePollInterval = null;
+    function ensureQueuePolling() {
+        if (_queuePollInterval) return;
+        _queuePollInterval = setInterval(function() {
+            if (!navigator.onLine) return;
+            dbAll().then(function(items) {
+                if (items.length === 0) {
+                    clearInterval(_queuePollInterval);
+                    _queuePollInterval = null;
+                } else {
+                    replayQueue();
+                }
+            });
+        }, 30000);
+    }
+
+    function autoReplay() {
+        if (!navigator.onLine) return;
+        dbAll().then(function(items) {
+            if (items.length > 0) {
+                replayQueue();
+                ensureQueuePolling();
+            }
+        });
+    }
+
     window.addEventListener('load', function() {
         setTimeout(function() {
             updateStatusBadge();
-            // Replay queue au demarrage si online
-            if (navigator.onLine) setTimeout(replayQueue, 2000);
+            autoReplay();
         }, 800);
     });
     window.addEventListener('online', function() {
         updateStatusBadge();
-        setTimeout(replayQueue, 500);
+        setTimeout(autoReplay, 500);
     });
     window.addEventListener('offline', updateStatusBadge);
+    window.addEventListener('focus', autoReplay);
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') autoReplay();
+    });
 
     // Ecouter les messages du SW (Background Sync notifie quand sync est faite)
     if ('serviceWorker' in navigator) {

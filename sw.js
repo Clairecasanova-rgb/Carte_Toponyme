@@ -240,27 +240,51 @@ async function swDbDel(id) {
     });
 }
 
+// Deserialise un body stocke en IndexedDB en l'objet attendu par fetch.
+function swDeserializeBody(s) {
+    if (!s || s.type === 'null') return null;
+    if (s.type === 'string') return s.value;
+    if (s.type === 'blob') return s.value;
+    if (s.type === 'formdata') {
+        const fd = new FormData();
+        (s.value || []).forEach(e => {
+            if (e.kind === 'blob') fd.append(e.key, e.value, e.filename);
+            else fd.append(e.key, e.value);
+        });
+        return fd;
+    }
+    return s.value || null;
+}
+
 async function swReplayQueue() {
-    const items = await swDbAll();
+    let items = await swDbAll();
+    // Tri : storage avant rest pour le meme batch
+    items.sort((a, b) => {
+        if (Math.abs(a.createdAt - b.createdAt) < 500) {
+            if (a.kind === 'storage' && b.kind !== 'storage') return -1;
+            if (b.kind === 'storage' && a.kind !== 'storage') return 1;
+        }
+        return a.createdAt - b.createdAt;
+    });
     console.log('[SW Sync] Replay : ' + items.length + ' op(s)');
     let processed = 0, dropped = 0;
     for (const it of items) {
         try {
+            // Support legacy items (it.body) + new items (it.bodySer)
+            const body = it.bodySer ? swDeserializeBody(it.bodySer) : (it.body || null);
             const resp = await fetch(it.url, {
                 method: it.method,
                 headers: it.headers,
-                body: it.body
+                body: body
             });
             if (resp.ok || resp.status === 201 || resp.status === 204) {
                 await swDbDel(it.id);
                 processed++;
             } else if (resp.status >= 500 || resp.status === 429) {
-                // Server error : keep in queue for next retry
                 console.warn('[SW Sync] Server ' + resp.status + ', will retry');
                 break;
             } else {
-                // Client error (400, 403, 404) : drop to avoid infinite loop
-                console.warn('[SW Sync] Drop op (status ' + resp.status + ') :', it.method, it.url);
+                console.warn('[SW Sync] Drop (status ' + resp.status + ') :', it.method, it.url);
                 await swDbDel(it.id);
                 dropped++;
             }
@@ -269,7 +293,6 @@ async function swReplayQueue() {
             break;
         }
     }
-    // Notify all clients (pages) about completion
     const clients = await self.clients.matchAll();
     const remaining = (await swDbAll()).length;
     clients.forEach(c => c.postMessage({
@@ -344,7 +367,11 @@ self.addEventListener('message', (event) => {
     }
 
     if (data.type === 'PRECACHE_URLS' && Array.isArray(data.urls)) {
-        precacheUrls(data.urls, event.ports[0]);
+        // event.waitUntil garde le SW vivant pendant tout le pre-cache, meme
+        // si l'utilisateur passe l'app en arriere-plan ou ferme l'onglet.
+        // Le browser garantit que le SW ne sera pas tue avant la fin de la
+        // promise. Indispensable pour les gros telechargements (1000+ tuiles).
+        event.waitUntil(precacheUrls(data.urls, event.ports[0]));
     }
 
     if (data.type === 'REPLAY_QUEUE') {
