@@ -371,7 +371,11 @@
             // Section : HORS-LIGNE
             '<div style="' + sectionTitle + '">Donnees hors-ligne</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
-            '<button id="pwaMPrecache" style="' + btnPrimary + '">Pre-charger une zone</button>' +
+            '<button id="pwaMPrecache" style="' + btnPrimary + '">Pre-charger ou ajuster une zone</button>' +
+            '<button id="pwaMShowZone" style="' + btnSecondary + '">' +
+                (isPrecachedZoneVisible() ? 'Masquer la zone hors-ligne sur la carte' :
+                 (getStoredZone() ? 'Afficher la zone hors-ligne sur la carte' : 'Aucune zone hors-ligne enregistree')) +
+            '</button>' +
             '<button id="pwaMCheckCache" style="' + btnSecondary + '">Verifier cache de la zone visible</button>' +
             '<button id="pwaMClear" style="' + btnDanger + '">Vider tout le cache local</button>' +
             '</div>' +
@@ -416,6 +420,18 @@
 
         document.getElementById('pwaMInstall').onclick = function() { m.remove(); openInstallFlow(); };
         document.getElementById('pwaMPrecache').onclick = function() { m.remove(); openPrecacheModal(); };
+        document.getElementById('pwaMShowZone').onclick = function() {
+            m.remove();
+            if (isPrecachedZoneVisible()) {
+                hidePrecachedZoneOnMap();
+                showToast('Zone hors-ligne masquee.');
+            } else if (getStoredZone()) {
+                showPrecachedZoneOnMap(false);
+                showToast('Zone hors-ligne affichee (zoome sur la zone). Re-pre-charge pour l\'ajuster.', 5000);
+            } else {
+                showToast('Aucune zone pre-cachee. Utilise "Pre-charger une zone" d\'abord.');
+            }
+        };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
             if (isAppOffline()) { showToast('Pas de connexion reseau (ou mode test active)'); return; }
@@ -510,14 +526,17 @@
     function openPrecacheModal(customBounds) {
         var map = findLeafletMap();
         if (!map) { alert('Carte non detectee.'); return; }
-        var bounds = customBounds || map.getBounds();
+        var existingZone = getStoredZone();
+        var bounds = customBounds || (existingZone ? L.latLngBounds(existingZone.bounds[0], existingZone.bounds[1]) : map.getBounds());
         var isCustom = !!customBounds;
         var curZoom = map.getZoom();
-        // Defaults plus genereux : couvre zooms vue large + zooms detailles
-        // pour eviter le flou lors du zoom hors-ligne (Leaflet upscale les
-        // tuiles cachees du zoom max au-dela -> pixelise).
-        var minZ = Math.max(curZoom - 2, 10);
-        var maxZ = Math.min(curZoom + 4, 18);
+        // Defaults : si une zone existe deja, repartir de ses zooms ; sinon
+        // couvrir une plage genereuse pour eviter le flou au zoom.
+        var minZ = existingZone ? existingZone.zmin : Math.max(curZoom - 2, 10);
+        var maxZ = existingZone ? existingZone.zmax : Math.min(curZoom + 4, 18);
+        // Afficher la zone existante sur la carte en arriere-plan pendant qu'on
+        // ajuste, pour faciliter l'ajustement visuel.
+        if (existingZone && !customBounds) showPrecachedZoneOnMap(true);
 
         var m = document.createElement('div');
         m.id = 'pwaPrecacheModal';
@@ -1086,6 +1105,60 @@
     // dezoomé : tu peux toujours voir la Corse complete meme hors-ligne).
     var CORSE_BOUNDS = { south: 41.30, west: 8.50, north: 43.05, east: 9.65 };
 
+    // ===== Persistance + visualisation de la zone pre-cachee =====
+    // On stocke les bounds + zoom range dans localStorage par carte.
+    // L'utilisateur peut afficher cette zone sur la carte a tout moment via
+    // le menu, et l'ajuster en redessinant.
+    function _zoneKey() {
+        var fn = (location.pathname.split('/').pop()) || 'carte.html';
+        return 'pwaPrecachedZone_' + fn;
+    }
+    function getStoredZone() {
+        try { return JSON.parse(localStorage.getItem(_zoneKey()) || 'null'); }
+        catch(_e) { return null; }
+    }
+    function setStoredZone(zone) {
+        try { localStorage.setItem(_zoneKey(), JSON.stringify(zone)); } catch(_e) {}
+    }
+    function clearStoredZone() {
+        try { localStorage.removeItem(_zoneKey()); } catch(_e) {}
+    }
+
+    // Layer Leaflet pour afficher la zone precachee
+    var _zoneLayer = null;
+    function showPrecachedZoneOnMap(persistent) {
+        var map = findLeafletMap();
+        if (!map) return false;
+        var zone = getStoredZone();
+        if (!zone || !zone.bounds) {
+            showToast('Aucune zone pre-cachee enregistree pour cette carte.', 4000);
+            return false;
+        }
+        if (_zoneLayer) try { map.removeLayer(_zoneLayer); } catch(_e) {}
+        var bb = L.latLngBounds(zone.bounds[0], zone.bounds[1]);
+        _zoneLayer = L.rectangle(bb, {
+            color: '#8b4513', weight: 3, fillOpacity: 0.10, dashArray: '8,4'
+        }).addTo(map);
+        _zoneLayer.bindPopup(
+            '<strong>Zone hors-ligne</strong><br>' +
+            'Zooms : ' + zone.zmin + ' a ' + zone.zmax + '<br>' +
+            'Couches : ' + (zone.nLayers || '?') + '<br>' +
+            'Pre-cachee le ' + new Date(zone.timestamp || 0).toLocaleDateString('fr-FR') +
+            '<br><br><em>Re-pre-charge pour ajuster la zone.</em>'
+        );
+        // Fit sur la zone si demande
+        if (!persistent) map.fitBounds(bb, { padding: [40, 40] });
+        return true;
+    }
+    function hidePrecachedZoneOnMap() {
+        var map = findLeafletMap();
+        if (_zoneLayer && map) try { map.removeLayer(_zoneLayer); } catch(_e) {}
+        _zoneLayer = null;
+    }
+    function isPrecachedZoneVisible() {
+        return _zoneLayer !== null;
+    }
+
     async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds) {
         if (!navigator.serviceWorker.controller) {
             alert('Service Worker non actif (la page doit etre en HTTPS et rechargee).');
@@ -1182,6 +1255,17 @@
                 modal.querySelector('#pwaPBar').style.width = pct + '%';
                 modal.querySelector('#pwaPLabel').textContent = d.progress + ' / ' + d.total + ' (' + pct + '%)' + (d.errors ? ' — ' + d.errors + ' erreurs' : '');
                 if (d.done) {
+                    // Memoriser la zone precachee pour visualisation ulterieure
+                    setStoredZone({
+                        bounds: [
+                            [bounds.getSouth(), bounds.getWest()],
+                            [bounds.getNorth(), bounds.getEast()]
+                        ],
+                        zmin: zmin, zmax: zmax,
+                        includeCorse: !!includeCorse,
+                        nLayers: layerUrls.length,
+                        timestamp: Date.now()
+                    });
                     setTimeout(function() {
                         if (modal && modal.parentNode) modal.remove();
                         showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
