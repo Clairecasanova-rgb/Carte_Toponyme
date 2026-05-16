@@ -173,6 +173,97 @@ self.addEventListener('fetch', (event) => {
     );
 });
 
+// === Background Sync API ===
+// Permet de rejouer la queue IndexedDB des que le reseau revient, MEME si
+// la page n'est plus ouverte. Le browser declenche l'event 'sync' avec le
+// tag enregistre par le client. Supporte : Chrome Android, Edge, Samsung
+// Internet. Pas supporte : Safari iOS, Firefox (fallback = sync visible).
+const SYNC_DB = 'topo-sync';
+const SYNC_STORE = 'queue';
+
+function swDbOpen() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(SYNC_DB, 1);
+        req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(SYNC_STORE)) {
+                db.createObjectStore(SYNC_STORE, { keyPath: 'id', autoIncrement: true });
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function swDbAll() {
+    const db = await swDbOpen();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(SYNC_STORE, 'readonly');
+        const req = tx.objectStore(SYNC_STORE).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function swDbDel(id) {
+    const db = await swDbOpen();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(SYNC_STORE, 'readwrite');
+        const req = tx.objectStore(SYNC_STORE).delete(id);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function swReplayQueue() {
+    const items = await swDbAll();
+    console.log('[SW Sync] Replay : ' + items.length + ' op(s)');
+    let processed = 0, dropped = 0;
+    for (const it of items) {
+        try {
+            const resp = await fetch(it.url, {
+                method: it.method,
+                headers: it.headers,
+                body: it.body
+            });
+            if (resp.ok || resp.status === 201 || resp.status === 204) {
+                await swDbDel(it.id);
+                processed++;
+            } else if (resp.status >= 500 || resp.status === 429) {
+                // Server error : keep in queue for next retry
+                console.warn('[SW Sync] Server ' + resp.status + ', will retry');
+                break;
+            } else {
+                // Client error (400, 403, 404) : drop to avoid infinite loop
+                console.warn('[SW Sync] Drop op (status ' + resp.status + ') :', it.method, it.url);
+                await swDbDel(it.id);
+                dropped++;
+            }
+        } catch (e) {
+            console.warn('[SW Sync] Network error, stop replay :', e.message);
+            break;
+        }
+    }
+    // Notify all clients (pages) about completion
+    const clients = await self.clients.matchAll();
+    const remaining = (await swDbAll()).length;
+    clients.forEach(c => c.postMessage({
+        type: 'QUEUE_SYNCED',
+        processed: processed,
+        dropped: dropped,
+        remaining: remaining
+    }));
+    return { processed, dropped, remaining };
+}
+
+self.addEventListener('sync', (event) => {
+    if (event.tag === 'sync-queue') {
+        console.log('[SW] Background Sync triggered (sync-queue)');
+        event.waitUntil(swReplayQueue());
+    }
+});
+
+
 // === Pre-cache une liste d'URLs (tuiles + photos) ===
 async function precacheUrls(urls, port) {
     const cache = await caches.open(TILE_CACHE);
@@ -229,5 +320,23 @@ self.addEventListener('message', (event) => {
 
     if (data.type === 'PRECACHE_URLS' && Array.isArray(data.urls)) {
         precacheUrls(data.urls, event.ports[0]);
+    }
+
+    if (data.type === 'REPLAY_QUEUE') {
+        swReplayQueue().then(r => {
+            event.ports[0] && event.ports[0].postMessage(r);
+        });
+    }
+
+    if (data.type === 'GET_QUEUE') {
+        swDbAll().then(items => {
+            event.ports[0] && event.ports[0].postMessage({ items });
+        });
+    }
+
+    if (data.type === 'DELETE_QUEUE_ITEM' && typeof data.id !== 'undefined') {
+        swDbDel(data.id).then(() => {
+            event.ports[0] && event.ports[0].postMessage({ deleted: true });
+        });
     }
 });

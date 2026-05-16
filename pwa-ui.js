@@ -82,15 +82,35 @@
         return attempt.catch(function(err) {
             // Erreur reseau -> queue
             console.warn('[PWA Sync] Echec reseau, mise en queue :', method, url);
+            // Snapshot d'identification (nom du point pour affichage modal)
+            var summary = '';
+            try {
+                if (init.body) {
+                    var parsed = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+                    summary = parsed.name || parsed.nom || '';
+                }
+            } catch(e) {}
             return dbAdd({
                 url: url,
                 method: method,
                 headers: init.headers || {},
                 body: init.body || null,
+                summary: summary,
                 createdAt: Date.now(),
                 attempts: 0
             }).then(function() {
                 updateQueueBadge();
+                // Enregistrer un Background Sync (Chrome/Edge/Samsung)
+                // Permet le replay meme app fermee des le retour reseau.
+                if ('serviceWorker' in navigator && 'SyncManager' in window) {
+                    navigator.serviceWorker.ready.then(function(reg) {
+                        return reg.sync.register('sync-queue');
+                    }).then(function() {
+                        console.log('[PWA Sync] Background Sync enregistre');
+                    }).catch(function(e) {
+                        console.warn('[PWA Sync] Background Sync non dispo :', e.message);
+                    });
+                }
                 // Faux Response OK pour ne pas casser le flux client
                 return new Response(JSON.stringify({ queued: true, offline: true }),
                     { status: 202, headers: { 'Content-Type': 'application/json' } });
@@ -199,6 +219,7 @@
             '<div id="pwaMStats" style="font-size:12px;color:#666;background:#faf7f2;padding:10px 12px;border-radius:6px;margin-bottom:14px;">Chargement des statistiques...</div>' +
             '<div style="display:flex;flex-direction:column;gap:8px;">' +
             '<button id="pwaMPrecache" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">📥 Pre-charger la zone visible</button>' +
+            '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">📝 Voir les modifs en attente</button>' +
             '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">🔄 Forcer la synchro (queue)</button>' +
             '<button id="pwaMClear" style="background:#e74c3c;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">🗑️ Vider le cache local</button>' +
             '</div>' +
@@ -224,9 +245,10 @@
         });
 
         document.getElementById('pwaMPrecache').onclick = function() { m.remove(); openPrecacheModal(); };
+        document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
-            if (!navigator.onLine) { alert('Pas de connexion reseau actuellement.'); return; }
-            replayQueue().then(function() { alert('Synchro terminee'); m.remove(); });
+            if (!navigator.onLine) { showToast('Pas de connexion reseau'); return; }
+            replayQueue().then(function() { showToast('Synchro terminee'); m.remove(); });
         };
         document.getElementById('pwaMClear').onclick = function() {
             if (!confirm('Vider tout le cache offline ? Tu auras besoin de reseau au prochain demarrage.')) return;
@@ -401,6 +423,119 @@
         navigator.serviceWorker.controller.postMessage({ type: 'PRECACHE_URLS', urls: tileUrls }, [ch.port2]);
     }
 
+    // ===== Toast notification =====
+    function showToast(msg, dur) {
+        dur = dur || 4000;
+        var t = document.createElement('div');
+        t.style.cssText =
+            'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
+            'background:rgba(40,40,40,0.92);color:#fff;padding:10px 18px;' +
+            'border-radius:22px;font:600 13px/1.3 Segoe UI,sans-serif;' +
+            'box-shadow:0 4px 14px rgba(0,0,0,0.28);z-index:10600;' +
+            'max-width:80vw;text-align:center;opacity:0;transition:opacity 0.25s;';
+        t.textContent = msg;
+        document.body.appendChild(t);
+        setTimeout(function() { t.style.opacity = '1'; }, 20);
+        setTimeout(function() {
+            t.style.opacity = '0';
+            setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 300);
+        }, dur);
+    }
+
+    // ===== Modal detaille des modifs en attente =====
+    function openQueueDetailsModal() {
+        var existing = document.getElementById('pwaQueueModal');
+        if (existing) { existing.remove(); return; }
+        var m = document.createElement('div');
+        m.id = 'pwaQueueModal';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:10px;max-width:600px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;padding:18px 22px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Modifications en attente</h2>' +
+            '<button id="pwaQClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<div id="pwaQList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;margin-bottom:10px;"></div>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button id="pwaQRefresh" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Rafraichir</button>' +
+            '<button id="pwaQReplay" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Tout synchroniser</button>' +
+            '</div>' +
+            '</div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        document.getElementById('pwaQClose').onclick = function() { m.remove(); };
+        m.onclick = function(e) { if (e.target === m) m.remove(); };
+
+        function refreshList() {
+            dbAll().then(function(items) {
+                var list = document.getElementById('pwaQList');
+                if (!list) return;
+                if (items.length === 0) {
+                    list.innerHTML = '<div style="padding:30px 20px;text-align:center;color:#888;font-size:13px;">Aucune modification en attente</div>';
+                    return;
+                }
+                var methodColor = { POST: '#27ae60', PATCH: '#2980b9', DELETE: '#c0392b' };
+                list.innerHTML = items.map(function(it) {
+                    var ago = humanAge(it.createdAt);
+                    var tableMatch = /\/rest\/v1\/([^?]+)/.exec(it.url);
+                    var table = tableMatch ? tableMatch[1] : '?';
+                    var label = it.summary || ('Operation sur ' + table);
+                    return '<div style="padding:10px 12px;border-bottom:1px solid #f0ebe3;display:flex;align-items:center;gap:10px;">' +
+                        '<span style="background:' + (methodColor[it.method]||'#888') + ';color:#fff;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:700;">' + it.method + '</span>' +
+                        '<div style="flex:1;min-width:0;">' +
+                        '<div style="font-size:13px;color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(label) + '</div>' +
+                        '<div style="font-size:10px;color:#888;">' + escapeHtml(table) + ' • il y a ' + ago + (it.attempts > 0 ? ' • ' + it.attempts + ' tentative(s)' : '') + '</div>' +
+                        '</div>' +
+                        '<button data-del-id="' + it.id + '" title="Supprimer cette modif (sera perdue)" style="background:#fdf0ef;color:#c0392b;border:1px solid #f5c6c0;border-radius:4px;width:28px;height:28px;cursor:pointer;font-size:14px;line-height:1;">×</button>' +
+                        '</div>';
+                }).join('');
+                list.querySelectorAll('button[data-del-id]').forEach(function(btn) {
+                    btn.onclick = function() {
+                        if (!confirm('Supprimer cette modification ? Elle sera perdue.')) return;
+                        dbDel(parseInt(btn.dataset.delId)).then(refreshList).then(updateQueueBadge);
+                    };
+                });
+            });
+        }
+
+        document.getElementById('pwaQRefresh').onclick = refreshList;
+        document.getElementById('pwaQReplay').onclick = function() {
+            if (!navigator.onLine) { showToast('Pas de reseau actuellement'); return; }
+            document.getElementById('pwaQReplay').disabled = true;
+            document.getElementById('pwaQReplay').textContent = 'Synchro...';
+            replayQueue().then(function() {
+                refreshList();
+                showToast('Synchro terminee');
+                var b = document.getElementById('pwaQReplay');
+                if (b) { b.disabled = false; b.textContent = 'Tout synchroniser'; }
+            });
+        };
+
+        refreshList();
+    }
+
+    function humanAge(ts) {
+        var s = Math.round((Date.now() - ts) / 1000);
+        if (s < 60) return s + ' s';
+        var m = Math.round(s / 60);
+        if (m < 60) return m + ' min';
+        var h = Math.round(m / 60);
+        if (h < 48) return h + ' h';
+        return Math.round(h / 24) + ' j';
+    }
+
+    function escapeHtml(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+
     // ===== API wrapper =====
     function getCacheStats() {
         return new Promise(function(resolve) {
@@ -434,6 +569,22 @@
     });
     window.addEventListener('offline', updateStatusBadge);
 
+    // Ecouter les messages du SW (Background Sync notifie quand sync est faite)
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', function(e) {
+            var d = e.data || {};
+            if (d.type === 'QUEUE_SYNCED') {
+                console.log('[PWA Sync] BG terminee : ' + d.processed + ' traitee(s), ' +
+                            d.dropped + ' droppee(s), ' + d.remaining + ' restante(s)');
+                updateQueueBadge();
+                if (d.processed > 0) {
+                    showToast(d.processed + ' modification(s) synchronisee(s)' +
+                              (d.dropped > 0 ? ' (' + d.dropped + ' rejetee(s))' : ''));
+                }
+            }
+        });
+    }
+
     // Expose API
     window._pwa = window._pwa || {};
     window._pwa.replayQueue = replayQueue;
@@ -441,4 +592,6 @@
     window._pwa.clearCache = clearCache;
     window._pwa.stats = getCacheStats;
     window._pwa.openMenu = openOfflineMenu;
+    window._pwa.openQueue = openQueueDetailsModal;
+    window._pwa.toast = showToast;
 })();
