@@ -20,7 +20,7 @@ const API_CACHE = 'api-' + VERSION;
 const PHOTO_CACHE = 'photos-' + VERSION;
 const HTML_CACHE = 'html-' + VERSION;
 
-const MAX_TILES = 4000;   // ~80-200 Mo selon le device
+const MAX_TILES = 100000;   // ~2-5 Go selon le device (limite haute, browser quota prendra le relai)
 const MAX_PHOTOS = 500;
 const API_TTL = 24 * 60 * 60 * 1000;  // 24h
 
