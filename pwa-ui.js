@@ -17,6 +17,31 @@
     var DB_VERSION = 1;
     var STORE = 'queue';
 
+    // ===== Mode test hors-ligne simule =====
+    // Permet de declencher le comportement offline (queue, marker orange, etc.)
+    // sans avoir a couper la 4G. Stocke dans sessionStorage pour survivre aux
+    // rechargements de page du test, mais reset a la fermeture de l'onglet.
+    function isForcedOffline() {
+        try { return sessionStorage.getItem('pwaForceOffline') === '1'; }
+        catch(_e) { return false; }
+    }
+    function setForcedOffline(v) {
+        try {
+            if (v) sessionStorage.setItem('pwaForceOffline', '1');
+            else sessionStorage.removeItem('pwaForceOffline');
+        } catch(_e) {}
+        // Informer le SW pour qu'il traite aussi comme offline
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+                type: 'SET_FORCE_OFFLINE', value: !!v
+            });
+        }
+    }
+    // Etat composite : online seulement si navigator.onLine ET pas forced
+    function isAppOffline() {
+        return isForcedOffline() || !navigator.onLine;
+    }
+
     // ===== IndexedDB helpers =====
     function openDb() {
         return new Promise(function(resolve, reject) {
@@ -127,7 +152,14 @@
                            (method === 'POST' || method === 'PUT' || method === 'DELETE');
         if (!isRestMut && !isStorageMut) return _origFetch(input, init);
 
-        var attempt = _origFetch(input, init);
+        // Si mode test hors-ligne force, simuler un echec reseau direct
+        // (ne PAS lancer le fetch reel, eviter de spammer Supabase)
+        var attempt;
+        if (isForcedOffline()) {
+            attempt = Promise.reject(new Error('forced-offline'));
+        } else {
+            attempt = _origFetch(input, init);
+        }
         return attempt.catch(async function(err) {
             console.warn('[PWA Sync] Echec reseau, mise en queue :', method, url);
             // Identifiant lisible (nom du point pour REST, nom de fichier pour Storage)
@@ -194,7 +226,7 @@
     // mais l'URL Supabase Storage est deterministe si on connait le chemin).
     var _replaying = false;
     async function replayQueue() {
-        if (_replaying || !navigator.onLine) return;
+        if (_replaying || isAppOffline()) return;
         _replaying = true;
         try {
             var items = await dbAll();
@@ -279,12 +311,12 @@
 
     function updateStatusBadge() {
         var b = ensureBadge();
-        var online = navigator.onLine;
+        var online = !isAppOffline();
+        var forced = isForcedOffline();
         b.style.color = online ? '#2e7d32' : '#c62828';
-        var dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
-                  (online ? '#43a047' : '#e53935') + '"></span>';
-        var label = online ? 'En ligne' : 'Hors ligne';
-        // queue count appended async
+        var dotColor = online ? '#43a047' : (forced ? '#9b59b6' : '#e53935');
+        var dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + dotColor + '"></span>';
+        var label = online ? 'En ligne' : (forced ? 'Hors ligne (test)' : 'Hors ligne');
         b.innerHTML = dot + label + ' <span id="pwaQueueCount"></span>';
         updateQueueBadge();
     }
@@ -325,6 +357,9 @@
             '<button id="pwaMPrecache" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Pre-charger la zone visible</button>' +
             '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Voir les modifs en attente</button>' +
             '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer la synchro</button>' +
+            '<button id="pwaMSimOffline" style="background:' + (isForcedOffline() ? '#27ae60' : '#9b59b6') + ';color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">' +
+                (isForcedOffline() ? 'Repasser en ligne (sortie du test)' : 'Simuler hors ligne (mode test)') +
+            '</button>' +
             '<button id="pwaMReload" style="background:#3498db;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Actualiser la page</button>' +
             '<button id="pwaMUpdate" style="background:#9b59b6;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer mise a jour PWA</button>' +
             '<button id="pwaMClear" style="background:#e74c3c;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Vider le cache local</button>' +
@@ -355,8 +390,19 @@
         document.getElementById('pwaMPrecache').onclick = function() { m.remove(); openPrecacheModal(); };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
-            if (!navigator.onLine) { showToast('Pas de connexion reseau'); return; }
+            if (isAppOffline()) { showToast('Pas de connexion reseau (ou mode test active)'); return; }
             replayQueue().then(function() { showToast('Synchro terminee'); m.remove(); });
+        };
+        document.getElementById('pwaMSimOffline').onclick = function() {
+            var newState = !isForcedOffline();
+            setForcedOffline(newState);
+            updateStatusBadge();
+            m.remove();
+            showToast(newState
+                ? 'Mode test hors-ligne ACTIVE. Tes modifs iront en queue.'
+                : 'Mode test desactive. Retour en mode normal.', 5000);
+            // Si on revient en ligne et qu'il y a des items en queue, replay auto
+            if (!newState && navigator.onLine) setTimeout(autoReplay, 500);
         };
         document.getElementById('pwaMReload').onclick = function() {
             m.remove();
@@ -660,119 +706,78 @@
         if (b) b.remove();
     }
 
-    // Implementation native sans Leaflet.Draw : overlay DOM dedie capturant
-    // les events touch/mouse. Sur, isole de Leaflet, fonctionne sur mobile.
+    // Implementation native via events Leaflet (gere mouse + touch en abstraction)
+    // - map.dragging.disable() pour ne pas que la carte se deplace pendant le drag
+    // - L.rectangle live mis a jour a chaque mousemove
+    // - bouton annuler en flottant (z-index plus haut que tout)
     function activateNativeRect(map) {
-        var container = map.getContainer();
-        var containerRect = container.getBoundingClientRect();
-        var startPoint = null;     // point conteneur (x,y)
-        var rectLayer = null;       // L.rectangle pour le preview live
-        var rectDiv = null;         // div pour preview tres rapide (rendu local)
+        var dragWasEnabled = map.dragging.enabled();
+        map.dragging.disable();
+        if (map.touchZoom) map.touchZoom.disable();
+        if (map.doubleClickZoom) map.doubleClickZoom.disable();
 
-        // 1. Overlay capture : div plein-ecran par-dessus la carte (z-index < bouton annuler)
-        var overlay = document.createElement('div');
-        overlay.id = 'pwaDrawOverlay';
-        overlay.style.cssText =
-            'position:fixed !important;inset:0;z-index:100060;cursor:crosshair;' +
-            'background:transparent;touch-action:none;pointer-events:auto;';
-        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(overlay);
+        var startLatLng = null;
+        var rectLayer = null;
 
-        // 2. Bouton annuler (z-index plus haut que l'overlay)
         showDrawCancelButton(function() {
             cleanup();
             openPrecacheModal();
         });
-        showToast('Touche et glisse sur la carte pour tracer un rectangle', 5000);
+        showToast('Touche la carte et glisse pour tracer un rectangle', 5000);
 
-        function getEventPoint(ev) {
-            var x, y;
-            if (ev.touches && ev.touches[0]) {
-                x = ev.touches[0].clientX;
-                y = ev.touches[0].clientY;
-            } else if (ev.changedTouches && ev.changedTouches[0]) {
-                x = ev.changedTouches[0].clientX;
-                y = ev.changedTouches[0].clientY;
-            } else {
-                x = ev.clientX; y = ev.clientY;
-            }
-            return { px: x, py: y };
+        function onDown(e) {
+            startLatLng = e.latlng;
+            if (rectLayer) { try { map.removeLayer(rectLayer); } catch(_e) {} }
+            rectLayer = L.rectangle([e.latlng, e.latlng], {
+                color: '#8b4513', weight: 3, fillOpacity: 0.18, dashArray: '4,4'
+            }).addTo(map);
         }
-
-        function onStart(ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            var p = getEventPoint(ev);
-            startPoint = p;
-            // Creer un div de preview local (plus rapide que L.rectangle)
-            rectDiv = document.createElement('div');
-            rectDiv.style.cssText =
-                'position:fixed;border:2px solid #8b4513;background:rgba(139,69,19,0.15);' +
-                'pointer-events:none;z-index:100061;';
-            rectDiv.style.left = p.px + 'px';
-            rectDiv.style.top = p.py + 'px';
-            rectDiv.style.width = '0px';
-            rectDiv.style.height = '0px';
-            overlay.appendChild(rectDiv);
+        function onMove(e) {
+            if (!startLatLng || !rectLayer) return;
+            rectLayer.setBounds(L.latLngBounds(startLatLng, e.latlng));
         }
-        function onMove(ev) {
-            if (!startPoint || !rectDiv) return;
-            ev.preventDefault();
-            var p = getEventPoint(ev);
-            var x1 = Math.min(startPoint.px, p.px);
-            var y1 = Math.min(startPoint.py, p.py);
-            var w = Math.abs(p.px - startPoint.px);
-            var h = Math.abs(p.py - startPoint.py);
-            rectDiv.style.left = x1 + 'px';
-            rectDiv.style.top = y1 + 'px';
-            rectDiv.style.width = w + 'px';
-            rectDiv.style.height = h + 'px';
-        }
-        function onEnd(ev) {
-            if (!startPoint) { cleanup(); openPrecacheModal(); return; }
-            ev.preventDefault();
-            var p = getEventPoint(ev);
-            // Convertir les coords ecran en latlng via container
-            var crect = container.getBoundingClientRect();
-            var pt1 = L.point(startPoint.px - crect.left, startPoint.py - crect.top);
-            var pt2 = L.point(p.px - crect.left, p.py - crect.top);
-            // Si rectangle trop petit (tap simple), annuler
-            if (Math.abs(pt2.x - pt1.x) < 10 || Math.abs(pt2.y - pt1.y) < 10) {
+        function onUp(e) {
+            if (!startLatLng) { cleanup(); openPrecacheModal(); return; }
+            var b = L.latLngBounds(startLatLng, e.latlng);
+            // Si rectangle minuscule (tap simple sans drag), redemander
+            var nePt = map.latLngToContainerPoint(b.getNorthEast());
+            var swPt = map.latLngToContainerPoint(b.getSouthWest());
+            if (Math.abs(nePt.x - swPt.x) < 15 || Math.abs(nePt.y - swPt.y) < 15) {
                 cleanup();
                 showToast('Rectangle trop petit, recommence en glissant');
-                setTimeout(function() { activateNativeRect(map); }, 400);
+                setTimeout(function() { activateNativeRect(map); }, 500);
                 return;
             }
-            var ll1 = map.containerPointToLatLng(pt1);
-            var ll2 = map.containerPointToLatLng(pt2);
-            var b = L.latLngBounds(ll1, ll2);
             cleanup();
             openPrecacheModal(b);
         }
-        function onEsc(e) {
-            if (e.key === 'Escape') {
+        function onEsc(ev) {
+            if (ev.key === 'Escape') {
                 cleanup();
                 openPrecacheModal();
             }
         }
         function cleanup() {
-            if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
-            if (rectLayer) try { map.removeLayer(rectLayer); } catch(e) {}
+            map.off('mousedown', onDown);
+            map.off('mousemove', onMove);
+            map.off('mouseup', onUp);
             document.removeEventListener('keydown', onEsc);
             hideDrawCancelButton();
-            startPoint = null;
+            if (rectLayer) {
+                // Garder un instant le rectangle visible pour feedback
+                var lyr = rectLayer;
+                setTimeout(function() { try { map.removeLayer(lyr); } catch(_e) {} }, 1200);
+            }
             rectLayer = null;
-            rectDiv = null;
+            startLatLng = null;
+            if (dragWasEnabled) map.dragging.enable();
+            if (map.touchZoom) map.touchZoom.enable();
+            if (map.doubleClickZoom) map.doubleClickZoom.enable();
         }
 
-        // 3. Attacher les listeners SUR L'OVERLAY (pas sur la carte)
-        overlay.addEventListener('mousedown', onStart);
-        overlay.addEventListener('mousemove', onMove);
-        overlay.addEventListener('mouseup', onEnd);
-        overlay.addEventListener('touchstart', onStart, { passive: false });
-        overlay.addEventListener('touchmove', onMove, { passive: false });
-        overlay.addEventListener('touchend', onEnd, { passive: false });
-        overlay.addEventListener('touchcancel', onEnd, { passive: false });
+        map.on('mousedown', onDown);
+        map.on('mousemove', onMove);
+        map.on('mouseup', onUp);
         document.addEventListener('keydown', onEsc);
     }
 
@@ -1139,7 +1144,7 @@
         var b = document.createElement('div');
         b.id = 'pwaInstallBanner';
         b.style.cssText =
-            'position:fixed !important;bottom:14px !important;left:50% !important;' +
+            'position:fixed !important;top:14px !important;left:50% !important;' +
             'transform:translateX(-50%);z-index:100040 !important;' +
             'display:flex;align-items:center;gap:8px;padding:8px 14px;' +
             'background:rgba(40,40,40,0.95);color:#fff;border-radius:24px;' +
@@ -1403,7 +1408,7 @@
 
         document.getElementById('pwaQRefresh').onclick = refreshList;
         document.getElementById('pwaQReplay').onclick = function() {
-            if (!navigator.onLine) { showToast('Pas de reseau actuellement'); return; }
+            if (isAppOffline()) { showToast('Pas de reseau (ou mode test actif)'); return; }
             document.getElementById('pwaQReplay').disabled = true;
             document.getElementById('pwaQReplay').textContent = 'Synchro...';
             replayQueue().then(function() {
