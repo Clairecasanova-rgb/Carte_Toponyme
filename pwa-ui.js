@@ -393,6 +393,57 @@
             if (isAppOffline()) { showToast('Pas de connexion reseau (ou mode test active)'); return; }
             replayQueue().then(function() { showToast('Synchro terminee'); m.remove(); });
         };
+        // Bouton diagnostic : verifier combien de tuiles sont reellement dans
+        // le cache pour la zone visible courante.
+        var diagBtn = document.createElement('button');
+        diagBtn.textContent = 'Verifier cache zone visible';
+        diagBtn.style.cssText = 'background:#16a085;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;width:100%;margin-top:8px;';
+        diagBtn.onclick = function() {
+            var map = findLeafletMap();
+            if (!map) { showToast('Carte non detectee'); return; }
+            var bounds = map.getBounds();
+            var zoom = map.getZoom();
+            var layerUrls = collectTileLayerUrls(map);
+            // Calculer les URLs des tuiles que la carte demande maintenant
+            var n = Math.pow(2, zoom);
+            var nb = bounds.getNorth(), sb = bounds.getSouth(), wb = bounds.getWest(), eb = bounds.getEast();
+            var xmin = Math.floor((wb + 180) / 360 * n);
+            var xmax = Math.floor((eb + 180) / 360 * n);
+            var ymin = Math.floor((1 - Math.log(Math.tan(nb * Math.PI/180) + 1/Math.cos(nb * Math.PI/180))/Math.PI)/2 * n);
+            var ymax = Math.floor((1 - Math.log(Math.tan(sb * Math.PI/180) + 1/Math.cos(sb * Math.PI/180))/Math.PI)/2 * n);
+            var expected = [];
+            for (var x = Math.min(xmin,xmax); x <= Math.max(xmin,xmax); x++) {
+                for (var y = Math.min(ymin,ymax); y <= Math.max(ymin,ymax); y++) {
+                    layerUrls.forEach(function(tpl) {
+                        if (tpl.indexOf('{s}') !== -1) {
+                            ['a','b','c'].forEach(function(s) {
+                                expected.push(tpl.replace('{z}',zoom).replace('{x}',x).replace('{y}',y).replace('{s}',s));
+                            });
+                        } else {
+                            expected.push(tpl.replace('{z}',zoom).replace('{x}',x).replace('{y}',y));
+                        }
+                    });
+                }
+            }
+            // Verifier chacune dans le cache
+            caches.open('tiles-topo-v1').then(function(cache) {
+                Promise.all(expected.map(function(u) { return cache.match(u).then(function(r) { return !!r; }); }))
+                    .then(function(results) {
+                        var hits = results.filter(function(x) { return x; }).length;
+                        alert('Zone visible (zoom ' + zoom + ') : ' + hits + ' / ' + expected.length + ' tuiles dans le cache. ' +
+                              'Couches actives : ' + layerUrls.length + '.\n\n' +
+                              (hits === 0 ? 'Aucune tuile cachee. Pre-charge cette zone d\'abord.' :
+                               hits < expected.length ? 'Certaines tuiles manquent. Re-pre-charger cette zone peut aider.' :
+                               'Toutes les tuiles sont cachees, parfait.'));
+                    });
+            }).catch(function(e) {
+                alert('Erreur lecture cache : ' + e.message);
+            });
+            m.remove();
+        };
+        // Inserer apres SimOffline
+        document.getElementById('pwaMSimOffline').parentNode.insertBefore(diagBtn, document.getElementById('pwaMSimOffline').nextSibling);
+
         document.getElementById('pwaMSimOffline').onclick = function() {
             var newState = !isForcedOffline();
             setForcedOffline(newState);
@@ -1544,6 +1595,12 @@
         setTimeout(function() {
             updateStatusBadge();
             autoReplay();
+            // Resync le flag mode test au SW (s'il a redemarre entre temps)
+            if (isForcedOffline() && navigator.serviceWorker && navigator.serviceWorker.ready) {
+                navigator.serviceWorker.ready.then(function(reg) {
+                    if (reg.active) reg.active.postMessage({ type: 'SET_FORCE_OFFLINE', value: true });
+                });
+            }
         }, 800);
     });
     window.addEventListener('online', function() {

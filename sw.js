@@ -85,8 +85,11 @@ async function trimCache(cacheName, maxEntries) {
     }
 }
 
-// Helper offline : court-circuite le fetch reseau pour eviter timeouts longs
-function _isOffline() { return !navigator.onLine; }
+// Helper offline : court-circuite le fetch reseau pour eviter timeouts longs.
+// Inclut aussi le mode test simule (toggle SET_FORCE_OFFLINE depuis le client)
+// pour que l'utilisateur puisse tester le rendu offline sans couper la 4G.
+let _forcedOffline = false;
+function _isOffline() { return !navigator.onLine || _forcedOffline; }
 
 // Memoize caches.open() : evite d'ouvrir 50x par seconde sur device lent
 const _cacheRefs = {};
@@ -383,5 +386,10 @@ self.addEventListener('message', (event) => {
         swDbDel(data.id).then(() => {
             event.ports[0] && event.ports[0].postMessage({ deleted: true });
         });
+    }
+
+    if (data.type === 'SET_FORCE_OFFLINE') {
+        _forcedOffline = !!data.value;
+        console.log('[SW] Mode test offline =', _forcedOffline);
     }
 });
