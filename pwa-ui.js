@@ -954,7 +954,6 @@
         });
 
         // 3. Backup : parcourir aussi les variables globales `tile_layer_*` Folium
-        // (au cas ou un layer ne serait dans aucun control)
         for (var k2 in window) {
             try {
                 var v = window[k2];
@@ -963,6 +962,73 @@
                 }
             } catch(e) {}
         }
+
+        // 4. Fallback : calques Corse-specifiques connus. Permet de pre-cacher
+        // MEME si le calque n'est pas (encore) dans la map (cas du MNT LiDAR HD
+        // ajoute en differe via setTimeout). On ajoute juste l'URL connue, sans
+        // nettoyer du LayerControl. La detection par URL evite les doublons.
+        var FALLBACK_LAYERS = [
+            {
+                name: 'MNT LiDAR HD (ombrage)',
+                url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png',
+                key: 'lidar-hd-shadow'
+            },
+            {
+                name: 'Plan IGN J+1',
+                url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.MAPS.BDUNI.J1&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png',
+                key: 'plan-ign-j1'
+            },
+            {
+                name: 'Satellite IGN HD',
+                url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg',
+                key: 'orthophotos-actuelles'
+            },
+            {
+                name: 'Photo aerienne 1950-1965',
+                url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS.1950-1965&STYLE=BDORTHOHISTORIQUE&TILEMATRIXSET=PM_0_18&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png',
+                key: 'orthophotos-1950'
+            },
+            {
+                name: 'Photo aerienne 1965-1980',
+                url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS.1965-1980&STYLE=BDORTHOHISTORIQUE&TILEMATRIXSET=PM_3_18&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png',
+                key: 'orthophotos-1965'
+            },
+            {
+                name: 'Cadastre IGN (Parcellaire)',
+                url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=CADASTRALPARCELS.PARCELLAIRE_EXPRESS&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png',
+                key: 'cadastre-ign'
+            },
+            {
+                name: 'OpenStreetMap',
+                url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                key: 'osm'
+            }
+        ];
+        FALLBACK_LAYERS.forEach(function(fb) {
+            // Ne pas ajouter si une URL identique existe deja (dedupe par contenu)
+            var alreadyHas = out.some(function(o) {
+                // Comparaison par segment unique de l'URL (identifie le layer)
+                if (fb.key === 'lidar-hd-shadow') return o.url.indexOf('LIDAR-HD_MNT') >= 0;
+                if (fb.key === 'plan-ign-j1') return o.url.indexOf('BDUNI.J1') >= 0;
+                if (fb.key === 'orthophotos-actuelles') return /ORTHOIMAGERY\.ORTHOPHOTOS&/i.test(o.url) || /ORTHOIMAGERY\.ORTHOPHOTOS$/i.test(o.url.split('&')[0]);
+                if (fb.key === 'orthophotos-1950') return o.url.indexOf('1950-1965') >= 0;
+                if (fb.key === 'orthophotos-1965') return o.url.indexOf('1965-1980') >= 0;
+                if (fb.key === 'cadastre-ign') return o.url.indexOf('CADASTRALPARCELS') >= 0;
+                if (fb.key === 'osm') return o.url.indexOf('openstreetmap.org') >= 0;
+                return false;
+            });
+            if (!alreadyHas) {
+                // Genere un id stable (negatif pour distinguer des stamp Leaflet)
+                var fakeId = -1000 - out.length;
+                out.push({
+                    id: fakeId,
+                    name: fb.name + ' (suggere)',
+                    url: fb.url,
+                    active: false  // Inactif par defaut, l'utilisateur coche pour inclure
+                });
+            }
+        });
+
         return out;
     }
 
