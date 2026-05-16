@@ -520,9 +520,229 @@
         };
     }
 
+    // ===== Helpers : selection par commune (Corse 2A/2B) =====
+    // Source : geo.api.gouv.fr (API publique gratuite, contours officiels IGN).
+    // Liste des ~360 communes 2A/2B mise en cache localStorage 30j.
+    var _communesCorseCache = null;
+    function loadCommunesCorse() {
+        if (_communesCorseCache) return Promise.resolve(_communesCorseCache);
+        // Cache localStorage
+        try {
+            var stored = localStorage.getItem('pwaCommunesCorse');
+            if (stored) {
+                var parsed = JSON.parse(stored);
+                if (parsed.ts && (Date.now() - parsed.ts < 30 * 24 * 3600 * 1000)) {
+                    _communesCorseCache = parsed.data;
+                    return Promise.resolve(parsed.data);
+                }
+            }
+        } catch(_e) {}
+        return fetch('https://geo.api.gouv.fr/communes?codeDepartement=2A,2B&fields=code,nom,centre&format=json')
+            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function(data) {
+                data.sort(function(a, b) { return a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }); });
+                _communesCorseCache = data;
+                try { localStorage.setItem('pwaCommunesCorse', JSON.stringify({ ts: Date.now(), data: data })); } catch(_e) {}
+                return data;
+            });
+    }
+
+    function fetchCommuneContour(code) {
+        return fetch('https://geo.api.gouv.fr/communes/' + code + '?geometry=contour&format=geojson')
+            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    }
+
+    // Normalise un texte pour la recherche (sans accents, lowercase)
+    function _normalize(s) {
+        return (s || '').toString().toLowerCase()
+            .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    }
+
+    // Convertit un GeoJSON Polygon/MultiPolygon en tableau de polygones [lat,lng][][]
+    function geoJsonToLatLngs(geom) {
+        if (!geom) return [];
+        var polys = [];
+        function ringToLatLngs(ring) {
+            return ring.map(function(c) { return [c[1], c[0]]; });  // GeoJSON = [lng,lat]
+        }
+        if (geom.type === 'Polygon') {
+            polys.push(geom.coordinates.map(ringToLatLngs));
+        } else if (geom.type === 'MultiPolygon') {
+            geom.coordinates.forEach(function(poly) {
+                polys.push(poly.map(ringToLatLngs));
+            });
+        }
+        return polys;
+    }
+
+    // Modal de selection des communes corses (recherche + checkboxes).
+    // Au clic sur "Valider", fetch les contours, calcule la bbox combinee,
+    // puis ouvre openPrecacheModal avec ces bounds + memorise les polygones.
+    function openCommuneSelector(map) {
+        var m = document.createElement('div');
+        m.id = 'pwaCommuneModal';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:90vh;display:flex;flex-direction:column;padding:20px 24px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Selection par commune</h2>' +
+            '<button id="pwaCCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<div style="font-size:11px;color:#666;margin-bottom:8px;">Coche une ou plusieurs communes de Corse. La zone pre-cachee couvrira la bounding box englobante.</div>' +
+            '<input id="pwaCSearch" type="search" placeholder="Rechercher (ex: Brando, Bastia, 2B043)..." style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">' +
+            '<div id="pwaCStatus" style="font-size:11px;color:#999;margin-bottom:6px;">Chargement...</div>' +
+            '<div id="pwaCList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:200px;max-height:50vh;font-size:13px;"></div>' +
+            '<div id="pwaCSelected" style="font-size:11px;color:#5a3a1a;margin-top:8px;min-height:18px;"></div>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">' +
+            '<button id="pwaCCancel2" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
+            '<button id="pwaCValidate" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;" disabled>Valider</button>' +
+            '</div>' +
+            '</div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+
+        var selectedCodes = {};
+        var listEl = m.querySelector('#pwaCList');
+        var searchEl = m.querySelector('#pwaCSearch');
+        var statusEl = m.querySelector('#pwaCStatus');
+        var selEl = m.querySelector('#pwaCSelected');
+        var validateBtn = m.querySelector('#pwaCValidate');
+        var allCommunes = [];
+
+        function renderList(filter) {
+            var q = _normalize(filter);
+            var items = q ? allCommunes.filter(function(c) {
+                return _normalize(c.nom).indexOf(q) !== -1 || c.code.toLowerCase().indexOf(q) !== -1;
+            }) : allCommunes;
+            if (items.length === 0) {
+                listEl.innerHTML = '<div style="color:#999;font-style:italic;padding:8px;text-align:center;">Aucun resultat.</div>';
+                return;
+            }
+            var MAX = 200;  // limite affichage pour perf
+            var slice = items.slice(0, MAX);
+            listEl.innerHTML = slice.map(function(c) {
+                var checked = selectedCodes[c.code] ? ' checked' : '';
+                return '<label style="display:flex;align-items:center;gap:8px;padding:4px 6px;cursor:pointer;border-radius:3px;" onmouseover="this.style.background=\'#faf7f2\'" onmouseout="this.style.background=\'transparent\'">' +
+                    '<input type="checkbox" class="pwaCCb" data-code="' + c.code + '"' + checked + '>' +
+                    '<span style="flex:1;">' + escapeHtml(c.nom) + '</span>' +
+                    '<span style="color:#999;font-size:10px;font-family:monospace;">' + c.code + '</span>' +
+                    '</label>';
+            }).join('') + (items.length > MAX
+                ? '<div style="color:#999;font-style:italic;font-size:11px;padding:6px;text-align:center;">... et ' + (items.length - MAX) + ' autres. Affine la recherche.</div>'
+                : '');
+            listEl.querySelectorAll('input.pwaCCb').forEach(function(cb) {
+                cb.onchange = function() {
+                    if (cb.checked) selectedCodes[cb.dataset.code] = true;
+                    else delete selectedCodes[cb.dataset.code];
+                    refreshSelected();
+                };
+            });
+        }
+        function refreshSelected() {
+            var codes = Object.keys(selectedCodes);
+            var n = codes.length;
+            validateBtn.disabled = (n === 0);
+            if (n === 0) {
+                selEl.textContent = '';
+                return;
+            }
+            var names = codes.map(function(code) {
+                var c = allCommunes.find(function(x) { return x.code === code; });
+                return c ? c.nom : code;
+            });
+            selEl.innerHTML = '<strong>' + n + ' commune' + (n > 1 ? 's' : '') + ' :</strong> ' + escapeHtml(names.slice(0, 5).join(', ')) + (n > 5 ? ' + ' + (n - 5) + ' autre(s)' : '');
+        }
+
+        loadCommunesCorse().then(function(data) {
+            allCommunes = data;
+            statusEl.textContent = data.length + ' communes (2A + 2B)';
+            renderList('');
+        }).catch(function(err) {
+            statusEl.style.color = '#c0392b';
+            statusEl.textContent = 'Erreur de chargement : ' + err.message + '. Re-essaye plus tard.';
+            listEl.innerHTML = '<div style="color:#c0392b;padding:8px;text-align:center;">Reseau requis pour charger la liste des communes.</div>';
+        });
+
+        var searchTimer = null;
+        searchEl.oninput = function() {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(function() { renderList(searchEl.value); }, 120);
+        };
+
+        function close() { m.remove(); }
+        m.querySelector('#pwaCCancel').onclick = close;
+        m.querySelector('#pwaCCancel2').onclick = function() {
+            close();
+            openPrecacheModal();
+        };
+        m.onclick = function(e) { if (e.target === m) close(); };
+
+        validateBtn.onclick = function() {
+            var codes = Object.keys(selectedCodes);
+            if (codes.length === 0) return;
+            validateBtn.disabled = true;
+            validateBtn.textContent = 'Chargement contours...';
+            statusEl.style.color = '#5a3a1a';
+            statusEl.textContent = 'Telechargement des contours (' + codes.length + ')...';
+
+            Promise.all(codes.map(function(c) {
+                return fetchCommuneContour(c).catch(function(e) {
+                    console.warn('[PWA] Contour ' + c + ' echoue:', e);
+                    return null;
+                });
+            })).then(function(features) {
+                var valid = features.filter(function(f) { return f && f.geometry; });
+                if (valid.length === 0) {
+                    statusEl.style.color = '#c0392b';
+                    statusEl.textContent = 'Aucun contour recupere. Re-essaye plus tard.';
+                    validateBtn.disabled = false;
+                    validateBtn.textContent = 'Valider';
+                    return;
+                }
+                // Calculer bbox globale
+                var minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+                var allPolys = [];
+                valid.forEach(function(feat) {
+                    var polys = geoJsonToLatLngs(feat.geometry);
+                    allPolys.push({
+                        code: feat.properties && feat.properties.code,
+                        nom: feat.properties && feat.properties.nom,
+                        polygons: polys
+                    });
+                    polys.forEach(function(poly) {
+                        poly.forEach(function(ring) {
+                            ring.forEach(function(pt) {
+                                if (pt[0] < minLat) minLat = pt[0];
+                                if (pt[0] > maxLat) maxLat = pt[0];
+                                if (pt[1] < minLng) minLng = pt[1];
+                                if (pt[1] > maxLng) maxLng = pt[1];
+                            });
+                        });
+                    });
+                });
+                var bounds = L.latLngBounds([minLat, minLng], [maxLat, maxLng]);
+                close();
+                // Memoriser les polygones pour la visualisation
+                _pendingCommunePolys = allPolys;
+                openPrecacheModal(bounds);
+            });
+        };
+    }
+
+    // Polygones temporaires des communes choisies, utilises par openPrecacheModal
+    // pour les afficher sur la carte (et eventuellement les stocker avec la zone).
+    var _pendingCommunePolys = null;
+
     // ===== Modal pre-cache zone =====
     // bounds par defaut = zone visible courante. L'utilisateur peut basculer
-    // sur "Dessiner manuellement" pour tracer un rectangle libre sur la carte.
+    // sur "Dessiner manuellement" pour tracer un rectangle libre sur la carte,
+    // ou sur "Selectionner une commune" pour piocher dans la liste 2A/2B.
     function openPrecacheModal(customBounds) {
         var map = findLeafletMap();
         if (!map) { alert('Carte non detectee.'); return; }
@@ -579,9 +799,15 @@
             '<input type="radio" name="pwaZoneSrc" value="visible"' + (isCustom ? '' : ' checked') + '> Zone visible courante' +
             '</label>' +
             '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">' +
-            '<input type="radio" name="pwaZoneSrc" value="draw"' + (isCustom ? ' checked' : '') + '> Dessiner manuellement un rectangle' +
+            '<input type="radio" name="pwaZoneSrc" value="draw"' + (isCustom && !_pendingCommunePolys ? ' checked' : '') + '> Dessiner manuellement un rectangle' +
             '</label>' +
-            (isCustom ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">Rectangle defini : ' +
+            '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">' +
+            '<input type="radio" name="pwaZoneSrc" value="commune"' + (_pendingCommunePolys ? ' checked' : '') + '> Selectionner une (ou plusieurs) commune(s) de Corse' +
+            '</label>' +
+            (_pendingCommunePolys ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">' + _pendingCommunePolys.length + ' commune(s) selectionnee(s) : ' +
+                escapeHtml(_pendingCommunePolys.map(function(p){return p.nom;}).slice(0,5).join(', ')) +
+                (_pendingCommunePolys.length > 5 ? ' + ' + (_pendingCommunePolys.length - 5) + ' autre(s)' : '') + '</div>' : '') +
+            (isCustom && !_pendingCommunePolys ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">Rectangle defini : ' +
                 bounds.getSouth().toFixed(3) + ',' + bounds.getWest().toFixed(3) + ' - ' +
                 bounds.getNorth().toFixed(3) + ',' + bounds.getEast().toFixed(3) + '</div>' : '') +
             '</div>' +
@@ -698,16 +924,31 @@
         document.getElementById('pwaIncludeCorse').onchange = updateEstim;
         m.querySelectorAll('input.pwaLayerCb').forEach(function(cb) { cb.onchange = updateEstim; });
         m.querySelectorAll('input.pwaProjectCb').forEach(function(cb) { cb.onchange = updateEstim; });
-        document.getElementById('pwaPCancel').onclick = function() { m.remove(); };
-        document.getElementById('pwaPCancel2').onclick = function() { m.remove(); };
-        m.onclick = function(e) { if (e.target === m) m.remove(); };
+        function closeModal() {
+            _pendingCommunePolys = null;  // purge la selection commune en attente
+            m.remove();
+        }
+        document.getElementById('pwaPCancel').onclick = closeModal;
+        document.getElementById('pwaPCancel2').onclick = closeModal;
+        m.onclick = function(e) { if (e.target === m) closeModal(); };
 
-        // Si user choisit "Dessiner", fermer modal et activer outil Leaflet.draw
+        // Si user choisit "Dessiner" / "Commune", fermer modal et activer outil correspondant
         m.querySelectorAll('input[name="pwaZoneSrc"]').forEach(function(r) {
             r.onchange = function() {
                 if (r.value === 'draw' && r.checked) {
+                    _pendingCommunePolys = null;
                     m.remove();
                     activateRectangleDraw(map);
+                } else if (r.value === 'commune' && r.checked) {
+                    m.remove();
+                    openCommuneSelector(map);
+                } else if (r.value === 'visible' && r.checked) {
+                    // Reset selection commune si on revient sur "visible"
+                    if (_pendingCommunePolys) {
+                        _pendingCommunePolys = null;
+                        m.remove();
+                        openPrecacheModal();
+                    }
                 }
             };
         });
@@ -1124,7 +1365,8 @@
         try { localStorage.removeItem(_zoneKey()); } catch(_e) {}
     }
 
-    // Layer Leaflet pour afficher la zone precachee
+    // Layer Leaflet pour afficher la zone precachee (rectangle OU polygones communes).
+    // `_zoneLayer` peut etre un seul layer ou un FeatureGroup si plusieurs polygones.
     var _zoneLayer = null;
     function showPrecachedZoneOnMap(persistent) {
         var map = findLeafletMap();
@@ -1136,16 +1378,36 @@
         }
         if (_zoneLayer) try { map.removeLayer(_zoneLayer); } catch(_e) {}
         var bb = L.latLngBounds(zone.bounds[0], zone.bounds[1]);
-        _zoneLayer = L.rectangle(bb, {
-            color: '#8b4513', weight: 3, fillOpacity: 0.10, dashArray: '8,4'
-        }).addTo(map);
-        _zoneLayer.bindPopup(
+        var hasCommunes = zone.communes && zone.communes.length > 0;
+        var popupHtml =
             '<strong>Zone hors-ligne</strong><br>' +
             'Zooms : ' + zone.zmin + ' a ' + zone.zmax + '<br>' +
             'Couches : ' + (zone.nLayers || '?') + '<br>' +
+            (hasCommunes
+                ? 'Communes : ' + zone.communes.length + ' (' +
+                    zone.communes.slice(0, 3).map(function(c) { return c.nom; }).join(', ') +
+                    (zone.communes.length > 3 ? ' + ' + (zone.communes.length - 3) + ' autre(s)' : '') + ')<br>'
+                : '') +
             'Pre-cachee le ' + new Date(zone.timestamp || 0).toLocaleDateString('fr-FR') +
-            '<br><br><em>Re-pre-charge pour ajuster la zone.</em>'
-        );
+            '<br><br><em>Re-pre-charge pour ajuster la zone.</em>';
+
+        if (hasCommunes) {
+            // Afficher les polygones reels des communes
+            var group = L.featureGroup();
+            zone.communes.forEach(function(c) {
+                (c.polygons || []).forEach(function(poly) {
+                    // poly = [outerRing, hole1, hole2, ...] format Leaflet
+                    L.polygon(poly, {
+                        color: '#8b4513', weight: 2, fillOpacity: 0.10, dashArray: '6,4'
+                    }).bindPopup(popupHtml).addTo(group);
+                });
+            });
+            _zoneLayer = group.addTo(map);
+        } else {
+            _zoneLayer = L.rectangle(bb, {
+                color: '#8b4513', weight: 3, fillOpacity: 0.10, dashArray: '8,4'
+            }).bindPopup(popupHtml).addTo(map);
+        }
         // Fit sur la zone si demande
         if (!persistent) map.fitBounds(bb, { padding: [40, 40] });
         return true;
@@ -1256,7 +1518,7 @@
                 modal.querySelector('#pwaPLabel').textContent = d.progress + ' / ' + d.total + ' (' + pct + '%)' + (d.errors ? ' — ' + d.errors + ' erreurs' : '');
                 if (d.done) {
                     // Memoriser la zone precachee pour visualisation ulterieure
-                    setStoredZone({
+                    var zone = {
                         bounds: [
                             [bounds.getSouth(), bounds.getWest()],
                             [bounds.getNorth(), bounds.getEast()]
@@ -1265,7 +1527,15 @@
                         includeCorse: !!includeCorse,
                         nLayers: layerUrls.length,
                         timestamp: Date.now()
-                    });
+                    };
+                    // Si pre-cache via selection commune, stocker les polygones reels
+                    if (_pendingCommunePolys) {
+                        zone.communes = _pendingCommunePolys.map(function(p) {
+                            return { code: p.code, nom: p.nom, polygons: p.polygons };
+                        });
+                        _pendingCommunePolys = null;
+                    }
+                    setStoredZone(zone);
                     setTimeout(function() {
                         if (modal && modal.parentNode) modal.remove();
                         showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
