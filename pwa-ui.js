@@ -437,7 +437,7 @@
             '<details open style="margin-bottom:14px;border:1px solid #f0ebe3;border-radius:6px;padding:6px 12px;">' +
             '<summary style="font-size:12px;color:#5a3a1a;font-weight:600;cursor:pointer;padding:4px 0;">Couches a pre-cacher (' + allLayers.filter(function(l){return l.active;}).length + '/' + allLayers.length + ' actives)</summary>' +
             '<div style="max-height:140px;overflow-y:auto;margin-top:6px;">' + layersHtml + '</div>' +
-            '<div style="font-size:10px;color:#999;margin-top:4px;">Astuce : active une couche dans la carte avant d\\'ouvrir ce modal pour qu\\'elle apparaisse cochee par defaut.</div>' +
+            '<div style="font-size:10px;color:#999;margin-top:4px;">Astuce : active une couche dans la carte avant d\'ouvrir ce modal pour qu\'elle apparaisse cochee par defaut.</div>' +
             '</details>' +
 
             '<details style="margin-bottom:14px;border:1px solid #f0ebe3;border-radius:6px;padding:6px 12px;">' +
@@ -448,7 +448,7 @@
 
             '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#5a3a1a;margin-bottom:12px;cursor:pointer;">' +
             '<input type="checkbox" id="pwaIncludeCorse" style="margin-top:2px;">' +
-            '<span>Inclure le contexte Corse complet aux zooms 8-10 (~80 tuiles, ~3 Mo). Utile pour dezoomer voir l\\'ile entiere hors-ligne.</span>' +
+            '<span>Inclure le contexte Corse complet aux zooms 8-10 (~80 tuiles, ~3 Mo). Utile pour dezoomer voir l\'ile entiere hors-ligne.</span>' +
             '</label>' +
 
             '<div id="pwaPEstim" style="font-size:11px;color:#666;background:#faf7f2;padding:8px;border-radius:4px;margin-bottom:12px;"></div>' +
@@ -858,7 +858,7 @@
             '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Nom du raccourci</h2>' +
             '<button id="pwaRClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
-            '<p style="margin:0 0 14px;font-size:12px;color:#666;line-height:1.5;">Ce nom apparaitra sous l\\'icone sur ton ecran d\\'accueil apres installation. Max 12 caracteres pour le nom court (au-dela : tronque).</p>' +
+            '<p style="margin:0 0 14px;font-size:12px;color:#666;line-height:1.5;">Ce nom apparaitra sous l\'icone sur ton ecran d\'accueil apres installation. Max 12 caracteres pour le nom court (au-dela : tronque).</p>' +
             '<input type="text" id="pwaRInput" maxlength="60" value="' + escapeHtml(defaultName) + '" placeholder="ex. Brando, Cap Corse..." style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-bottom:6px;">' +
             '<div id="pwaRPreview" style="font-size:11px;color:#888;margin-bottom:14px;"></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
@@ -876,7 +876,7 @@
         function updatePreview() {
             var v = (input.value || '').trim();
             var sn = v.length > 12 ? v.slice(0, 12) : v;
-            preview.innerHTML = 'Apparaitra sur l\\'ecran d\\'accueil : <strong>' + escapeHtml(sn || '(vide)') + '</strong>' +
+            preview.innerHTML = 'Apparaitra sur l\'ecran d\'accueil : <strong>' + escapeHtml(sn || '(vide)') + '</strong>' +
                 (v.length > 12 ? ' <span style="color:#c0392b;">(tronque de "' + escapeHtml(v) + '")</span>' : '');
         }
         input.addEventListener('input', updatePreview);
@@ -951,9 +951,9 @@
             'box-shadow:0 4px 14px rgba(0,0,0,0.25);font:600 12px Segoe UI,sans-serif;' +
             'cursor:pointer;max-width:90vw;';
         b.innerHTML =
-            '<span>Installer cette carte sur l\\'ecran d\\'accueil</span>' +
+            '<span>Installer cette carte sur l\'ecran d\'accueil</span>' +
             '<button id="pwaInstallBtnGo" style="background:#27ae60;color:#fff;border:none;padding:5px 12px;border-radius:14px;font:600 11px Segoe UI,sans-serif;cursor:pointer;">Installer</button>' +
-            '<button id="pwaInstallBtnClose" title="Masquer jusqu\\'au prochain rechargement" style="background:none;color:#bbb;border:none;font-size:18px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>';
+            '<button id="pwaInstallBtnClose" title="Masquer jusqu\'au prochain rechargement" style="background:none;color:#bbb;border:none;font-size:18px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>';
         (document.body || document.documentElement).appendChild(b);
         document.getElementById('pwaInstallBtnGo').onclick = function(e) {
             e.stopPropagation();
@@ -979,7 +979,7 @@
         console.log('[PWA] App installee');
         var b = document.getElementById('pwaInstallBanner');
         if (b) b.remove();
-        showToast('Carte installee sur l\\'ecran d\\'accueil');
+        showToast('Carte installee sur l\'ecran d\'accueil');
     });
 
     // Au load : afficher le bandeau si applicable (iOS Safari OU prompt deja capture)
@@ -1029,7 +1029,7 @@
             // Afficher modal d'instructions iOS
             showIosInstallModal();
         } else {
-            showToast('Utilise le menu navigateur (3 points) : "Ajouter a l\\'ecran d\\'accueil"', 7000);
+            showToast('Utilise le menu navigateur (3 points) : "Ajouter a l\'ecran d\'accueil"', 7000);
         }
     }
 
@@ -1043,7 +1043,7 @@
             '<h2 style="margin:0 0 10px;font-size:16px;color:#5a3a1a;">Installer sur iPhone / iPad</h2>' +
             '<ol style="margin:0 0 14px;padding-left:22px;font-size:13px;line-height:1.7;color:#333;">' +
             '<li>Tape le bouton <strong>Partager</strong> en bas de Safari (carre avec fleche vers le haut)</li>' +
-            '<li>Fais defiler et choisis <strong>Sur l\\'ecran d\\'accueil</strong></li>' +
+            '<li>Fais defiler et choisis <strong>Sur l\'ecran d\'accueil</strong></li>' +
             '<li>Confirme avec <strong>Ajouter</strong> en haut a droite</li>' +
             '</ol>' +
             '<div style="display:flex;justify-content:flex-end;">' +
