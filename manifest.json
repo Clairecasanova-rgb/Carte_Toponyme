@@ -1,0 +1,33 @@
+{
+  "name": "Toponymes Corse",
+  "short_name": "Toponymie",
+  "description": "Cartographie des toponymes cadastraux corses (cadastre napoléonien + actuel + données linguistiques)",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#18191a",
+  "theme_color": "#8b4513",
+  "lang": "fr",
+  "categories": ["education", "maps", "navigation", "utilities"],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
