@@ -706,78 +706,89 @@
         if (b) b.remove();
     }
 
-    // Implementation native via events Leaflet (gere mouse + touch en abstraction)
-    // - map.dragging.disable() pour ne pas que la carte se deplace pendant le drag
-    // - L.rectangle live mis a jour a chaque mousemove
-    // - bouton annuler en flottant (z-index plus haut que tout)
+    // Implementation 2-clics : comme le dessin de polygone Leaflet.Draw.
+    // Tap 1 = premier coin du rectangle, tap 2 = coin oppose.
+    // Bien plus fiable sur mobile que le drag (pas de probleme de touchstart/move).
+    // La carte reste navigable entre les 2 taps (pan/zoom OK).
     function activateNativeRect(map) {
-        var dragWasEnabled = map.dragging.enabled();
-        map.dragging.disable();
-        if (map.touchZoom) map.touchZoom.disable();
-        if (map.doubleClickZoom) map.doubleClickZoom.disable();
-
-        var startLatLng = null;
+        var firstCorner = null;
         var rectLayer = null;
+        var firstMarker = null;
+        var bannerEl = null;
 
         showDrawCancelButton(function() {
             cleanup();
             openPrecacheModal();
         });
-        showToast('Touche la carte et glisse pour tracer un rectangle', 5000);
+        showInfoBanner('Tap 1 sur la carte pour le PREMIER coin du rectangle');
 
-        function onDown(e) {
-            startLatLng = e.latlng;
-            if (rectLayer) { try { map.removeLayer(rectLayer); } catch(_e) {} }
-            rectLayer = L.rectangle([e.latlng, e.latlng], {
-                color: '#8b4513', weight: 3, fillOpacity: 0.18, dashArray: '4,4'
-            }).addTo(map);
+        function showInfoBanner(text) {
+            if (bannerEl && bannerEl.parentNode) bannerEl.parentNode.removeChild(bannerEl);
+            bannerEl = document.createElement('div');
+            bannerEl.id = 'pwaDrawInfo';
+            bannerEl.style.cssText =
+                'position:fixed;top:110px;left:50%;transform:translateX(-50%);' +
+                'z-index:100065;background:rgba(40,40,40,0.95);color:#fff;' +
+                'padding:8px 16px;border-radius:18px;' +
+                'font:600 12px Segoe UI,sans-serif;max-width:88vw;text-align:center;';
+            bannerEl.textContent = text;
+            (document.body || document.documentElement).appendChild(bannerEl);
         }
-        function onMove(e) {
-            if (!startLatLng || !rectLayer) return;
-            rectLayer.setBounds(L.latLngBounds(startLatLng, e.latlng));
-        }
-        function onUp(e) {
-            if (!startLatLng) { cleanup(); openPrecacheModal(); return; }
-            var b = L.latLngBounds(startLatLng, e.latlng);
-            // Si rectangle minuscule (tap simple sans drag), redemander
-            var nePt = map.latLngToContainerPoint(b.getNorthEast());
-            var swPt = map.latLngToContainerPoint(b.getSouthWest());
-            if (Math.abs(nePt.x - swPt.x) < 15 || Math.abs(nePt.y - swPt.y) < 15) {
-                cleanup();
-                showToast('Rectangle trop petit, recommence en glissant');
-                setTimeout(function() { activateNativeRect(map); }, 500);
-                return;
+
+        function onClick(e) {
+            if (!firstCorner) {
+                // Premier clic
+                firstCorner = e.latlng;
+                firstMarker = L.circleMarker(e.latlng, {
+                    radius: 8, color: '#8b4513', fillColor: '#f39c12',
+                    weight: 3, fillOpacity: 1
+                }).addTo(map);
+                showInfoBanner('Tap 2 pour le COIN OPPOSE du rectangle');
+            } else {
+                // Deuxieme clic : valider
+                var b = L.latLngBounds(firstCorner, e.latlng);
+                // Si trop petit, redemander
+                var nePt = map.latLngToContainerPoint(b.getNorthEast());
+                var swPt = map.latLngToContainerPoint(b.getSouthWest());
+                if (Math.abs(nePt.x - swPt.x) < 15 || Math.abs(nePt.y - swPt.y) < 15) {
+                    showInfoBanner('Rectangle trop petit, retape le coin oppose plus loin');
+                    return;
+                }
+                // Tracer le rectangle final visible 1.2s pour feedback
+                rectLayer = L.rectangle(b, {
+                    color: '#8b4513', weight: 3, fillOpacity: 0.18, dashArray: '4,4'
+                }).addTo(map);
+                cleanup(true);
+                openPrecacheModal(b);
             }
-            cleanup();
-            openPrecacheModal(b);
         }
+
         function onEsc(ev) {
             if (ev.key === 'Escape') {
                 cleanup();
                 openPrecacheModal();
             }
         }
-        function cleanup() {
-            map.off('mousedown', onDown);
-            map.off('mousemove', onMove);
-            map.off('mouseup', onUp);
+
+        function cleanup(keepRect) {
+            map.off('click', onClick);
             document.removeEventListener('keydown', onEsc);
             hideDrawCancelButton();
-            if (rectLayer) {
-                // Garder un instant le rectangle visible pour feedback
+            if (bannerEl && bannerEl.parentNode) bannerEl.parentNode.removeChild(bannerEl);
+            if (firstMarker) { try { map.removeLayer(firstMarker); } catch(_e) {} }
+            firstMarker = null;
+            firstCorner = null;
+            if (rectLayer && !keepRect) {
+                try { map.removeLayer(rectLayer); } catch(_e) {}
+                rectLayer = null;
+            } else if (rectLayer && keepRect) {
                 var lyr = rectLayer;
                 setTimeout(function() { try { map.removeLayer(lyr); } catch(_e) {} }, 1200);
+                rectLayer = null;
             }
-            rectLayer = null;
-            startLatLng = null;
-            if (dragWasEnabled) map.dragging.enable();
-            if (map.touchZoom) map.touchZoom.enable();
-            if (map.doubleClickZoom) map.doubleClickZoom.enable();
         }
 
-        map.on('mousedown', onDown);
-        map.on('mousemove', onMove);
-        map.on('mouseup', onUp);
+        map.on('click', onClick);
         document.addEventListener('keydown', onEsc);
     }
 
