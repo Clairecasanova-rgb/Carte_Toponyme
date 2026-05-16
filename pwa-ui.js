@@ -643,10 +643,9 @@
     }
     function activateRectangleDraw(map) {
         if (!map) {
-            showToast('DEBUG : carte Leaflet non detectee', 6000);
+            showToast('Carte Leaflet non detectee.', 5000);
             return;
         }
-        showToast('DEBUG : mode dessin lance (mobile=' + _isMobile() + ')', 4000);
         if (!_isMobile() && typeof L !== 'undefined' && L.Draw && L.Draw.Rectangle) {
             return activateLeafletDrawRect(map);
         }
@@ -741,7 +740,6 @@
         }
 
         function onClick(e) {
-            showToast('DEBUG click recu : ' + e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4), 2500);
             if (!firstCorner) {
                 // Premier clic
                 firstCorner = e.latlng;
@@ -749,23 +747,30 @@
                     radius: 8, color: '#8b4513', fillColor: '#f39c12',
                     weight: 3, fillOpacity: 1
                 }).addTo(map);
-                showInfoBanner('Tap 2 pour le COIN OPPOSE du rectangle');
+                showInfoBanner('Tap 2 ailleurs sur la carte pour le COIN OPPOSE');
+                showToast('Premier coin pose. Tape le coin oppose.', 3000);
             } else {
                 // Deuxieme clic : valider
                 var b = L.latLngBounds(firstCorner, e.latlng);
-                // Si trop petit, redemander
                 var nePt = map.latLngToContainerPoint(b.getNorthEast());
                 var swPt = map.latLngToContainerPoint(b.getSouthWest());
-                if (Math.abs(nePt.x - swPt.x) < 15 || Math.abs(nePt.y - swPt.y) < 15) {
-                    showInfoBanner('Rectangle trop petit, retape le coin oppose plus loin');
+                var dx = Math.abs(nePt.x - swPt.x), dy = Math.abs(nePt.y - swPt.y);
+                if (dx < 5 || dy < 5) {
+                    // Rectangle minuscule : probable double-tap accidentel
+                    showInfoBanner('Trop petit (' + dx + 'x' + dy + 'px). Tape plus loin.');
+                    showToast('Rectangle trop petit, tape plus loin', 2500);
                     return;
                 }
-                // Tracer le rectangle final visible 1.2s pour feedback
+                // Tracer le rectangle final
                 rectLayer = L.rectangle(b, {
-                    color: '#8b4513', weight: 3, fillOpacity: 0.18, dashArray: '4,4'
+                    color: '#8b4513', weight: 4, fillOpacity: 0.25, dashArray: '6,4'
                 }).addTo(map);
-                cleanup(true);
-                openPrecacheModal(b);
+                showToast('Rectangle OK (' + dx + 'x' + dy + 'px), ouverture du modal...', 1500);
+                // Delai pour que l'utilisateur voie le rectangle avant le modal
+                setTimeout(function() {
+                    cleanup(true);
+                    openPrecacheModal(b);
+                }, 800);
             }
         }
 
