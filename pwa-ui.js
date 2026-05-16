@@ -218,6 +218,8 @@
             '</div>' +
             '<div id="pwaMStats" style="font-size:12px;color:#666;background:#faf7f2;padding:10px 12px;border-radius:6px;margin-bottom:14px;">Chargement des statistiques...</div>' +
             '<div style="display:flex;flex-direction:column;gap:8px;">' +
+            '<button id="pwaMInstall" style="background:#27ae60;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Installer comme raccourci</button>' +
+            '<button id="pwaMRename" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Renommer le raccourci</button>' +
             '<button id="pwaMPrecache" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Pre-charger la zone visible</button>' +
             '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Voir les modifs en attente</button>' +
             '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer la synchro</button>' +
@@ -244,6 +246,8 @@
                 'Cartes HTML : ' + s.html;
         });
 
+        document.getElementById('pwaMInstall').onclick = function() { m.remove(); openInstallFlow(); };
+        document.getElementById('pwaMRename').onclick = function() { m.remove(); openRenameShortcutModal(); };
         document.getElementById('pwaMPrecache').onclick = function() { m.remove(); openPrecacheModal(); };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
@@ -714,6 +718,143 @@
         navigator.serviceWorker.controller.postMessage({ type: 'PRECACHE_URLS', urls: allUrls }, [ch.port2]);
     }
 
+    // ===== Personnalisation nom du raccourci PWA =====
+    // Le nom du raccourci vient du manifest (genere dynamiquement au chargement
+    // depuis localStorage 'pwaCustomName_<fichier>'). Pour personnaliser, on
+    // ouvre une modal qui prend une saisie utilisateur, on sauvegarde et on
+    // recharge la page (le manifest est figé au load).
+
+    function getCurrentCustomName() {
+        var fn = (location.pathname.split('/').pop()) || 'carte.html';
+        var key = 'pwaCustomName_' + fn;
+        try { return { key: key, name: localStorage.getItem(key) || '' }; }
+        catch(_e) { return { key: key, name: '' }; }
+    }
+
+    function openRenameShortcutModal(onSave) {
+        var existing = document.getElementById('pwaRenameModal');
+        if (existing) { existing.remove(); return; }
+        var cur = getCurrentCustomName();
+        var defaultName = cur.name || (document.title || '').trim().replace(/^(Folium\s+Map|carte_polygones_[\w-]+)\s*[-_]?\s*/i, '');
+
+        var m = document.createElement('div');
+        m.id = 'pwaRenameModal';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:10px;max-width:460px;width:100%;padding:20px 24px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Nom du raccourci</h2>' +
+            '<button id="pwaRClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<p style="margin:0 0 14px;font-size:12px;color:#666;line-height:1.5;">Ce nom apparaitra sous l\\'icone sur ton ecran d\\'accueil apres installation. Max 12 caracteres pour le nom court (au-dela : tronque).</p>' +
+            '<input type="text" id="pwaRInput" maxlength="60" value="' + escapeHtml(defaultName) + '" placeholder="ex. Brando, Cap Corse..." style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-bottom:6px;">' +
+            '<div id="pwaRPreview" style="font-size:11px;color:#888;margin-bottom:14px;"></div>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button id="pwaRReset" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Defaut</button>' +
+            '<button id="pwaRCancel" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
+            '<button id="pwaRSave" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Sauvegarder</button>' +
+            '</div>' +
+            '</div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        var input = document.getElementById('pwaRInput');
+        var preview = document.getElementById('pwaRPreview');
+        function updatePreview() {
+            var v = (input.value || '').trim();
+            var sn = v.length > 12 ? v.slice(0, 12) : v;
+            preview.innerHTML = 'Apparaitra sur l\\'ecran d\\'accueil : <strong>' + escapeHtml(sn || '(vide)') + '</strong>' +
+                (v.length > 12 ? ' <span style="color:#c0392b;">(tronque de "' + escapeHtml(v) + '")</span>' : '');
+        }
+        input.addEventListener('input', updatePreview);
+        setTimeout(function() { input.focus(); input.select(); }, 50);
+        updatePreview();
+
+        document.getElementById('pwaRClose').onclick = function() { m.remove(); };
+        document.getElementById('pwaRCancel').onclick = function() { m.remove(); };
+        m.onclick = function(e) { if (e.target === m) m.remove(); };
+
+        document.getElementById('pwaRReset').onclick = function() {
+            try { localStorage.removeItem(cur.key); } catch(_e) {}
+            showToast('Nom par defaut restaure. Recharge pour appliquer.');
+            m.remove();
+            if (onSave) onSave(null);
+        };
+        document.getElementById('pwaRSave').onclick = function() {
+            var v = (input.value || '').trim();
+            if (!v) { alert('Saisis un nom non vide.'); return; }
+            try { localStorage.setItem(cur.key, v); } catch(_e) { alert('Echec sauvegarde locale.'); return; }
+            m.remove();
+            if (onSave) onSave(v);
+            else {
+                // Proposer de recharger pour appliquer
+                if (confirm('Nom sauvegarde. Recharger la carte maintenant pour mettre a jour le manifest ?')) {
+                    location.reload();
+                } else {
+                    showToast('Recharge la page pour appliquer le nouveau nom au raccourci.');
+                }
+            }
+        };
+    }
+
+    // ===== Intercepteur d'installation (Chrome/Edge/Samsung) =====
+    // Quand le navigateur detecte que l'app est installable, il declenche
+    // 'beforeinstallprompt'. On capture le prompt et on l'utilise plus tard
+    // depuis notre bouton "Installer".
+    var _deferredInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        _deferredInstallPrompt = e;
+        console.log('[PWA] App installable (beforeinstallprompt capture)');
+    });
+
+    function openInstallFlow() {
+        // On force d'abord le rename, puis on declenche l'install
+        openRenameShortcutModal(function(newName) {
+            // Si nouveau nom sauve : reload pour mettre a jour le manifest AVANT install
+            if (newName) {
+                showToast('Rechargement pour appliquer le nom...');
+                setTimeout(function() {
+                    sessionStorage.setItem('pwaInstallAfterReload', '1');
+                    location.reload();
+                }, 600);
+                return;
+            }
+            // Pas de changement de nom -> declencher l'install direct
+            triggerInstall();
+        });
+    }
+
+    function triggerInstall() {
+        if (_deferredInstallPrompt) {
+            _deferredInstallPrompt.prompt();
+            _deferredInstallPrompt.userChoice.then(function(choice) {
+                console.log('[PWA] Install choice :', choice.outcome);
+                showToast(choice.outcome === 'accepted' ? 'Raccourci installe' : 'Installation annulee');
+                _deferredInstallPrompt = null;
+            });
+        } else {
+            // Pas de prompt natif (iOS Safari, ou deja installe)
+            showToast('Utilise le menu navigateur : "Ajouter a l\\'ecran d\\'accueil"', 6000);
+        }
+    }
+
+    // Si on a reload pour appliquer le nouveau nom, declencher l'install
+    window.addEventListener('load', function() {
+        try {
+            if (sessionStorage.getItem('pwaInstallAfterReload') === '1') {
+                sessionStorage.removeItem('pwaInstallAfterReload');
+                // Attendre un peu que beforeinstallprompt arrive
+                setTimeout(function() { triggerInstall(); }, 1500);
+            }
+        } catch(_e) {}
+    });
+
+
     // ===== Toast notification =====
     function showToast(msg, dur) {
         dur = dur || 4000;
@@ -884,5 +1025,7 @@
     window._pwa.stats = getCacheStats;
     window._pwa.openMenu = openOfflineMenu;
     window._pwa.openQueue = openQueueDetailsModal;
+    window._pwa.rename = openRenameShortcutModal;
+    window._pwa.install = openInstallFlow;
     window._pwa.toast = showToast;
 })();
