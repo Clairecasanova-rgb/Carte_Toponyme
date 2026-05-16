@@ -257,10 +257,13 @@
     }
 
     // ===== Modal pre-cache zone =====
-    function openPrecacheModal() {
+    // bounds par defaut = zone visible courante. L'utilisateur peut basculer
+    // sur "Dessiner manuellement" pour tracer un rectangle libre sur la carte.
+    function openPrecacheModal(customBounds) {
         var map = findLeafletMap();
         if (!map) { alert('Carte non detectee.'); return; }
-        var bounds = map.getBounds();
+        var bounds = customBounds || map.getBounds();
+        var isCustom = !!customBounds;
         var curZoom = map.getZoom();
         var minZ = Math.max(curZoom - 1, 10);
         var maxZ = Math.min(curZoom + 2, 18);
@@ -272,17 +275,69 @@
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
 
+        var allLayers = listAvailableLayers(map);
+        var allProjects = listAvailableProjects();
+
+        var layersHtml = allLayers.length === 0
+            ? '<div style="font-size:11px;color:#999;font-style:italic;">Aucune couche detectee</div>'
+            : allLayers.map(function(L) {
+                return '<label style="display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:12px;">' +
+                    '<input type="checkbox" class="pwaLayerCb" data-id="' + L.id + '"' + (L.active ? ' checked' : '') + '>' +
+                    '<span>' + escapeHtml(L.name) + (L.active ? '' : ' <span style="color:#aaa;font-size:10px;">(inactif)</span>') + '</span>' +
+                    '</label>';
+            }).join('');
+
+        var projectsHtml = allProjects.length === 0
+            ? '<div style="font-size:11px;color:#999;font-style:italic;">Aucun projet detecte</div>'
+            : allProjects.map(function(P) {
+                return '<label style="display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:12px;">' +
+                    '<input type="checkbox" class="pwaProjectCb" data-id="' + P.id + '"' + (P.current ? ' checked' : '') + '>' +
+                    '<span>' + escapeHtml(P.nom) + (P.current ? ' <span style="color:#16a085;font-size:10px;">(courant)</span>' : '') + '</span>' +
+                    '</label>';
+            }).join('');
+
         m.innerHTML =
-            '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;padding:20px 24px;">' +
+            '<div style="background:#fff;border-radius:10px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto;padding:20px 24px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Pre-charger la zone visible</h2>' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Pre-charger une zone</h2>' +
             '<button id="pwaPCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
-            '<p style="margin:0 0 12px;font-size:12px;color:#666;">La zone visible courante de la carte sera telechargee pour acces hors-ligne.</p>' +
-            '<div style="display:flex;gap:10px;margin-bottom:12px;">' +
+
+            '<div style="margin-bottom:14px;font-size:12px;color:#5a3a1a;">' +
+            '<div style="font-weight:600;margin-bottom:6px;">Source de la zone :</div>' +
+            '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">' +
+            '<input type="radio" name="pwaZoneSrc" value="visible"' + (isCustom ? '' : ' checked') + '> Zone visible courante' +
+            '</label>' +
+            '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">' +
+            '<input type="radio" name="pwaZoneSrc" value="draw"' + (isCustom ? ' checked' : '') + '> Dessiner manuellement un rectangle' +
+            '</label>' +
+            (isCustom ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">Rectangle defini : ' +
+                bounds.getSouth().toFixed(3) + ',' + bounds.getWest().toFixed(3) + ' - ' +
+                bounds.getNorth().toFixed(3) + ',' + bounds.getEast().toFixed(3) + '</div>' : '') +
+            '</div>' +
+
+            '<div style="display:flex;gap:10px;margin-bottom:14px;">' +
             '<label style="flex:1;font-size:12px;color:#5a3a1a;">Zoom min<br><input type="number" id="pwaZmin" min="6" max="20" value="' + minZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
             '<label style="flex:1;font-size:12px;color:#5a3a1a;">Zoom max<br><input type="number" id="pwaZmax" min="6" max="20" value="' + maxZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
             '</div>' +
+
+            '<details open style="margin-bottom:14px;border:1px solid #f0ebe3;border-radius:6px;padding:6px 12px;">' +
+            '<summary style="font-size:12px;color:#5a3a1a;font-weight:600;cursor:pointer;padding:4px 0;">Couches a pre-cacher (' + allLayers.filter(function(l){return l.active;}).length + '/' + allLayers.length + ' actives)</summary>' +
+            '<div style="max-height:140px;overflow-y:auto;margin-top:6px;">' + layersHtml + '</div>' +
+            '<div style="font-size:10px;color:#999;margin-top:4px;">Astuce : active une couche dans la carte avant d\\'ouvrir ce modal pour qu\\'elle apparaisse cochee par defaut.</div>' +
+            '</details>' +
+
+            '<details style="margin-bottom:14px;border:1px solid #f0ebe3;border-radius:6px;padding:6px 12px;">' +
+            '<summary style="font-size:12px;color:#5a3a1a;font-weight:600;cursor:pointer;padding:4px 0;">Projets a pre-cacher (' + allProjects.filter(function(p){return p.current;}).length + '/' + allProjects.length + ')</summary>' +
+            '<div style="max-height:140px;overflow-y:auto;margin-top:6px;">' + projectsHtml + '</div>' +
+            '<div style="font-size:10px;color:#999;margin-top:4px;">Pour chaque projet coche : les features (points/polygones) et photos seront mis en cache pour consultation offline.</div>' +
+            '</details>' +
+
+            '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#5a3a1a;margin-bottom:12px;cursor:pointer;">' +
+            '<input type="checkbox" id="pwaIncludeCorse" style="margin-top:2px;">' +
+            '<span>Inclure le contexte Corse complet aux zooms 8-10 (~80 tuiles, ~3 Mo). Utile pour dezoomer voir l\\'ile entiere hors-ligne.</span>' +
+            '</label>' +
+
             '<div id="pwaPEstim" style="font-size:11px;color:#666;background:#faf7f2;padding:8px;border-radius:4px;margin-bottom:12px;"></div>' +
             '<div id="pwaPProgress" style="display:none;margin-bottom:12px;"><div style="background:#eee;border-radius:4px;overflow:hidden;height:20px;"><div id="pwaPBar" style="background:#8b4513;height:100%;width:0%;transition:width 0.2s;"></div></div><div id="pwaPLabel" style="font-size:11px;color:#666;margin-top:4px;text-align:center;">0%</div></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
@@ -293,6 +348,23 @@
         if (typeof L !== 'undefined' && L.DomEvent) {
             L.DomEvent.disableClickPropagation(m);
             L.DomEvent.disableScrollPropagation(m);
+        }
+
+        function getCheckedLayers() {
+            var urls = [];
+            m.querySelectorAll('input.pwaLayerCb:checked').forEach(function(cb) {
+                var id = parseInt(cb.dataset.id);
+                var item = allLayers.find(function(L) { return L.id === id; });
+                if (item) urls.push(item.url);
+            });
+            return urls;
+        }
+        function getCheckedProjects() {
+            var ids = [];
+            m.querySelectorAll('input.pwaProjectCb:checked').forEach(function(cb) {
+                ids.push(cb.dataset.id);
+            });
+            return ids;
         }
 
         function updateEstim() {
@@ -310,31 +382,95 @@
                 var ymax = Math.floor((1 - Math.log(Math.tan(sb * Math.PI / 180) + 1 / Math.cos(sb * Math.PI / 180)) / Math.PI) / 2 * n);
                 totalT += (Math.abs(xmax - xmin) + 1) * (Math.abs(ymax - ymin) + 1);
             }
-            // Multiplier par le nombre de layers tile actifs
-            var nLayers = countActiveTileLayers(map);
-            var totalAll = totalT * Math.max(1, nLayers);
-            var estMo = (totalAll * 0.04).toFixed(1);  // ~40 Ko/tuile moyenne
-            document.getElementById('pwaPEstim').innerHTML =
-                'Total estime : <strong>' + totalAll + ' tuiles</strong> (~' + estMo + ' Mo, ' + nLayers + ' couche(s) active(s))';
-            m._cache = { zmin: zmin, zmax: zmax, totalAll: totalAll };
+            var nLayers = getCheckedLayers().length;
+            var includeCorse = document.getElementById('pwaIncludeCorse').checked;
+            var corseTiles = includeCorse ? 80 * nLayers : 0;
+            var totalTiles = totalT * nLayers + corseTiles;
+            var nProjects = getCheckedProjects().length;
+            var estMo = (totalTiles * 0.04).toFixed(1);
+            var summary = '<strong>' + totalTiles + ' tuiles</strong> (~' + estMo + ' Mo, ' + nLayers + ' couche(s)';
+            if (includeCorse) summary += ' + contexte Corse';
+            summary += ')';
+            if (nProjects > 0) {
+                summary += ' + <strong>' + nProjects + ' projet(s)</strong> (data Supabase + photos, taille variable)';
+            }
+            document.getElementById('pwaPEstim').innerHTML = summary;
+            m._cache = {
+                zmin: zmin, zmax: zmax, totalAll: totalTiles, includeCorse: includeCorse,
+                layerUrls: getCheckedLayers(), projectIds: getCheckedProjects()
+            };
         }
 
         document.getElementById('pwaZmin').oninput = updateEstim;
         document.getElementById('pwaZmax').oninput = updateEstim;
+        document.getElementById('pwaIncludeCorse').onchange = updateEstim;
+        m.querySelectorAll('input.pwaLayerCb').forEach(function(cb) { cb.onchange = updateEstim; });
+        m.querySelectorAll('input.pwaProjectCb').forEach(function(cb) { cb.onchange = updateEstim; });
         document.getElementById('pwaPCancel').onclick = function() { m.remove(); };
         document.getElementById('pwaPCancel2').onclick = function() { m.remove(); };
         m.onclick = function(e) { if (e.target === m) m.remove(); };
 
+        // Si user choisit "Dessiner", fermer modal et activer outil Leaflet.draw
+        m.querySelectorAll('input[name="pwaZoneSrc"]').forEach(function(r) {
+            r.onchange = function() {
+                if (r.value === 'draw' && r.checked) {
+                    m.remove();
+                    activateRectangleDraw(map);
+                }
+            };
+        });
+
         document.getElementById('pwaPStart').onclick = function() {
             var c = m._cache;
             if (!c) return;
+            if (c.layerUrls.length === 0 && c.projectIds.length === 0) {
+                alert('Coche au moins une couche ou un projet a pre-cacher.');
+                return;
+            }
             if (c.totalAll > 5000) {
                 if (!confirm('Telecharger ' + c.totalAll + ' tuiles ? Ca peut prendre plusieurs minutes et utiliser ~' + (c.totalAll * 0.04).toFixed(0) + ' Mo de stockage.')) return;
             }
-            startPrecache(map, bounds, c.zmin, c.zmax);
+            startPrecache(map, bounds, c.zmin, c.zmax, c.includeCorse, c.layerUrls, c.projectIds);
         };
 
         updateEstim();
+    }
+
+    // ===== Outil Leaflet.draw : tracer un rectangle pour la zone a pre-cacher =====
+    function activateRectangleDraw(map) {
+        if (typeof L === 'undefined' || !L.Draw || !L.Draw.Rectangle) {
+            alert('Outil de dessin non disponible. Bascule sur la zone visible.');
+            openPrecacheModal();
+            return;
+        }
+        showToast('Dessine un rectangle sur la carte', 5000);
+        var drawer = new L.Draw.Rectangle(map, {
+            shapeOptions: { color: '#8b4513', weight: 2, fillOpacity: 0.15 }
+        });
+        drawer.enable();
+
+        function onCreated(e) {
+            map.off(L.Draw.Event.CREATED, onCreated);
+            // Retirer le rectangle dessine apres recuperation des bounds
+            var layer = e.layer;
+            map.addLayer(layer);
+            var b = layer.getBounds();
+            setTimeout(function() { map.removeLayer(layer); }, 200);
+            openPrecacheModal(b);
+        }
+        function onCancel() {
+            map.off(L.Draw.Event.CREATED, onCreated);
+            document.removeEventListener('keydown', onEsc);
+        }
+        function onEsc(e) {
+            if (e.key === 'Escape') {
+                drawer.disable();
+                onCancel();
+                openPrecacheModal();  // retour au modal sans bounds custom
+            }
+        }
+        map.once(L.Draw.Event.CREATED, onCreated);
+        document.addEventListener('keydown', onEsc);
     }
 
     // ===== Construction des URLs et envoi au SW =====
@@ -347,16 +483,13 @@
                 }
             } catch(e) {}
         }
-        // Fallback : chercher dans les enfants directement
         return null;
     }
 
     function countActiveTileLayers(map) {
         var count = 0;
         map.eachLayer(function(l) {
-            if (l instanceof L.TileLayer && !(l instanceof L.TileLayer.WMS === false && l._url)) {
-                if (l._url && l._url.indexOf('{z}') !== -1) count++;
-            }
+            if (l instanceof L.TileLayer && l._url && l._url.indexOf('{z}') !== -1) count++;
         });
         return Math.max(count, 1);
     }
@@ -371,18 +504,100 @@
         return urls;
     }
 
+    // Liste TOUS les TileLayer disponibles via le LayerControl (actifs + inactifs).
+    // Folium attache les couches inactives au layer control. On les retrouve via
+    // l'instance Leaflet du LayerControl (cherche dans window.*).
+    function listAvailableLayers(map) {
+        var out = [];
+        var seen = new Set();
+        // 1. Layers actifs (via eachLayer)
+        map.eachLayer(function(l) {
+            if (l instanceof L.TileLayer && l._url && l._url.indexOf('{z}') !== -1) {
+                var id = L.stamp(l);
+                if (!seen.has(id)) {
+                    seen.add(id);
+                    out.push({
+                        id: id,
+                        name: layerDisplayName(l),
+                        url: l._url,
+                        active: true
+                    });
+                }
+            }
+        });
+        // 2. Layers inactifs (via le LayerControl Leaflet)
+        for (var k in window) {
+            try {
+                var ctl = window[k];
+                if (ctl && ctl._layers && typeof ctl._layers === 'object' && ctl.options && typeof ctl.options.position === 'string') {
+                    var entries = ctl._layers;
+                    // Array dans certaines versions Leaflet, object dans d'autres
+                    var iter = Array.isArray(entries) ? entries : Object.values(entries);
+                    iter.forEach(function(e) {
+                        var lyr = e.layer;
+                        if (!lyr || !(lyr instanceof L.TileLayer) || !lyr._url) return;
+                        if (lyr._url.indexOf('{z}') === -1) return;
+                        var id = L.stamp(lyr);
+                        if (!seen.has(id)) {
+                            seen.add(id);
+                            out.push({
+                                id: id,
+                                name: e.name || layerDisplayName(lyr),
+                                url: lyr._url,
+                                active: false
+                            });
+                        }
+                    });
+                    break;
+                }
+            } catch(e) {}
+        }
+        return out;
+    }
+
+    function layerDisplayName(l) {
+        var attr = l.options.attribution || '';
+        // Tenter d'extraire un nom court depuis l'attribution ou l'URL
+        if (/openstreetmap/i.test(attr)) return 'OpenStreetMap';
+        if (/opentopomap/i.test(attr)) return 'OpenTopoMap';
+        if (/esri/i.test(attr)) return 'Satellite Esri';
+        if (/bd ortho/i.test(attr) || /ORTHOPHOTOS&/i.test(l._url)) return 'Satellite IGN HD';
+        if (/PLANIGN/i.test(l._url)) return 'IGN Plan v2';
+        if (/BDUNI\.J1/i.test(l._url)) return 'Plan IGN J+1';
+        if (/1950-1965/i.test(l._url)) return 'Ortho 1950-1965';
+        if (/1965-1980/i.test(l._url)) return 'Ortho 1965-1980';
+        if (/raster-tiles-corse/i.test(l._url)) {
+            var m = /raster-tiles-corse\/([^\/]+)/.exec(l._url);
+            return m ? 'Raster : ' + m[1] : 'Raster Corse';
+        }
+        return l._url.split('/')[2] || 'Couche';
+    }
+
+    // Liste les projets disponibles depuis le scope global Folium-injecte.
+    function listAvailableProjects() {
+        var projets = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
+        var currentId = typeof window.PROJET_ID !== 'undefined' ? window.PROJET_ID : null;
+        return projets.map(function(p) {
+            return {
+                id: p.id,
+                nom: p.nom || ('Projet ' + p.id),
+                current: (p.id == currentId)
+            };
+        });
+    }
+
     // Bounds approximatifs de la Corse (pour pre-cache automatique du contexte
     // dezoomé : tu peux toujours voir la Corse complete meme hors-ligne).
     var CORSE_BOUNDS = { south: 41.30, west: 8.50, north: 43.05, east: 9.65 };
 
-    async function startPrecache(map, bounds, zmin, zmax) {
+    async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds) {
         if (!navigator.serviceWorker.controller) {
             alert('Service Worker non actif (la page doit etre en HTTPS et rechargee).');
             return;
         }
-        var layerUrls = collectTileLayerUrls(map);
+        var layerUrls = customLayerUrls || collectTileLayerUrls(map);
         if (layerUrls.length === 0) {
-            alert('Aucune couche de tuiles active.');
+            alert('Aucune couche de tuiles selectionnee.');
             return;
         }
         var tileUrls = [];
@@ -396,7 +611,6 @@
             for (var x = Math.min(xmin, xmax); x <= Math.max(xmin, xmax); x++) {
                 for (var y = Math.min(ymin, ymax); y <= Math.max(ymin, ymax); y++) {
                     layerUrls.forEach(function(tpl) {
-                        // Generer toutes les variantes de subdomain si pattern {s}
                         if (tpl.indexOf('{s}') !== -1) {
                             ['a','b','c'].forEach(function(sub) {
                                 tileUrls.push(tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{s}', sub));
@@ -416,13 +630,47 @@
             addTilesForBounds(z, nb, sb, wb, eb);
         }
 
-        // 2. Contexte Corse : zooms 8-10 sur toute l'ile (~50 tuiles, ~3 Mo)
-        // pour ne jamais "perdre" la carte au dezoom hors-ligne. Saute si deja
-        // couvert par la selection ci-dessus.
-        for (var cz = 8; cz <= 10; cz++) {
-            if (cz >= zmin && cz <= zmax) continue;  // deja inclus si overlap
-            addTilesForBounds(cz, CORSE_BOUNDS.north, CORSE_BOUNDS.south, CORSE_BOUNDS.west, CORSE_BOUNDS.east);
+        // 2. Contexte Corse optionnel (zooms 8-10)
+        if (includeCorse) {
+            for (var cz = 8; cz <= 10; cz++) {
+                if (cz >= zmin && cz <= zmax) continue;
+                addTilesForBounds(cz, CORSE_BOUNDS.north, CORSE_BOUNDS.south, CORSE_BOUNDS.west, CORSE_BOUNDS.east);
+            }
         }
+
+        // 3. Pre-cache des projets : fetch Supabase REST pour les data + photos
+        var projectPhotoUrls = [];
+        if (projectIds && projectIds.length > 0) {
+            showToast('Telechargement data des projets...', 3000);
+            for (var pi = 0; pi < projectIds.length; pi++) {
+                var pid = projectIds[pi];
+                try {
+                    var supaBase = (typeof window.SUPABASE_URL !== 'undefined' && window.SUPABASE_URL) || '';
+                    var supaKey = (typeof window.SUPABASE_KEY !== 'undefined' && window.SUPABASE_KEY) || '';
+                    if (!supaBase || !supaKey) continue;
+                    var url = supaBase + '/rest/v1/custom_features?projet_id=eq.' + pid + '&select=*';
+                    var resp = await fetch(url, {
+                        headers: { apikey: supaKey, Authorization: 'Bearer ' + supaKey }
+                    });
+                    if (resp.ok) {
+                        // Le SW cache automatiquement via network-first (api cache)
+                        var data = await resp.json();
+                        if (Array.isArray(data)) {
+                            data.forEach(function(f) {
+                                if (f.photo_url) projectPhotoUrls.push(f.photo_url);
+                                if (f.photo_url2) projectPhotoUrls.push(f.photo_url2);
+                            });
+                            console.log('[Pre-cache] Projet ' + pid + ' : ' + data.length + ' features chargees');
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Pre-cache] Echec projet ' + pid + ' :', e);
+                }
+            }
+        }
+
+        // 4. Concatener tuiles + photos pour un seul send au SW
+        var allUrls = tileUrls.concat(projectPhotoUrls);
 
         var modal = document.getElementById('pwaPrecacheModal');
         if (modal) {
@@ -440,12 +688,12 @@
                 if (d.done) {
                     setTimeout(function() {
                         if (modal && modal.parentNode) modal.remove();
-                        alert('Pre-cache termine : ' + d.progress + ' tuiles' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
+                        showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
                     }, 500);
                 }
             }
         };
-        navigator.serviceWorker.controller.postMessage({ type: 'PRECACHE_URLS', urls: tileUrls }, [ch.port2]);
+        navigator.serviceWorker.controller.postMessage({ type: 'PRECACHE_URLS', urls: allUrls }, [ch.port2]);
     }
 
     // ===== Toast notification =====
