@@ -173,14 +173,49 @@ self.addEventListener('fetch', (event) => {
     );
 });
 
+// === Pre-cache une liste d'URLs (tuiles + photos) ===
+async function precacheUrls(urls, port) {
+    const cache = await caches.open(TILE_CACHE);
+    let done = 0;
+    const errors = [];
+    // Limite la concurrence pour ne pas saturer le reseau / le serveur tuile
+    const CONCURRENT = 8;
+    let idx = 0;
+    async function worker() {
+        while (idx < urls.length) {
+            const i = idx++;
+            const u = urls[i];
+            try {
+                const existing = await cache.match(u);
+                if (existing) { done++; continue; }
+                const resp = await fetch(u, { mode: 'no-cors' });
+                if (resp) await cache.put(u, resp);
+                done++;
+            } catch (e) {
+                errors.push({ url: u, error: e.message });
+            }
+            // Progress chaque 50
+            if (port && done % 50 === 0) {
+                port.postMessage({ progress: done, total: urls.length });
+            }
+        }
+    }
+    const workers = [];
+    for (let k = 0; k < CONCURRENT; k++) workers.push(worker());
+    await Promise.all(workers);
+    if (port) port.postMessage({ progress: done, total: urls.length, done: true, errors: errors.length });
+}
+
 // Message API pour permettre au client de declencher des actions
 self.addEventListener('message', (event) => {
     const data = event.data || {};
     if (data.type === 'SKIP_WAITING') self.skipWaiting();
+
     if (data.type === 'CLEAR_CACHE') {
         caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
             .then(() => event.ports[0] && event.ports[0].postMessage({ cleared: true }));
     }
+
     if (data.type === 'CACHE_STATS') {
         Promise.all([
             caches.open(TILE_CACHE).then(c => c.keys().then(k => k.length)),
@@ -190,5 +225,9 @@ self.addEventListener('message', (event) => {
         ]).then(([tiles, photos, api, html]) => {
             event.ports[0] && event.ports[0].postMessage({ tiles, photos, api, html, version: VERSION });
         });
+    }
+
+    if (data.type === 'PRECACHE_URLS' && Array.isArray(data.urls)) {
+        precacheUrls(data.urls, event.ports[0]);
     }
 });
