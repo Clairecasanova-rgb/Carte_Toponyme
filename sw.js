@@ -75,8 +75,13 @@ function isHtmlCarte(url) {
     return /\/carte_polygones_.*\.html$/i.test(url) || /\.html$/i.test(new URL(url).pathname);
 }
 
-// LRU simple : limite la taille du cache en virant les plus anciennes entrees
+// LRU simple : limite la taille du cache en virant les plus anciennes entrees.
+// Ne s'execute reellement qu'une fois sur N appels pour eviter de scanner
+// le cache complet a chaque tuile (cache.keys() est O(N) sur certains devices).
+const _trimCounters = {};
 async function trimCache(cacheName, maxEntries) {
+    _trimCounters[cacheName] = (_trimCounters[cacheName] || 0) + 1;
+    if (_trimCounters[cacheName] % 50 !== 0) return;
     const cache = await caches.open(cacheName);
     const keys = await cache.keys();
     if (keys.length > maxEntries) {
@@ -152,12 +157,33 @@ self.addEventListener('fetch', (event) => {
     if (req.method !== 'GET') return;
     const url = req.url;
 
-    // 1. Tuiles cartographiques externes -> cache-first opaque
+    // 1. Tuiles cartographiques externes
+    // Strategie : en ONLINE, on respondWith via cache-first MAIS si cache miss,
+    // on laisse le browser HTTP cache faire son job (pas de slowdown).
+    // En OFFLINE, on tente le cache et 503 si miss.
     if (isTileUrl(url)) {
-        event.respondWith(
-            cacheFirst(req, TILE_CACHE, { mode: 'no-cors' })
-                .finally(() => trimCache(TILE_CACHE, MAX_TILES))
-        );
+        if (_isOffline()) {
+            event.respondWith(
+                cacheFirst(req, TILE_CACHE, { mode: 'no-cors' })
+                    .finally(() => trimCache(TILE_CACHE, MAX_TILES))
+            );
+        } else {
+            // Online : retourne cache si dispo (rapide), sinon fetch direct
+            // browser-driven (pas de slowdown SW). Cache async en BG.
+            event.respondWith((async () => {
+                try {
+                    const cache = await _getCache(TILE_CACHE);
+                    const cached = await cache.match(req);
+                    if (cached) return cached;
+                    // Cache miss : fetch normal (le browser HTTP cache prend le relais)
+                    const resp = await fetch(req, { mode: 'no-cors' });
+                    if (resp) cache.put(req, resp.clone()).catch(() => null);
+                    return resp;
+                } catch (e) {
+                    return new Response('Tile fetch failed', { status: 503 });
+                }
+            })());
+        }
         return;
     }
 
