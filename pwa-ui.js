@@ -233,11 +233,10 @@
         if (b) return b;
         b = document.createElement('div');
         b.id = 'pwaStatusBadge';
-        // z-index tres haut + position absolue ; visible quel que soit l'etat
-        // de la carte ou de plein-ecran. Position decalee de 56px pour ne pas
-        // recouvrir le bouton couches (et reposition si plein-ecran via CSS).
+        // Position bas-gauche pour eviter le coin haut-droit (encombre : couches,
+        // raster, fullscreen) et la popup de precision du LocateControl GPS.
         b.style.cssText =
-            'position:fixed !important;top:10px !important;right:60px !important;' +
+            'position:fixed !important;bottom:10px !important;left:10px !important;' +
             'z-index:100050 !important;' +
             'display:flex !important;align-items:center;gap:6px;padding:5px 10px;' +
             'border-radius:14px;font:600 11px/1 Segoe UI,sans-serif;' +
@@ -567,40 +566,158 @@
         updateEstim();
     }
 
-    // ===== Outil Leaflet.draw : tracer un rectangle pour la zone a pre-cacher =====
+    // ===== Outil : tracer un rectangle pour la zone a pre-cacher =====
+    // Strategie : si L.Draw.Rectangle dispo, l'utiliser. Sinon implementation
+    // native avec mousedown/mousemove/mouseup (+ touchstart/move/end pour mobile).
     function activateRectangleDraw(map) {
-        if (typeof L === 'undefined' || !L.Draw || !L.Draw.Rectangle) {
-            alert('Outil de dessin non disponible. Bascule sur la zone visible.');
-            openPrecacheModal();
-            return;
+        if (typeof L !== 'undefined' && L.Draw && L.Draw.Rectangle) {
+            return activateLeafletDrawRect(map);
         }
-        showToast('Dessine un rectangle sur la carte', 5000);
+        return activateNativeRect(map);
+    }
+
+    function activateLeafletDrawRect(map) {
+        var cancelBtn = showDrawCancelButton(function() {
+            drawer.disable();
+            map.off(L.Draw.Event.CREATED, onCreated);
+            document.removeEventListener('keydown', onEsc);
+            openPrecacheModal();
+        });
         var drawer = new L.Draw.Rectangle(map, {
             shapeOptions: { color: '#8b4513', weight: 2, fillOpacity: 0.15 }
         });
         drawer.enable();
-
         function onCreated(e) {
             map.off(L.Draw.Event.CREATED, onCreated);
-            // Retirer le rectangle dessine apres recuperation des bounds
+            hideDrawCancelButton();
+            document.removeEventListener('keydown', onEsc);
             var layer = e.layer;
             map.addLayer(layer);
             var b = layer.getBounds();
             setTimeout(function() { map.removeLayer(layer); }, 200);
             openPrecacheModal(b);
         }
-        function onCancel() {
-            map.off(L.Draw.Event.CREATED, onCreated);
-            document.removeEventListener('keydown', onEsc);
-        }
         function onEsc(e) {
             if (e.key === 'Escape') {
                 drawer.disable();
-                onCancel();
-                openPrecacheModal();  // retour au modal sans bounds custom
+                map.off(L.Draw.Event.CREATED, onCreated);
+                document.removeEventListener('keydown', onEsc);
+                hideDrawCancelButton();
+                openPrecacheModal();
             }
         }
         map.once(L.Draw.Event.CREATED, onCreated);
+        document.addEventListener('keydown', onEsc);
+    }
+
+    function showDrawCancelButton(onCancel) {
+        var existing = document.getElementById('pwaDrawCancel');
+        if (existing) existing.remove();
+        var b = document.createElement('button');
+        b.id = 'pwaDrawCancel';
+        b.textContent = 'Annuler le dessin';
+        b.style.cssText =
+            'position:fixed;top:60px;left:50%;transform:translateX(-50%);' +
+            'z-index:100070;background:#e74c3c;color:#fff;border:none;' +
+            'padding:10px 20px;border-radius:22px;font:600 13px Segoe UI,sans-serif;' +
+            'cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.25);';
+        b.onclick = function() {
+            hideDrawCancelButton();
+            if (typeof onCancel === 'function') onCancel();
+        };
+        (document.body || document.documentElement).appendChild(b);
+        return b;
+    }
+
+    function hideDrawCancelButton() {
+        var b = document.getElementById('pwaDrawCancel');
+        if (b) b.remove();
+    }
+
+    // Implementation native sans Leaflet.draw : capture touch/mouse, desactive
+    // temporairement le drag de la carte, dessine un rectangle overlay.
+    function activateNativeRect(map) {
+        showToast('Touche et glisse pour dessiner un rectangle', 5000);
+        var container = map.getContainer();
+        var dragWas = map.dragging.enabled();
+        map.dragging.disable();
+        map.touchZoom.disable();
+        map.doubleClickZoom.disable();
+        var startPoint = null;
+        var rectLayer = null;
+        showDrawCancelButton(function() {
+            cleanup();
+            if (rectLayer) map.removeLayer(rectLayer);
+            openPrecacheModal();
+        });
+
+        function getPoint(ev) {
+            var rect = container.getBoundingClientRect();
+            var x, y;
+            if (ev.touches && ev.touches[0]) {
+                x = ev.touches[0].clientX - rect.left;
+                y = ev.touches[0].clientY - rect.top;
+            } else {
+                x = ev.clientX - rect.left;
+                y = ev.clientY - rect.top;
+            }
+            return L.point(x, y);
+        }
+
+        function onStart(ev) {
+            ev.preventDefault();
+            startPoint = getPoint(ev);
+        }
+        function onMove(ev) {
+            if (!startPoint) return;
+            ev.preventDefault();
+            var cur = getPoint(ev);
+            var sw = map.containerPointToLatLng(L.point(Math.min(startPoint.x, cur.x), Math.max(startPoint.y, cur.y)));
+            var ne = map.containerPointToLatLng(L.point(Math.max(startPoint.x, cur.x), Math.min(startPoint.y, cur.y)));
+            var b = L.latLngBounds(sw, ne);
+            if (rectLayer) rectLayer.setBounds(b);
+            else {
+                rectLayer = L.rectangle(b, { color: '#8b4513', weight: 2, fillOpacity: 0.15 }).addTo(map);
+            }
+        }
+        function onEnd(ev) {
+            if (!startPoint) return;
+            cleanup();
+            if (rectLayer) {
+                var b = rectLayer.getBounds();
+                setTimeout(function() { if (rectLayer) map.removeLayer(rectLayer); }, 200);
+                openPrecacheModal(b);
+            } else {
+                openPrecacheModal();
+            }
+        }
+        function onEsc(e) {
+            if (e.key === 'Escape') {
+                cleanup();
+                if (rectLayer) map.removeLayer(rectLayer);
+                openPrecacheModal();
+            }
+        }
+        function cleanup() {
+            container.removeEventListener('mousedown', onStart);
+            container.removeEventListener('mousemove', onMove);
+            container.removeEventListener('mouseup', onEnd);
+            container.removeEventListener('touchstart', onStart);
+            container.removeEventListener('touchmove', onMove);
+            container.removeEventListener('touchend', onEnd);
+            document.removeEventListener('keydown', onEsc);
+            hideDrawCancelButton();
+            if (dragWas) map.dragging.enable();
+            map.touchZoom.enable();
+            map.doubleClickZoom.enable();
+        }
+
+        container.addEventListener('mousedown', onStart);
+        container.addEventListener('mousemove', onMove);
+        container.addEventListener('mouseup', onEnd);
+        container.addEventListener('touchstart', onStart, { passive: false });
+        container.addEventListener('touchmove', onMove, { passive: false });
+        container.addEventListener('touchend', onEnd);
         document.addEventListener('keydown', onEsc);
     }
 
