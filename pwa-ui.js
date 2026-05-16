@@ -344,26 +344,55 @@
             'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        // Style cohérent avec l'UI moderne (palette brun/olive + dark accents)
+        var btnPrimary = 'background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var btnSecondary = 'background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var btnAccent = 'background:#5a3a1a;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var btnDanger = 'background:#fff;color:#c0392b;border:1px solid #e8a8a0;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var btnTest = 'background:' + (isForcedOffline() ? '#16a085' : '#fff') + ';color:' + (isForcedOffline() ? '#fff' : '#8b4513') + ';border:1px solid ' + (isForcedOffline() ? '#16a085' : '#d8cdb8') + ';padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
+
         m.innerHTML =
-            '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;padding:20px 24px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
+            '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:88vh;overflow-y:auto;padding:20px 22px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
+
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Mode hors-ligne</h2>' +
-            '<button id="pwaMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;font-family:Segoe UI,sans-serif;">Mode hors-ligne</h2>' +
+            '<button id="pwaMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;line-height:1;padding:0 4px;">&times;</button>' +
             '</div>' +
-            '<div id="pwaMStats" style="font-size:12px;color:#666;background:#faf7f2;padding:10px 12px;border-radius:6px;margin-bottom:14px;">Chargement des statistiques...</div>' +
-            '<div style="display:flex;flex-direction:column;gap:8px;">' +
-            '<button id="pwaMInstall" style="background:#27ae60;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Installer comme raccourci</button>' +
-            '<button id="pwaMRename" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Renommer le raccourci</button>' +
-            '<button id="pwaMPrecache" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Pre-charger la zone visible</button>' +
-            '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Voir les modifs en attente</button>' +
-            '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer la synchro</button>' +
-            '<button id="pwaMSimOffline" style="background:' + (isForcedOffline() ? '#27ae60' : '#9b59b6') + ';color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">' +
-                (isForcedOffline() ? 'Repasser en ligne (sortie du test)' : 'Simuler hors ligne (mode test)') +
+
+            '<div id="pwaMStats" style="font-size:11px;color:#5a3a1a;background:#faf7f2;padding:9px 11px;border-radius:6px;margin-bottom:8px;border:1px solid #f0ebe3;line-height:1.5;">Chargement des statistiques...</div>' +
+
+            // Section : INSTALLATION
+            '<div style="' + sectionTitle + '">Installation</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaMInstall" style="' + btnPrimary + '">Installer cette carte sur l\'ecran d\'accueil</button>' +
+            '</div>' +
+
+            // Section : HORS-LIGNE
+            '<div style="' + sectionTitle + '">Donnees hors-ligne</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaMPrecache" style="' + btnPrimary + '">Pre-charger une zone</button>' +
+            '<button id="pwaMCheckCache" style="' + btnSecondary + '">Verifier cache de la zone visible</button>' +
+            '<button id="pwaMClear" style="' + btnDanger + '">Vider tout le cache local</button>' +
+            '</div>' +
+
+            // Section : SYNCHRONISATION
+            '<div style="' + sectionTitle + '">Synchronisation</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaMQueue" style="' + btnAccent + '">Voir les modifications en attente</button>' +
+            '<button id="pwaMReplay" style="' + btnSecondary + '">Forcer la synchronisation</button>' +
+            '<button id="pwaMSimOffline" style="' + btnTest + '">' +
+                (isForcedOffline() ? 'Quitter le mode test hors-ligne' : 'Activer le mode test hors-ligne') +
             '</button>' +
-            '<button id="pwaMReload" style="background:#3498db;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Actualiser la page</button>' +
-            '<button id="pwaMUpdate" style="background:#9b59b6;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer mise a jour PWA</button>' +
-            '<button id="pwaMClear" style="background:#e74c3c;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Vider le cache local</button>' +
             '</div>' +
+
+            // Section : MAINTENANCE
+            '<div style="' + sectionTitle + '">Maintenance</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaMReload" style="' + btnSecondary + '">Actualiser la page</button>' +
+            '<button id="pwaMUpdate" style="' + btnSecondary + '">Forcer la mise a jour PWA</button>' +
+            '</div>' +
+
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
             L.DomEvent.disableClickPropagation(m);
@@ -386,25 +415,18 @@
         });
 
         document.getElementById('pwaMInstall').onclick = function() { m.remove(); openInstallFlow(); };
-        document.getElementById('pwaMRename').onclick = function() { m.remove(); openRenameShortcutModal(); };
         document.getElementById('pwaMPrecache').onclick = function() { m.remove(); openPrecacheModal(); };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
             if (isAppOffline()) { showToast('Pas de connexion reseau (ou mode test active)'); return; }
             replayQueue().then(function() { showToast('Synchro terminee'); m.remove(); });
         };
-        // Bouton diagnostic : verifier combien de tuiles sont reellement dans
-        // le cache pour la zone visible courante.
-        var diagBtn = document.createElement('button');
-        diagBtn.textContent = 'Verifier cache zone visible';
-        diagBtn.style.cssText = 'background:#16a085;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;width:100%;margin-top:8px;';
-        diagBtn.onclick = function() {
+        document.getElementById('pwaMCheckCache').onclick = function() {
             var map = findLeafletMap();
             if (!map) { showToast('Carte non detectee'); return; }
             var bounds = map.getBounds();
             var zoom = map.getZoom();
             var layerUrls = collectTileLayerUrls(map);
-            // Calculer les URLs des tuiles que la carte demande maintenant
             var n = Math.pow(2, zoom);
             var nb = bounds.getNorth(), sb = bounds.getSouth(), wb = bounds.getWest(), eb = bounds.getEast();
             var xmin = Math.floor((wb + 180) / 360 * n);
@@ -425,7 +447,6 @@
                     });
                 }
             }
-            // Verifier chacune dans le cache
             caches.open('tiles-topo-v1').then(function(cache) {
                 Promise.all(expected.map(function(u) { return cache.match(u).then(function(r) { return !!r; }); }))
                     .then(function(results) {
@@ -434,15 +455,13 @@
                               'Couches actives : ' + layerUrls.length + '.\n\n' +
                               (hits === 0 ? 'Aucune tuile cachee. Pre-charge cette zone d\'abord.' :
                                hits < expected.length ? 'Certaines tuiles manquent. Re-pre-charger cette zone peut aider.' :
-                               'Toutes les tuiles sont cachees, parfait.'));
+                               'Toutes les tuiles sont cachees.'));
                     });
             }).catch(function(e) {
                 alert('Erreur lecture cache : ' + e.message);
             });
             m.remove();
         };
-        // Inserer apres SimOffline
-        document.getElementById('pwaMSimOffline').parentNode.insertBefore(diagBtn, document.getElementById('pwaMSimOffline').nextSibling);
 
         document.getElementById('pwaMSimOffline').onclick = function() {
             var newState = !isForcedOffline();
