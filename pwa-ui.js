@@ -307,6 +307,7 @@
             '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Voir les modifs en attente</button>' +
             '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer la synchro</button>' +
             '<button id="pwaMReload" style="background:#3498db;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Actualiser la page</button>' +
+            '<button id="pwaMUpdate" style="background:#9b59b6;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer mise a jour PWA</button>' +
             '<button id="pwaMClear" style="background:#e74c3c;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Vider le cache local</button>' +
             '</div>' +
             '</div>';
@@ -341,6 +342,26 @@
         document.getElementById('pwaMReload').onclick = function() {
             m.remove();
             location.reload();
+        };
+        document.getElementById('pwaMUpdate').onclick = function() {
+            if (!confirm('Forcer une mise a jour PWA ? Le cache et le Service Worker seront supprimes, la page rechargee avec la derniere version. Tu auras besoin de reseau au prochain demarrage.')) return;
+            m.remove();
+            // 1. Desinstaller tous les SW
+            var swPromise = navigator.serviceWorker && navigator.serviceWorker.getRegistrations
+                ? navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    return Promise.all(regs.map(function(r) { return r.unregister(); }));
+                  })
+                : Promise.resolve();
+            // 2. Vider tous les caches
+            var cachePromise = 'caches' in window
+                ? caches.keys().then(function(keys) {
+                    return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+                  })
+                : Promise.resolve();
+            Promise.all([swPromise, cachePromise]).then(function() {
+                showToast('Mise a jour : rechargement...');
+                setTimeout(function() { location.reload(true); }, 800);
+            });
         };
         document.getElementById('pwaMClear').onclick = function() {
             if (!confirm('Vider tout le cache offline ? Tu auras besoin de reseau au prochain demarrage.')) return;
@@ -1176,6 +1197,32 @@
             navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' }, [ch.port2]);
         });
     }
+
+    // ===== GPS warm-up =====
+    // Le premier appel a navigator.geolocation peut prendre 5-15s sur smartphone
+    // car le module GPS doit s'allumer et acquerir un fix satellite. Si la
+    // permission est deja accordee, on declenche un fix silencieux au load
+    // pour qu'il soit deja disponible quand l'utilisateur clique sur le bouton
+    // de geolocalisation. Resultat : reponse quasi-instantanee au 1er click.
+    if (navigator.geolocation && navigator.permissions) {
+        navigator.permissions.query({ name: 'geolocation' })
+            .then(function(result) {
+                if (result.state === 'granted') {
+                    // Permission deja accordee : warm-up silencieux apres 3s
+                    // (laisse la carte se charger d'abord pour ne pas competir
+                    // sur les ressources)
+                    setTimeout(function() {
+                        navigator.geolocation.getCurrentPosition(
+                            function() { console.log('[GPS] Warm-up reussi'); },
+                            function(e) { console.log('[GPS] Warm-up echec :', e.message); },
+                            { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+                        );
+                    }, 3000);
+                }
+            })
+            .catch(function() {});
+    }
+
 
     // ===== Bootstrap + auto-sync robuste =====
     // L'event 'online' ne tire que si la page est OUVERTE pendant la transition
