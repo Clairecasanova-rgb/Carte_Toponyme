@@ -642,6 +642,11 @@
             || (navigator.maxTouchPoints > 0);
     }
     function activateRectangleDraw(map) {
+        if (!map) {
+            showToast('DEBUG : carte Leaflet non detectee', 6000);
+            return;
+        }
+        showToast('DEBUG : mode dessin lance (mobile=' + _isMobile() + ')', 4000);
         if (!_isMobile() && typeof L !== 'undefined' && L.Draw && L.Draw.Rectangle) {
             return activateLeafletDrawRect(map);
         }
@@ -736,6 +741,7 @@
         }
 
         function onClick(e) {
+            showToast('DEBUG click recu : ' + e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4), 2500);
             if (!firstCorner) {
                 // Premier clic
                 firstCorner = e.latlng;
