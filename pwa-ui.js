@@ -218,10 +218,10 @@
             '</div>' +
             '<div id="pwaMStats" style="font-size:12px;color:#666;background:#faf7f2;padding:10px 12px;border-radius:6px;margin-bottom:14px;">Chargement des statistiques...</div>' +
             '<div style="display:flex;flex-direction:column;gap:8px;">' +
-            '<button id="pwaMPrecache" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">📥 Pre-charger la zone visible</button>' +
-            '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">📝 Voir les modifs en attente</button>' +
-            '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">🔄 Forcer la synchro (queue)</button>' +
-            '<button id="pwaMClear" style="background:#e74c3c;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">🗑️ Vider le cache local</button>' +
+            '<button id="pwaMPrecache" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Pre-charger la zone visible</button>' +
+            '<button id="pwaMQueue" style="background:#5a3a1a;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Voir les modifs en attente</button>' +
+            '<button id="pwaMReplay" style="background:#f5b041;color:#5a3a1a;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Forcer la synchro</button>' +
+            '<button id="pwaMClear" style="background:#e74c3c;color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;text-align:left;">Vider le cache local</button>' +
             '</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
@@ -238,10 +238,10 @@
             if (!s) { statsEl.textContent = 'Service Worker non actif. Recharge la page en HTTPS.'; return; }
             statsEl.innerHTML =
                 '<strong>Cache local (' + s.version + ')</strong><br>' +
-                '🗺️ Tuiles : ' + s.tiles + '<br>' +
-                '📷 Photos : ' + s.photos + '<br>' +
-                '🔗 API : ' + s.api + '<br>' +
-                '📄 Cartes HTML : ' + s.html;
+                'Tuiles : ' + s.tiles + '<br>' +
+                'Photos : ' + s.photos + '<br>' +
+                'API : ' + s.api + '<br>' +
+                'Cartes HTML : ' + s.html;
         });
 
         document.getElementById('pwaMPrecache').onclick = function() { m.remove(); openPrecacheModal(); };
