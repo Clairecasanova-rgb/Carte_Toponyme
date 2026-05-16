@@ -494,8 +494,11 @@
         var bounds = customBounds || map.getBounds();
         var isCustom = !!customBounds;
         var curZoom = map.getZoom();
-        var minZ = Math.max(curZoom - 1, 10);
-        var maxZ = Math.min(curZoom + 2, 18);
+        // Defaults plus genereux : couvre zooms vue large + zooms detailles
+        // pour eviter le flou lors du zoom hors-ligne (Leaflet upscale les
+        // tuiles cachees du zoom max au-dela -> pixelise).
+        var minZ = Math.max(curZoom - 2, 10);
+        var maxZ = Math.min(curZoom + 4, 18);
 
         var m = document.createElement('div');
         m.id = 'pwaPrecacheModal';
@@ -543,6 +546,10 @@
             (isCustom ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">Rectangle defini : ' +
                 bounds.getSouth().toFixed(3) + ',' + bounds.getWest().toFixed(3) + ' - ' +
                 bounds.getNorth().toFixed(3) + ',' + bounds.getEast().toFixed(3) + '</div>' : '') +
+            '</div>' +
+
+            '<div style="font-size:11px;color:#666;background:#fff8e1;border:1px solid #f0d090;border-radius:4px;padding:6px 8px;margin-bottom:8px;line-height:1.4;">' +
+            '<strong>Astuce :</strong> le <em>zoom max</em> determine la nettete offline. Zoom 14 = vue commune, zoom 16-17 = rues, zoom 18 = batiments. Au-dela du zoom max precache, l\'image devient floue.' +
             '</div>' +
 
             '<div style="display:flex;gap:10px;margin-bottom:14px;">' +
