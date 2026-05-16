@@ -85,44 +85,38 @@ async function trimCache(cacheName, maxEntries) {
     }
 }
 
-// Helper : detecte si on est offline ET court-circuite le fetch reseau pour
-// eviter les timeouts longs (~30s) en mode offline. Aussi : limite duree fetch
-// a 5s en mode online pour ne pas freezer la UI quand le reseau est tres lent.
+// Helper offline : court-circuite le fetch reseau pour eviter timeouts longs
 function _isOffline() { return !navigator.onLine; }
 
-function _fetchWithTimeout(request, opts, ms) {
-    opts = opts || {};
-    return Promise.race([
-        fetch(request, opts),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('fetch-timeout')), ms))
-    ]);
+// Memoize caches.open() : evite d'ouvrir 50x par seconde sur device lent
+const _cacheRefs = {};
+function _getCache(name) {
+    if (!_cacheRefs[name]) _cacheRefs[name] = caches.open(name);
+    return _cacheRefs[name];
 }
 
 // === Stale-While-Revalidate ===
 async function staleWhileRevalidate(request, cacheName) {
-    const cache = await caches.open(cacheName);
+    const cache = await _getCache(cacheName);
     const cached = await cache.match(request);
-    if (_isOffline()) {
-        return cached || new Response('Offline', { status: 503 });
-    }
-    const networkPromise = _fetchWithTimeout(request, {}, 8000).then(resp => {
-        if (resp && resp.ok) cache.put(request, resp.clone());
+    if (_isOffline()) return cached || new Response('Offline', { status: 503 });
+    const networkPromise = fetch(request).then(resp => {
+        if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => null);
         return resp;
     }).catch(() => null);
     return cached || networkPromise || new Response('Offline', { status: 503 });
 }
 
-// === Cache-First ===
+// === Cache-First === (pour les tuiles - cache leger, fetch direct sans timeout)
 async function cacheFirst(request, cacheName, opts = {}) {
-    const cache = await caches.open(cacheName);
+    const cache = await _getCache(cacheName);
     const cached = await cache.match(request);
     if (cached) return cached;
-    // Offline + cache miss : reponse immediate, evite timeout reseau long
-    if (_isOffline()) {
-        return new Response('Offline (tile not cached)', { status: 503 });
-    }
+    if (_isOffline()) return new Response('Offline (not cached)', { status: 503 });
     try {
-        const resp = await _fetchWithTimeout(request, opts, 8000);
+        // Fetch direct, sans wrapping. Le browser a son propre timeout.
+        // Cache async en BG : ne bloque pas la response.
+        const resp = await fetch(request, opts);
         if (resp) cache.put(request, resp.clone()).catch(() => null);
         return resp;
     } catch (e) {
@@ -130,17 +124,16 @@ async function cacheFirst(request, cacheName, opts = {}) {
     }
 }
 
-// === Network-First ===
+// === Network-First === (pour API Supabase - timeout court car JSON petit)
 async function networkFirst(request, cacheName) {
-    const cache = await caches.open(cacheName);
-    // Offline : retomber direct sur le cache (pas de tentative reseau)
+    const cache = await _getCache(cacheName);
     if (_isOffline()) {
         const cached = await cache.match(request);
         return cached || new Response(JSON.stringify({ offline: true }),
             { status: 503, headers: { 'Content-Type': 'application/json' } });
     }
     try {
-        const resp = await _fetchWithTimeout(request, {}, 5000);
+        const resp = await fetch(request);
         if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => null);
         return resp;
     } catch (e) {

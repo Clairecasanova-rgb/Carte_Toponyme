@@ -233,17 +233,30 @@
         if (b) return b;
         b = document.createElement('div');
         b.id = 'pwaStatusBadge';
+        // z-index tres haut + position absolue ; visible quel que soit l'etat
+        // de la carte ou de plein-ecran. Position decalee de 56px pour ne pas
+        // recouvrir le bouton couches (et reposition si plein-ecran via CSS).
         b.style.cssText =
-            'position:fixed;top:10px;right:60px;z-index:10005;' +
-            'display:flex;align-items:center;gap:6px;padding:5px 10px;' +
+            'position:fixed !important;top:10px !important;right:60px !important;' +
+            'z-index:100050 !important;' +
+            'display:flex !important;align-items:center;gap:6px;padding:5px 10px;' +
             'border-radius:14px;font:600 11px/1 Segoe UI,sans-serif;' +
-            'background:rgba(255,255,255,0.92);box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
-            'cursor:pointer;user-select:none;';
+            'background:rgba(255,255,255,0.95);box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
+            'cursor:pointer;user-select:none;pointer-events:auto;';
         b.title = 'Cliquer pour gerer le mode hors-ligne';
         b.onclick = openOfflineMenu;
-        document.body.appendChild(b);
+        // Append a l'element fullscreen si actif, sinon body
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(b);
         return b;
     }
+
+    // Refresh badge si on entre/sort du fullscreen (re-parenter au bon contexte)
+    document.addEventListener('fullscreenchange', function() {
+        var b = document.getElementById('pwaStatusBadge');
+        if (b) { b.remove(); }
+        setTimeout(updateStatusBadge, 100);
+    });
 
     function updateStatusBadge() {
         var b = ensureBadge();
@@ -877,14 +890,87 @@
     }
 
     // ===== Intercepteur d'installation (Chrome/Edge/Samsung) =====
-    // Quand le navigateur detecte que l'app est installable, il declenche
-    // 'beforeinstallprompt'. On capture le prompt et on l'utilise plus tard
-    // depuis notre bouton "Installer".
+    // Capture beforeinstallprompt et affiche un bandeau d'install permanent
+    // tant que l'app n'est pas installee. Sur iOS Safari (pas de prompt
+    // natif), affiche des instructions manuelles.
     var _deferredInstallPrompt = null;
+
+    function isPwaInstalled() {
+        try {
+            if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+            if (window.matchMedia && window.matchMedia('(display-mode: minimal-ui)').matches) return true;
+            if (window.navigator && window.navigator.standalone === true) return true;  // iOS Safari
+        } catch(_e) {}
+        return false;
+    }
+
+    function isIosSafari() {
+        var ua = navigator.userAgent || '';
+        return /iPad|iPhone|iPod/.test(ua) && !window.MSStream && /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua);
+    }
+
+    function ensureInstallBanner() {
+        // Pas de bandeau si deja installe
+        if (isPwaInstalled()) {
+            var existing = document.getElementById('pwaInstallBanner');
+            if (existing) existing.remove();
+            return;
+        }
+        // Pas de bandeau si l'utilisateur l'a explicitement masque pour cette session
+        try { if (sessionStorage.getItem('pwaInstallDismissed') === '1') return; } catch(_e) {}
+        if (document.getElementById('pwaInstallBanner')) return;
+
+        var b = document.createElement('div');
+        b.id = 'pwaInstallBanner';
+        b.style.cssText =
+            'position:fixed !important;bottom:14px !important;left:50% !important;' +
+            'transform:translateX(-50%);z-index:100040 !important;' +
+            'display:flex;align-items:center;gap:8px;padding:8px 14px;' +
+            'background:rgba(40,40,40,0.95);color:#fff;border-radius:24px;' +
+            'box-shadow:0 4px 14px rgba(0,0,0,0.25);font:600 12px Segoe UI,sans-serif;' +
+            'cursor:pointer;max-width:90vw;';
+        b.innerHTML =
+            '<span>Installer cette carte sur l\\'ecran d\\'accueil</span>' +
+            '<button id="pwaInstallBtnGo" style="background:#27ae60;color:#fff;border:none;padding:5px 12px;border-radius:14px;font:600 11px Segoe UI,sans-serif;cursor:pointer;">Installer</button>' +
+            '<button id="pwaInstallBtnClose" title="Masquer jusqu\\'au prochain rechargement" style="background:none;color:#bbb;border:none;font-size:18px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>';
+        (document.body || document.documentElement).appendChild(b);
+        document.getElementById('pwaInstallBtnGo').onclick = function(e) {
+            e.stopPropagation();
+            b.remove();
+            openInstallFlow();
+        };
+        document.getElementById('pwaInstallBtnClose').onclick = function(e) {
+            e.stopPropagation();
+            try { sessionStorage.setItem('pwaInstallDismissed', '1'); } catch(_e) {}
+            b.remove();
+        };
+    }
+
     window.addEventListener('beforeinstallprompt', function(e) {
         e.preventDefault();
         _deferredInstallPrompt = e;
         console.log('[PWA] App installable (beforeinstallprompt capture)');
+        ensureInstallBanner();
+    });
+
+    // Detecter la fin d'install + masquer le bandeau
+    window.addEventListener('appinstalled', function() {
+        console.log('[PWA] App installee');
+        var b = document.getElementById('pwaInstallBanner');
+        if (b) b.remove();
+        showToast('Carte installee sur l\\'ecran d\\'accueil');
+    });
+
+    // Au load : afficher le bandeau si applicable (iOS Safari OU prompt deja capture)
+    window.addEventListener('load', function() {
+        setTimeout(function() {
+            if (isPwaInstalled()) return;
+            // Sur iOS Safari, pas de beforeinstallprompt mais on peut quand meme
+            // proposer le banner avec instructions manuelles.
+            if (isIosSafari() || _deferredInstallPrompt) {
+                ensureInstallBanner();
+            }
+        }, 2500);
     });
 
     function openInstallFlow() {
@@ -909,13 +995,42 @@
             _deferredInstallPrompt.prompt();
             _deferredInstallPrompt.userChoice.then(function(choice) {
                 console.log('[PWA] Install choice :', choice.outcome);
-                showToast(choice.outcome === 'accepted' ? 'Raccourci installe' : 'Installation annulee');
+                if (choice.outcome === 'accepted') {
+                    showToast('Raccourci installe');
+                } else {
+                    showToast('Installation annulee. Tu peux reessayer plus tard.');
+                    // Le prompt natif est consomme une fois ; on le re-capturera
+                    // si le browser redeclenche beforeinstallprompt
+                }
                 _deferredInstallPrompt = null;
             });
+        } else if (isIosSafari()) {
+            // Afficher modal d'instructions iOS
+            showIosInstallModal();
         } else {
-            // Pas de prompt natif (iOS Safari, ou deja installe)
-            showToast('Utilise le menu navigateur : "Ajouter a l\\'ecran d\\'accueil"', 6000);
+            showToast('Utilise le menu navigateur (3 points) : "Ajouter a l\\'ecran d\\'accueil"', 7000);
         }
+    }
+
+    function showIosInstallModal() {
+        var m = document.createElement('div');
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:100060;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        (document.body || document.documentElement).appendChild(m);
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:12px;max-width:380px;width:100%;padding:20px 24px;">' +
+            '<h2 style="margin:0 0 10px;font-size:16px;color:#5a3a1a;">Installer sur iPhone / iPad</h2>' +
+            '<ol style="margin:0 0 14px;padding-left:22px;font-size:13px;line-height:1.7;color:#333;">' +
+            '<li>Tape le bouton <strong>Partager</strong> en bas de Safari (carre avec fleche vers le haut)</li>' +
+            '<li>Fais defiler et choisis <strong>Sur l\\'ecran d\\'accueil</strong></li>' +
+            '<li>Confirme avec <strong>Ajouter</strong> en haut a droite</li>' +
+            '</ol>' +
+            '<div style="display:flex;justify-content:flex-end;">' +
+            '<button id="pwaIosOk" style="background:#8b4513;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Compris</button>' +
+            '</div>' +
+            '</div>';
+        m.onclick = function(e) { if (e.target === m) m.remove(); };
+        document.getElementById('pwaIosOk').onclick = function() { m.remove(); };
     }
 
     // Si on a reload pour appliquer le nouveau nom, declencher l'install
