@@ -184,18 +184,50 @@
                 catch(e) { console.warn('[PWA] Affichage offline echoue :', e); }
             }
             var bodySer = await serializeBody(init.body);
+
+            // Normaliser headers : Headers object n'est PAS clonable par IndexedDB.
+            // On le convertit en plain object pour eviter DataCloneError silencieux.
+            var headersPlain = {};
+            try {
+                if (init.headers) {
+                    if (typeof Headers !== 'undefined' && init.headers instanceof Headers) {
+                        init.headers.forEach(function(v, k) { headersPlain[k] = v; });
+                    } else if (Array.isArray(init.headers)) {
+                        init.headers.forEach(function(pair) { headersPlain[pair[0]] = pair[1]; });
+                    } else if (typeof init.headers === 'object') {
+                        Object.keys(init.headers).forEach(function(k) {
+                            var v = init.headers[k];
+                            if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+                                headersPlain[k] = String(v);
+                            }
+                        });
+                    }
+                }
+            } catch(e) {
+                console.warn('[PWA Sync] Normalisation headers :', e);
+            }
+
             return dbAdd({
                 url: url,
                 method: method,
-                headers: init.headers || {},
+                headers: headersPlain,
                 bodySer: bodySer,
                 summary: summary,
                 kind: isStorageMut ? 'storage' : 'rest',
                 createdAt: Date.now(),
                 attempts: 0
-            }).then(function() {
+            }).then(function(insertedId) {
+                console.log('[PWA Sync] Queue OK (id=' + insertedId + ') :', method, url.split('?')[0], 'summary=' + (summary || '(vide)'));
                 updateQueueBadge();
                 ensureQueuePolling();
+                // Toast utilisateur : confirme visuellement que le point a ete mis en queue
+                try {
+                    if (method === 'POST' && /\/rest\/v1\/custom_features\b/.test(url)) {
+                        showToast('Point en attente : ' + (summary || 'enregistre offline'), 3000);
+                    } else if (isStorageMut && method === 'POST') {
+                        showToast('Photo en attente de sync', 2500);
+                    }
+                } catch(_e) {}
                 if ('serviceWorker' in navigator && 'SyncManager' in window) {
                     navigator.serviceWorker.ready.then(function(reg) {
                         return reg.sync.register('sync-queue');
@@ -213,6 +245,17 @@
                 }
                 return new Response(JSON.stringify({ queued: true, offline: true }),
                     { status: 202, headers: { 'Content-Type': 'application/json' } });
+            }).catch(function(dbErr) {
+                // CRITIQUE : si dbAdd echoue, le point est perdu apres reload !
+                // On informe explicitement l'utilisateur pour qu'il sache que sa modif
+                // n'est PAS persistee (et qu'il puisse re-essayer en ligne).
+                console.error('[PWA Sync] dbAdd ECHOUE :', dbErr, '— item:', { method: method, url: url, summary: summary });
+                try {
+                    showToast('Erreur : impossible de mettre en queue (' + (dbErr && dbErr.name ? dbErr.name : 'erreur') + '). Reessaye en ligne.', 7000);
+                } catch(_e) {}
+                // Retourner une 503 pour que le code appelant sache qu'il y a eu un probleme
+                return new Response(JSON.stringify({ error: 'queue-failed', message: String(dbErr) }),
+                    { status: 503, headers: { 'Content-Type': 'application/json' } });
             });
         });
     };
@@ -1836,6 +1879,41 @@
         return _offlineLayer;
     }
 
+    // Restaure les markers offline depuis la queue IndexedDB au reload de la page.
+    // Sans ça, les points en attente disparaissent visuellement apres rechargement
+    // (ils restent dans la queue mais l'utilisateur ne les voit plus sur la carte).
+    function restoreOfflineMarkersFromQueue() {
+        var map = findLeafletMap();
+        if (!map) {
+            // Map pas encore prete : retry differé
+            setTimeout(restoreOfflineMarkersFromQueue, 500);
+            return;
+        }
+        dbAll().then(function(items) {
+            if (!items || items.length === 0) return;
+            var count = 0;
+            items.forEach(function(it) {
+                if (it.kind !== 'rest' || it.method !== 'POST') return;
+                if (!/\/rest\/v1\/custom_features\b/.test(it.url)) return;
+                try {
+                    var body = it.bodySer && it.bodySer.type === 'string'
+                        ? JSON.parse(it.bodySer.value) : null;
+                    if (body && body.geometry) {
+                        addOfflineFeatureToMap(body);
+                        count++;
+                    }
+                } catch(e) {
+                    console.warn('[PWA] Restoration marker offline echoue :', e);
+                }
+            });
+            if (count > 0) {
+                console.log('[PWA] ' + count + ' marker(s) offline restaure(s) depuis la queue');
+            }
+        }).catch(function(e) {
+            console.warn('[PWA] dbAll echoue au reload :', e);
+        });
+    }
+
     function addOfflineFeatureToMap(body) {
         var map = findLeafletMap();
         var layer = _ensureOfflineLayer();
@@ -2077,6 +2155,12 @@
     window.addEventListener('load', function() {
         setTimeout(function() {
             updateStatusBadge();
+            // 1. Restaurer les markers orange "en attente" depuis la queue IndexedDB
+            //    (avant le replay : si on est online, le replay videra la queue et
+            //    les markers seront remplaces par les vraies features ; si on est
+            //    offline, ils resteront visibles jusqu'au retour reseau)
+            restoreOfflineMarkersFromQueue();
+            // 2. Tenter un sync si reseau dispo + queue non vide
             autoReplay();
             // Resync le flag mode test au SW (s'il a redemarre entre temps)
             if (isForcedOffline() && navigator.serviceWorker && navigator.serviceWorker.ready) {
