@@ -1699,13 +1699,16 @@
             // Ne pas ajouter si une URL identique existe deja (dedupe par contenu)
             var alreadyHas = out.some(function(o) {
                 // Comparaison par segment unique de l'URL (identifie le layer)
-                if (fb.key === 'lidar-hd-shadow') return o.url.indexOf('LIDAR-HD_MNT') >= 0;
+                // MNT LiDAR + Plan Terrier : TOUJOURS proposes en entree nommee
+                // (suppression dedup desactivee -> visibles meme si une variante
+                //  WMS / chargee en differe / mal nommee existe deja).
+                if (fb.key === 'lidar-hd-shadow') return false;
+                if (fb.key === 'terrier') return false;
                 if (fb.key === 'plan-ign-j1') return o.url.indexOf('BDUNI.J1') >= 0;
                 if (fb.key === 'orthophotos-actuelles') return /ORTHOIMAGERY\.ORTHOPHOTOS&/i.test(o.url) || /ORTHOIMAGERY\.ORTHOPHOTOS$/i.test(o.url.split('&')[0]);
                 if (fb.key === 'orthophotos-1950') return o.url.indexOf('1950-1965') >= 0;
                 if (fb.key === 'orthophotos-1965') return o.url.indexOf('1965-1980') >= 0;
                 if (fb.key === 'cadastre-ign') return o.url.indexOf('CADASTRALPARCELS') >= 0;
-                if (fb.key === 'terrier') return o.url.indexOf('TERRIER_V2') >= 0;
                 if (fb.key === 'osm') return o.url.indexOf('openstreetmap.org') >= 0;
                 return false;
             });
