@@ -14,8 +14,9 @@
     window._pwaUiLoaded = true;
 
     var DB_NAME = 'topo-sync';
-    var DB_VERSION = 1;
+    var DB_VERSION = 2;
     var STORE = 'queue';
+    var BATCH_STORE = 'precacheBatches';  // 1 entree par pre-cache lance par l'utilisateur
 
     // ===== Patch Leaflet : zoom au-dela du max n'efface plus le calque =====
     // Par defaut, quand on zoome au-dela du maxZoom d'une couche, Leaflet la
@@ -99,6 +100,9 @@
                 if (!db.objectStoreNames.contains(STORE)) {
                     db.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
                 }
+                if (!db.objectStoreNames.contains(BATCH_STORE)) {
+                    db.createObjectStore(BATCH_STORE, { keyPath: 'id' });
+                }
             };
             req.onsuccess = function() { resolve(req.result); };
             req.onerror = function() { reject(req.error); };
@@ -132,6 +136,41 @@
             return new Promise(function(resolve, reject) {
                 var tx = db.transaction(STORE, 'readwrite');
                 var req = tx.objectStore(STORE).delete(id);
+                req.onsuccess = function() { resolve(); };
+                req.onerror = function() { reject(req.error); };
+            });
+        });
+    }
+
+    // ===== Batches de pre-cache (1 par DL lance par l'utilisateur) =====
+    // {id, label, kind, date, zmin, zmax, count, urls:[...], contextCache?}
+    // urls : liste des URLs tuiles -> permet une suppression selective sans
+    // toucher aux tuiles partagees par un autre batch conserve.
+    function dbBatchPut(batch) {
+        return openDb().then(function(db) {
+            return new Promise(function(resolve, reject) {
+                var tx = db.transaction(BATCH_STORE, 'readwrite');
+                var req = tx.objectStore(BATCH_STORE).put(batch);
+                req.onsuccess = function() { resolve(); };
+                req.onerror = function() { reject(req.error); };
+            });
+        });
+    }
+    function dbBatchAll() {
+        return openDb().then(function(db) {
+            return new Promise(function(resolve, reject) {
+                var tx = db.transaction(BATCH_STORE, 'readonly');
+                var req = tx.objectStore(BATCH_STORE).getAll();
+                req.onsuccess = function() { resolve(req.result || []); };
+                req.onerror = function() { reject(req.error); };
+            });
+        }).catch(function() { return []; });
+    }
+    function dbBatchDel(id) {
+        return openDb().then(function(db) {
+            return new Promise(function(resolve, reject) {
+                var tx = db.transaction(BATCH_STORE, 'readwrite');
+                var req = tx.objectStore(BATCH_STORE).delete(id);
                 req.onsuccess = function() { resolve(); };
                 req.onerror = function() { reject(req.error); };
             });
@@ -491,7 +530,7 @@
                  (getStoredZone() ? 'Afficher la zone hors-ligne sur la carte' : 'Aucune zone hors-ligne enregistree')) +
             '</button>' +
             '<button id="pwaMCheckCache" style="' + btnSecondary + '">Verifier cache de la zone visible</button>' +
-            '<button id="pwaMClear" style="' + btnDanger + '">Vider tout le cache local</button>' +
+            '<button id="pwaMClear" style="' + btnSecondary + '">Consulter / gerer le cache hors-ligne</button>' +
             '</div>' +
 
             // Section : SYNCHRONISATION
@@ -637,28 +676,8 @@
             });
         };
         document.getElementById('pwaMClear').onclick = function() {
-            var ctxLvl = _getCorseContextLevel();
-            if (ctxLvl) {
-                // Un contexte Corse a ete telecharge a l'installation : laisser
-                // le choix de le garder (cher a retelecharger) ou tout effacer.
-                var wipeAll = confirm(
-                    'Vider le cache.\n\n' +
-                    'Un contexte Corse "' + (ctxLvl === 'full' ? 'complet (8-14)' : 'leger (8-10)') +
-                    '" a ete telecharge a l\'installation.\n\n' +
-                    'OK = TOUT supprimer (y compris ce contexte Corse)\n' +
-                    'Annuler = vider le reste mais GARDER le contexte Corse');
-                clearCache(wipeAll).then(function() {
-                    if (wipeAll) _setCorseContextLevel('');
-                    showToast(wipeAll ? 'Cache entierement vide.'
-                        : 'Cache vide (contexte Corse conserve).', 5000);
-                    m.remove();
-                });
-            } else {
-                if (!confirm('Vider tout le cache offline ? Tu auras besoin de reseau au prochain demarrage.')) return;
-                clearCache(true).then(function() {
-                    showToast('Cache vide.'); m.remove();
-                });
-            }
+            m.remove();
+            openCacheManageModal();  // choix selectif par DL lance
         };
     }
 
@@ -1002,6 +1021,13 @@
                   '<span>Inclure le contexte Corse complet aux zooms 8-10 (~80 tuiles, ~3 Mo). Utile pour dezoomer voir l\'ile entiere hors-ligne.</span>' +
                   '</label>') +
 
+            (_pendingCommunePolys
+                ? ''  // selection commune : le nom est auto-derive des communes
+                : '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+                  'Nom de cette selection (pour la retrouver dans la liste)<br>' +
+                  '<input type="text" id="pwaPName" maxlength="50" placeholder="ex. Sentier Cap Corse, Chez moi..." ' +
+                  'style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;margin-top:3px;"></label>') +
+
             '<div id="pwaPEstim" style="font-size:11px;color:#666;background:#faf7f2;padding:8px;border-radius:4px;margin-bottom:12px;"></div>' +
             '<div id="pwaPProgress" style="display:none;margin-bottom:12px;"><div style="background:#eee;border-radius:4px;overflow:hidden;height:20px;"><div id="pwaPBar" style="background:#8b4513;height:100%;width:0%;transition:width 0.2s;"></div></div><div id="pwaPLabel" style="font-size:11px;color:#666;margin-top:4px;text-align:center;">0%</div></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
@@ -1127,12 +1153,16 @@
             if (c.totalAll > 5000) {
                 if (!confirm('Telecharger ' + c.totalAll + ' tuiles ? Ca peut prendre plusieurs minutes et utiliser ~' + (c.totalAll * 0.04).toFixed(0) + ' Mo de stockage.')) return;
             }
+            // Nom personnalise (ignore pour une selection commune : auto-nom)
+            var _nameEl = document.getElementById('pwaPName');
+            var _label = (_nameEl && _nameEl.value.trim()) ? _nameEl.value.trim() : null;
             // Verif quota navigateur avant de lancer (~45 Ko/tuile, conservateur)
             var _estBytes = c.totalAll * 45000;
             _checkQuotaBeforeDownload(_estBytes).then(function(ok) {
                 if (!ok) return;
                 _requestPersistentStorage(false);
-                startPrecache(map, bounds, c.zmin, c.zmax, c.includeCorse, c.layerUrls, c.projectIds);
+                startPrecache(map, bounds, c.zmin, c.zmax, c.includeCorse,
+                    c.layerUrls, c.projectIds, null, _label);
             });
         };
 
@@ -1669,7 +1699,7 @@
         return _zoneLayer !== null;
     }
 
-    async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds, precacheTag) {
+    async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds, precacheTag, precacheLabel) {
         if (!navigator.serviceWorker.controller) {
             alert('Service Worker non actif (la page doit etre en HTTPS et rechargee).');
             return;
@@ -1794,6 +1824,34 @@
                 // Memoriser le niveau de contexte Corse pour ne plus le reproposer
                 if (precacheTag === 'corse-full') _setCorseContextLevel('full');
                 else if (precacheTag === 'corse-light') _setCorseContextLevel('light');
+                // Enregistrer ce batch pour suppression selective ulterieure
+                try {
+                    var _isCtxB = (precacheTag === 'corse-light' || precacheTag === 'corse-full');
+                    var _lbl = precacheLabel;
+                    if (!_lbl) {
+                        if (_isCtxB) {
+                            _lbl = precacheTag === 'corse-full'
+                                ? 'Contexte Corse complet (8-14)'
+                                : 'Contexte Corse leger (8-10)';
+                        } else if (zone.communes && zone.communes.length) {
+                            _lbl = 'Communes : ' + zone.communes.map(function(c){return c.nom;})
+                                .slice(0, 3).join(', ') +
+                                (zone.communes.length > 3 ? ' +' + (zone.communes.length - 3) : '');
+                        } else {
+                            _lbl = 'Zone (zoom ' + zmin + '-' + zmax + ')';
+                        }
+                    }
+                    dbBatchPut({
+                        id: 'pcb-' + Date.now(),
+                        label: _lbl,
+                        kind: _isCtxB ? 'context' : 'tiles',
+                        contextCache: _isCtxB,
+                        date: Date.now(),
+                        zmin: zmin, zmax: zmax,
+                        count: allUrls.length,
+                        urls: _isCtxB ? [] : allUrls  // context = cache dedie, pas besoin des urls
+                    });
+                } catch(_e) { console.warn('[PWA] Enregistrement batch echoue :', _e); }
                 try { showPrecachedZoneOnMap(true); } catch(_e) {}
                 setTimeout(function() {
                     if (modal && modal.parentNode) modal.remove();
@@ -2444,6 +2502,149 @@
             navigator.serviceWorker.controller.postMessage(
                 { type: 'CLEAR_CACHE', wipeContext: !!wipeContext }, [ch.port2]);
         });
+    }
+
+    // Requete generique au SW (resolue avec la reponse)
+    function _swRequest(msg) {
+        return new Promise(function(resolve) {
+            if (!navigator.serviceWorker || !navigator.serviceWorker.controller) {
+                resolve(null); return;
+            }
+            var ch = new MessageChannel();
+            ch.port1.onmessage = function(e) { resolve(e.data); };
+            try { navigator.serviceWorker.controller.postMessage(msg, [ch.port2]); }
+            catch(_e) { resolve(null); }
+        });
+    }
+
+    // ===== Modal : gerer / supprimer les caches par DL lance =====
+    // Liste chaque pre-cache lance par l'utilisateur (zone, communes, contexte
+    // Corse...) + suppression selective. La suppression d'un batch n'efface
+    // QUE ses tuiles non partagees avec un batch conserve.
+    function openCacheManageModal() {
+        var existing = document.getElementById('pwaCacheMgr');
+        if (existing) { existing.remove(); return; }
+        var m = document.createElement('div');
+        m.id = 'pwaCacheMgr';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:12px;max-width:520px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:20px 22px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Mes telechargements hors-ligne</h2>' +
+            '<button id="pwaCMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<div id="pwaCMTotal" style="font-size:12px;color:#5a3a1a;background:#faf7f2;border:1px solid #f0ebe3;border-radius:6px;padding:8px 10px;margin-bottom:8px;"></div>' +
+            '<p style="margin:0 0 10px;font-size:11px;color:#666;line-height:1.5;">Chaque ligne = un telechargement que tu as lance. Coche ceux a supprimer (les tuiles partagees avec un cache conserve ne sont PAS effacees).</p>' +
+            '<div id="pwaCMList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:120px;max-height:48vh;font-size:13px;">Chargement...</div>' +
+            '<div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap;">' +
+            '<button id="pwaCMWipeAll" style="background:#fff;color:#c0392b;border:1px solid #e8a8a0;padding:8px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">Tout supprimer</button>' +
+            '<div style="display:flex;gap:8px;">' +
+            '<button id="pwaCMCancel" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">Fermer</button>' +
+            '<button id="pwaCMDelete" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;" disabled>Supprimer la selection</button>' +
+            '</div></div></div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        var listEl = m.querySelector('#pwaCMList');
+        var delBtn = m.querySelector('#pwaCMDelete');
+        function close() { m.remove(); }
+        m.querySelector('#pwaCMClose').onclick = close;
+        m.querySelector('#pwaCMCancel').onclick = close;
+        m.onclick = function(e) { if (e.target === m) close(); };
+
+        function refresh() {
+            dbBatchAll().then(function(batches) {
+                batches.sort(function(a, b) { return (b.date || 0) - (a.date || 0); });
+                var totEl = m.querySelector('#pwaCMTotal');
+                var totCount = batches.reduce(function(s, b) { return s + (b.count || 0); }, 0);
+                if (totEl) {
+                    totEl.innerHTML = '<strong>' + batches.length + ' telechargement(s)</strong> · ' +
+                        totCount + ' elements · ~' + (totCount * 0.04).toFixed(0) + ' Mo (estime)';
+                }
+                if (batches.length === 0) {
+                    listEl.innerHTML = '<div style="color:#999;font-style:italic;padding:10px;text-align:center;">Aucun telechargement enregistre.</div>';
+                    if (totEl) totEl.innerHTML = 'Aucun telechargement hors-ligne enregistre.';
+                    delBtn.disabled = true;
+                    return;
+                }
+                listEl.innerHTML = batches.map(function(b) {
+                    var mo = ((b.count || 0) * 0.04).toFixed(b.count > 250 ? 0 : 1);
+                    var dt = b.date ? new Date(b.date).toLocaleDateString('fr-FR') +
+                        ' ' + new Date(b.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+                    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid #f4efe7;cursor:pointer;">' +
+                        '<input type="checkbox" class="pwaCMcb" data-id="' + b.id + '">' +
+                        '<span style="flex:1;">' +
+                        '<strong>' + escapeHtml(b.label || b.id) + '</strong>' +
+                        (b.kind === 'context' ? ' <span style="color:#16a085;font-size:10px;">(contexte, preserve au vidage)</span>' : '') +
+                        '<br><span style="color:#999;font-size:11px;">' + (b.count || 0) + ' elements · ~' + mo + ' Mo · ' + dt + '</span>' +
+                        '</span></label>';
+                }).join('');
+                listEl.querySelectorAll('input.pwaCMcb').forEach(function(cb) {
+                    cb.onchange = function() {
+                        delBtn.disabled = listEl.querySelectorAll('input.pwaCMcb:checked').length === 0;
+                    };
+                });
+                delBtn.disabled = true;
+            });
+        }
+        refresh();
+
+        delBtn.onclick = function() {
+            var ids = [];
+            listEl.querySelectorAll('input.pwaCMcb:checked').forEach(function(cb) { ids.push(cb.dataset.id); });
+            if (ids.length === 0) return;
+            delBtn.disabled = true;
+            delBtn.textContent = 'Suppression...';
+            dbBatchAll().then(function(batches) {
+                var sel = {}; ids.forEach(function(i) { sel[i] = true; });
+                var selected = batches.filter(function(b) { return sel[b.id]; });
+                var kept = batches.filter(function(b) { return !sel[b.id]; });
+                // URLs a conserver = union des batches NON selectionnes (tuiles)
+                var keepSet = {};
+                kept.forEach(function(b) {
+                    if (b.kind !== 'context' && b.urls) b.urls.forEach(function(u) { keepSet[u] = 1; });
+                });
+                // URLs a supprimer = (selectionnes tuiles) - keepSet
+                var delSet = {};
+                var hasContextSel = false;
+                selected.forEach(function(b) {
+                    if (b.kind === 'context') { hasContextSel = true; return; }
+                    (b.urls || []).forEach(function(u) { if (!keepSet[u]) delSet[u] = 1; });
+                });
+                var delUrls = Object.keys(delSet);
+                var ops = [];
+                if (delUrls.length) ops.push(_swRequest({ type: 'DELETE_URLS', urls: delUrls }));
+                if (hasContextSel) {
+                    ops.push(_swRequest({ type: 'DELETE_CACHES', keys: ['context'] }));
+                    _setCorseContextLevel('');
+                }
+                Promise.all(ops).then(function() {
+                    return Promise.all(selected.map(function(b) { return dbBatchDel(b.id); }));
+                }).then(function() {
+                    showToast(selected.length + ' telechargement(s) supprime(s)'
+                        + (delUrls.length ? ' (' + delUrls.length + ' tuiles)' : ''), 5000);
+                    delBtn.textContent = 'Supprimer la selection';
+                    refresh();
+                });
+            });
+        };
+
+        m.querySelector('#pwaCMWipeAll').onclick = function() {
+            if (!confirm('Tout supprimer : TOUS les caches (tuiles, contexte Corse, photos, donnees). La carte ne sera plus disponible hors-ligne tant qu\'elle n\'est pas rechargee en ligne. Continuer ?')) return;
+            clearCache(true).then(function() {
+                _setCorseContextLevel('');
+                return dbBatchAll();
+            }).then(function(batches) {
+                return Promise.all(batches.map(function(b) { return dbBatchDel(b.id); }));
+            }).then(function() {
+                showToast('Tous les caches supprimes.', 5000);
+                close();
+            });
+        };
     }
 
     // ===== GPS warm-up =====

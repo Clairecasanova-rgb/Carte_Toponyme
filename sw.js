@@ -549,10 +549,41 @@ self.addEventListener('message', (event) => {
             caches.open(PHOTO_CACHE).then(c => c.keys().then(k => k.length)),
             caches.open(API_CACHE).then(c => c.keys().then(k => k.length)),
             caches.open(HTML_CACHE).then(c => c.keys().then(k => k.length)),
-            caches.open(CTX_CACHE).then(c => c.keys().then(k => k.length)).catch(() => 0)
-        ]).then(([tiles, photos, api, html, context]) => {
-            event.ports[0] && event.ports[0].postMessage({ tiles, photos, api, html, context, version: VERSION });
+            caches.open(CTX_CACHE).then(c => c.keys().then(k => k.length)).catch(() => 0),
+            caches.open(STATIC_CACHE).then(c => c.keys().then(k => k.length)).catch(() => 0)
+        ]).then(([tiles, photos, api, html, context, statics]) => {
+            event.ports[0] && event.ports[0].postMessage({
+                tiles, photos, api, html, context, static: statics, version: VERSION
+            });
         });
+    }
+
+    // Suppression SELECTIVE : data.keys = sous-ensemble de
+    // ['tiles','context','photos','api','html','static']
+    // Suppression d'une liste d'URLs precises dans TILE_CACHE (suppression
+    // selective d'un batch : on n'efface que les tuiles non partagees).
+    if (data.type === 'DELETE_URLS' && Array.isArray(data.urls)) {
+        caches.open(TILE_CACHE).then(async (cache) => {
+            let n = 0;
+            for (const u of data.urls) {
+                try { if (await cache.delete(u)) n++; } catch (e) {}
+            }
+            event.ports[0] && event.ports[0].postMessage({ ok: true, deleted: n });
+        }).catch(() => event.ports[0] && event.ports[0].postMessage({ ok: false }));
+    }
+
+    if (data.type === 'DELETE_CACHES' && Array.isArray(data.keys)) {
+        const map = {
+            tiles: TILE_CACHE, context: CTX_CACHE, photos: PHOTO_CACHE,
+            api: API_CACHE, html: HTML_CACHE, static: STATIC_CACHE
+        };
+        const toDelete = data.keys.map(k => map[k]).filter(Boolean);
+        Promise.all(toDelete.map(name => caches.delete(name)))
+            .then(results => event.ports[0] && event.ports[0].postMessage({
+                deleted: data.keys.filter((k, i) => map[k] && results[i]),
+                ok: true
+            }))
+            .catch(() => event.ports[0] && event.ports[0].postMessage({ ok: false }));
     }
 
     if (data.type === 'CACHE_PAGE' && data.url) {
