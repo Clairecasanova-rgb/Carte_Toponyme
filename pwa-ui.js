@@ -14,9 +14,10 @@
     window._pwaUiLoaded = true;
 
     var DB_NAME = 'topo-sync';
-    var DB_VERSION = 2;
+    var DB_VERSION = 3;
     var STORE = 'queue';
     var BATCH_STORE = 'precacheBatches';  // 1 entree par pre-cache lance par l'utilisateur
+    var TRACK_STORE = 'tracks';           // 1 entree par parcours de marche enregistre
 
     // ===== Patch Leaflet : zoom au-dela du max n'efface plus le calque =====
     // Par defaut, quand on zoome au-dela du maxZoom d'une couche, Leaflet la
@@ -217,6 +218,9 @@
                 if (!db.objectStoreNames.contains(BATCH_STORE)) {
                     db.createObjectStore(BATCH_STORE, { keyPath: 'id' });
                 }
+                if (!db.objectStoreNames.contains(TRACK_STORE)) {
+                    db.createObjectStore(TRACK_STORE, { keyPath: 'id' });
+                }
             };
             req.onsuccess = function() { resolve(req.result); };
             req.onerror = function() { reject(req.error); };
@@ -285,6 +289,48 @@
             return new Promise(function(resolve, reject) {
                 var tx = db.transaction(BATCH_STORE, 'readwrite');
                 var req = tx.objectStore(BATCH_STORE).delete(id);
+                req.onsuccess = function() { resolve(); };
+                req.onerror = function() { reject(req.error); };
+            });
+        });
+    }
+
+    // ===== Parcours de marche (tracks) — store IndexedDB dedie =====
+    function dbTrackPut(track) {
+        return openDb().then(function(db) {
+            return new Promise(function(resolve, reject) {
+                var tx = db.transaction(TRACK_STORE, 'readwrite');
+                var req = tx.objectStore(TRACK_STORE).put(track);
+                req.onsuccess = function() { resolve(); };
+                req.onerror = function() { reject(req.error); };
+            });
+        });
+    }
+    function dbTrackAll() {
+        return openDb().then(function(db) {
+            return new Promise(function(resolve, reject) {
+                var tx = db.transaction(TRACK_STORE, 'readonly');
+                var req = tx.objectStore(TRACK_STORE).getAll();
+                req.onsuccess = function() { resolve(req.result || []); };
+                req.onerror = function() { reject(req.error); };
+            });
+        }).catch(function() { return []; });
+    }
+    function dbTrackGet(id) {
+        return openDb().then(function(db) {
+            return new Promise(function(resolve, reject) {
+                var tx = db.transaction(TRACK_STORE, 'readonly');
+                var req = tx.objectStore(TRACK_STORE).get(id);
+                req.onsuccess = function() { resolve(req.result || null); };
+                req.onerror = function() { reject(req.error); };
+            });
+        }).catch(function() { return null; });
+    }
+    function dbTrackDel(id) {
+        return openDb().then(function(db) {
+            return new Promise(function(resolve, reject) {
+                var tx = db.transaction(TRACK_STORE, 'readwrite');
+                var req = tx.objectStore(TRACK_STORE).delete(id);
                 req.onsuccess = function() { resolve(); };
                 req.onerror = function() { reject(req.error); };
             });
@@ -674,6 +720,12 @@
             '<button id="pwaMClear" style="' + btnSecondary + '">Consulter / gerer le cache hors-ligne</button>' +
             '</div>' +
 
+            // Section : PARCOURS
+            '<div style="' + sectionTitle + '">Parcours de marche</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaMTracks" style="' + btnPrimary + '">Enregistrer / consulter mes parcours</button>' +
+            '</div>' +
+
             // Section : SYNCHRONISATION
             '<div style="' + sectionTitle + '">Synchronisation</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
@@ -729,6 +781,7 @@
                 showToast('Aucune zone pre-cachee. Utilise "Pre-charger une zone" d\'abord.');
             }
         };
+        document.getElementById('pwaMTracks').onclick = function() { m.remove(); openTracksFeature(); };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
             if (isAppOffline()) { showToast('Pas de connexion reseau (ou mode test active)'); return; }
@@ -2949,6 +3002,426 @@
             });
         };
     }
+
+    // ============================================================
+    //  ENREGISTREMENT DE PARCOURS DE MARCHE (GPS track)
+    //  Client pur, hors-ligne. Multi-parcours, GPX, Wake Lock,
+    //  pause/reprise, stats, persistance incrementale + reprise.
+    // ============================================================
+    var _trk = null;            // parcours actif en memoire
+    var _trkWatch = null;       // id watchPosition
+    var _trkPoly = null;        // polyline live
+    var _trkWake = null;        // WakeLockSentinel
+    var _trkSaveCount = 0;      // throttle persistance
+    var _trkTick = null;        // interval maj widget
+    var _trkLastTickTs = 0;     // pour cumuler la duree active
+
+    function _trkHaversine(aLat, aLon, bLat, bLon) {
+        var R = 6371000, toR = Math.PI / 180;
+        var dLat = (bLat - aLat) * toR, dLon = (bLon - aLon) * toR;
+        var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(aLat * toR) * Math.cos(bLat * toR) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+    }
+    function _trkFmtDist(m) {
+        return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m';
+    }
+    function _trkFmtDur(ms) {
+        var s = Math.floor(ms / 1000);
+        var h = Math.floor(s / 3600), mn = Math.floor((s % 3600) / 60), se = s % 60;
+        return (h > 0 ? h + 'h' : '') + (mn < 10 && h > 0 ? '0' : '') + mn + 'm'
+            + (se < 10 ? '0' : '') + se + 's';
+    }
+
+    function _trkAcquireWake() {
+        try {
+            if (navigator.wakeLock && navigator.wakeLock.request) {
+                navigator.wakeLock.request('screen').then(function(s) {
+                    _trkWake = s;
+                    s.addEventListener('release', function() { _trkWake = null; });
+                }).catch(function() {});
+            }
+        } catch(_e) {}
+    }
+    function _trkReleaseWake() {
+        try { if (_trkWake) { _trkWake.release(); _trkWake = null; } } catch(_e) {}
+    }
+    document.addEventListener('visibilitychange', function() {
+        // Le Wake Lock est libere quand la page passe en arriere-plan :
+        // le re-acquerir au retour si un enregistrement est en cours.
+        if (document.visibilityState === 'visible' && _trk && _trk.status === 'recording') {
+            _trkAcquireWake();
+        }
+    });
+
+    function _trkPersist(force) {
+        if (!_trk) return;
+        _trkSaveCount++;
+        if (!force && _trkSaveCount % 8 !== 0) return;  // throttle (~1 sur 8 points)
+        dbTrackPut(_trk).catch(function(e) { console.warn('[Track] persist:', e); });
+    }
+
+    function _trkEnsurePoly() {
+        var map = findLeafletMap();
+        if (!map) return null;
+        if (!_trkPoly) {
+            _trkPoly = L.polyline([], {
+                color: '#e74c3c', weight: 5, opacity: 0.9, lineJoin: 'round'
+            }).addTo(map);
+        }
+        return _trkPoly;
+    }
+
+    function _trkOnPos(pos) {
+        if (!_trk || _trk.status !== 'recording') return;
+        var c = pos.coords;
+        if (c.accuracy == null || c.accuracy > 40) return;  // point trop imprecis
+        var now = Date.now();
+        var pts = _trk.points;
+        var last = pts.length ? pts[pts.length - 1] : null;
+        if (last) {
+            var d = _trkHaversine(last.lat, last.lon, c.latitude, c.longitude);
+            var dt = (now - last.t) / 1000;
+            // Filtre jitter immobile + saut GPS aberrant (>45 m/s)
+            if (d < Math.max(3, c.accuracy * 0.5)) { _trk._lastSeen = now; return; }
+            if (dt > 0 && d / dt > 45) return;
+            _trk.distance += d;
+        }
+        pts.push({
+            lat: c.latitude, lon: c.longitude, t: now,
+            alt: (c.altitude != null ? Math.round(c.altitude) : null),
+            acc: Math.round(c.accuracy)
+        });
+        // Denivele positif (seuil anti-bruit 2 m)
+        if (last && last.alt != null && c.altitude != null) {
+            var da = c.altitude - last.alt;
+            if (da > 2) _trk.gain = (_trk.gain || 0) + da;
+        }
+        var poly = _trkEnsurePoly();
+        if (poly) poly.addLatLng([c.latitude, c.longitude]);
+        _trkPersist(false);
+    }
+
+    function _trkOnErr(e) {
+        console.warn('[Track] geoloc error:', e && e.message);
+    }
+
+    function _trkStartWatch() {
+        if (!navigator.geolocation) {
+            showToast('Geolocalisation indisponible sur cet appareil.', 5000);
+            return false;
+        }
+        _trkWatch = navigator.geolocation.watchPosition(_trkOnPos, _trkOnErr, {
+            enableHighAccuracy: true, maximumAge: 0, timeout: 30000
+        });
+        return true;
+    }
+    function _trkStopWatch() {
+        if (_trkWatch != null) {
+            try { navigator.geolocation.clearWatch(_trkWatch); } catch(_e) {}
+            _trkWatch = null;
+        }
+    }
+
+    function _trkStart() {
+        if (_trk && _trk.status !== 'done') {
+            showToast('Un parcours est deja en cours.', 4000);
+            return;
+        }
+        var d = new Date();
+        _trk = {
+            id: 'trk-' + d.getTime(),
+            name: 'Parcours du ' + d.toLocaleDateString('fr-FR') + ' '
+                + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+            startedAt: d.getTime(), endedAt: null,
+            points: [], distance: 0, gain: 0,
+            activeMs: 0, status: 'recording'
+        };
+        _trkLastTickTs = Date.now();
+        if (!_trkStartWatch()) { _trk = null; return; }
+        _trkAcquireWake();
+        _trkPoly = null;
+        _trkShowWidget();
+        _trkStartTick();
+        _trkPersist(true);
+        showToast('Enregistrement du parcours demarre. Ecran maintenu allume.', 4000);
+    }
+    function _trkPause() {
+        if (!_trk || _trk.status !== 'recording') return;
+        _trk.activeMs += Date.now() - _trkLastTickTs;
+        _trk.status = 'paused';
+        _trkStopWatch();
+        _trkReleaseWake();
+        _trkUpdateWidget();
+        _trkPersist(true);
+    }
+    function _trkResume() {
+        if (!_trk || _trk.status !== 'paused') return;
+        _trk.status = 'recording';
+        _trkLastTickTs = Date.now();
+        _trkStartWatch();
+        _trkAcquireWake();
+        _trkUpdateWidget();
+        _trkPersist(true);
+    }
+    function _trkStop() {
+        if (!_trk) return;
+        if (_trk.status === 'recording') _trk.activeMs += Date.now() - _trkLastTickTs;
+        _trk.status = 'done';
+        _trk.endedAt = Date.now();
+        _trkStopWatch();
+        _trkReleaseWake();
+        _trkStopTick();
+        var saved = _trk;
+        _trkPersist(true);
+        _trkHideWidget();
+        if (_trkPoly) { try { findLeafletMap().removeLayer(_trkPoly); } catch(_e) {} _trkPoly = null; }
+        _trk = null;
+        showToast('Parcours enregistre : ' + _trkFmtDist(saved.distance)
+            + ' en ' + _trkFmtDur(saved.activeMs) + '.', 6000);
+        _trkOpenManager(saved.id);
+    }
+
+    function _trkActiveDuration() {
+        if (!_trk) return 0;
+        return _trk.activeMs + (_trk.status === 'recording'
+            ? (Date.now() - _trkLastTickTs) : 0);
+    }
+
+    // --- Widget enregistreur flottant ---
+    function _trkShowWidget() {
+        _trkHideWidget();
+        if (!document.getElementById('pwaGeoSpinStyle')) {
+            var st = document.createElement('style');
+            st.id = 'pwaGeoSpinStyle';
+            st.textContent = '@keyframes pwaGeoSpin{to{transform:rotate(360deg)}}';
+            document.head.appendChild(st);
+        }
+        var w = document.createElement('div');
+        w.id = 'pwaTrkWidget';
+        w.style.cssText =
+            'position:fixed !important;top:12px !important;left:50% !important;' +
+            'transform:translateX(-50%);z-index:100075 !important;' +
+            'background:rgba(30,30,30,0.96);color:#fff;border-radius:14px;' +
+            'box-shadow:0 4px 16px rgba(0,0,0,0.35);font:600 12px Segoe UI,sans-serif;' +
+            'padding:8px 12px;display:flex;align-items:center;gap:12px;max-width:94vw;';
+        (document.body || document.documentElement).appendChild(w);
+        _trkUpdateWidget();
+    }
+    function _trkUpdateWidget() {
+        var w = document.getElementById('pwaTrkWidget');
+        if (!w || !_trk) return;
+        var rec = _trk.status === 'recording';
+        var dur = _trkActiveDuration();
+        var dist = _trk.distance || 0;
+        var spd = dur > 0 ? (dist / (dur / 1000)) * 3.6 : 0;  // km/h moyen
+        w.innerHTML =
+            '<span style="display:inline-flex;align-items:center;gap:6px;">' +
+            '<span style="width:10px;height:10px;border-radius:50%;background:' +
+            (rec ? '#e74c3c' : '#f39c12') + ';' + (rec ? 'animation:pwaGeoSpin 1.4s linear infinite;' : '') + '"></span>' +
+            (rec ? 'Enregistrement' : 'En pause') + '</span>' +
+            '<span>' + _trkFmtDist(dist) + '</span>' +
+            '<span>' + _trkFmtDur(dur) + '</span>' +
+            '<span>' + spd.toFixed(1) + ' km/h</span>' +
+            (rec
+                ? '<button id="pwaTrkPause" style="background:#f39c12;color:#fff;border:none;border-radius:8px;padding:5px 10px;font:600 11px Segoe UI;cursor:pointer;">Pause</button>'
+                : '<button id="pwaTrkResume" style="background:#27ae60;color:#fff;border:none;border-radius:8px;padding:5px 10px;font:600 11px Segoe UI;cursor:pointer;">Reprendre</button>') +
+            '<button id="pwaTrkStop" style="background:#c0392b;color:#fff;border:none;border-radius:8px;padding:5px 10px;font:600 11px Segoe UI;cursor:pointer;">Arreter</button>';
+        var pb = document.getElementById('pwaTrkPause');
+        if (pb) pb.onclick = _trkPause;
+        var rb = document.getElementById('pwaTrkResume');
+        if (rb) rb.onclick = _trkResume;
+        var sb = document.getElementById('pwaTrkStop');
+        if (sb) sb.onclick = function() {
+            if (confirm('Arreter et enregistrer ce parcours ?')) _trkStop();
+        };
+    }
+    function _trkHideWidget() {
+        var w = document.getElementById('pwaTrkWidget');
+        if (w && w.parentNode) w.parentNode.removeChild(w);
+    }
+    function _trkStartTick() {
+        _trkStopTick();
+        _trkTick = setInterval(_trkUpdateWidget, 1000);
+    }
+    function _trkStopTick() {
+        if (_trkTick) { clearInterval(_trkTick); _trkTick = null; }
+    }
+
+    // --- Affichage d'un parcours sauvegarde sur la carte ---
+    var _trkViewLayer = null;
+    function _trkViewOnMap(track) {
+        var map = findLeafletMap();
+        if (!map || !track || !track.points || track.points.length < 2) {
+            showToast('Parcours vide ou carte indisponible.', 4000);
+            return;
+        }
+        if (_trkViewLayer) { try { map.removeLayer(_trkViewLayer); } catch(_e) {} }
+        var latlngs = track.points.map(function(p) { return [p.lat, p.lon]; });
+        _trkViewLayer = L.polyline(latlngs, {
+            color: '#8e44ad', weight: 5, opacity: 0.9
+        }).addTo(map);
+        try { map.fitBounds(_trkViewLayer.getBounds(), { padding: [40, 40] }); } catch(_e) {}
+    }
+
+    // --- Export GPX ---
+    function _trkExportGpx(track) {
+        if (!track || !track.points || !track.points.length) {
+            showToast('Parcours vide.', 3000); return;
+        }
+        var esc = function(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        };
+        var gpx = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+            '<gpx version="1.1" creator="Toponymie Corse" xmlns="http://www.topografix.com/GPX/1/1">\n' +
+            '<trk><name>' + esc(track.name) + '</name><trkseg>\n';
+        track.points.forEach(function(p) {
+            gpx += '<trkpt lat="' + p.lat + '" lon="' + p.lon + '">'
+                + (p.alt != null ? '<ele>' + p.alt + '</ele>' : '')
+                + '<time>' + new Date(p.t).toISOString() + '</time></trkpt>\n';
+        });
+        gpx += '</trkseg></trk></gpx>\n';
+        var blob = new Blob([gpx], { type: 'application/gpx+xml' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = (track.name || 'parcours').replace(/[^\w\- ]+/g, '_') + '.gpx';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function() {
+            URL.revokeObjectURL(a.href);
+            if (a.parentNode) a.parentNode.removeChild(a);
+        }, 1500);
+    }
+
+    // --- Modale gestion des parcours ---
+    function _trkOpenManager(highlightId) {
+        var existing = document.getElementById('pwaTrkMgr');
+        if (existing) existing.remove();
+        var m = document.createElement('div');
+        m.id = 'pwaTrkMgr';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:12px;max-width:540px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:20px 22px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Mes parcours</h2>' +
+            '<button id="pwaTrkClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<button id="pwaTrkNew" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI;margin-bottom:12px;">Demarrer un nouveau parcours</button>' +
+            '<div id="pwaTrkList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:120px;max-height:55vh;font-size:13px;">Chargement...</div>' +
+            '</div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        function close() { m.remove(); }
+        m.querySelector('#pwaTrkClose').onclick = close;
+        m.onclick = function(e) { if (e.target === m) close(); };
+        m.querySelector('#pwaTrkNew').onclick = function() {
+            close();
+            _trkStart();
+        };
+        var listEl = m.querySelector('#pwaTrkList');
+        function refresh() {
+            dbTrackAll().then(function(tracks) {
+                tracks.sort(function(a, b) { return (b.startedAt || 0) - (a.startedAt || 0); });
+                if (!tracks.length) {
+                    listEl.innerHTML = '<div style="color:#999;font-style:italic;padding:10px;text-align:center;">Aucun parcours enregistre.</div>';
+                    return;
+                }
+                listEl.innerHTML = tracks.map(function(t) {
+                    var hl = (t.id === highlightId) ? 'background:#fdf6ec;' : '';
+                    var st = t.status !== 'done' ? ' <span style="color:#e67e22;">(interrompu)</span>' : '';
+                    return '<div data-id="' + t.id + '" style="border-bottom:1px solid #f4efe7;padding:8px 6px;' + hl + '">' +
+                        '<div style="font-weight:600;color:#5a3a1a;">' + escapeHtml(t.name) + st + '</div>' +
+                        '<div style="color:#999;font-size:11px;margin:2px 0 6px;">' +
+                        _trkFmtDist(t.distance || 0) + ' · ' + _trkFmtDur(t.activeMs || 0) +
+                        ' · ' + (t.points ? t.points.length : 0) + ' pts' +
+                        (t.gain ? ' · D+ ' + Math.round(t.gain) + ' m' : '') + '</div>' +
+                        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                        '<button class="pwaTrkView" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Voir sur la carte</button>' +
+                        '<button class="pwaTrkRen" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
+                        '<button class="pwaTrkGpx" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Export GPX</button>' +
+                        (t.status !== 'done' ? '<button class="pwaTrkResumeT" data-id="' + t.id + '" style="background:#27ae60;color:#fff;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Reprendre</button>' : '') +
+                        '<button class="pwaTrkDel" data-id="' + t.id + '" style="background:#fff;color:#c0392b;border:1px solid #e8a8a0;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Supprimer</button>' +
+                        '</div></div>';
+                }).join('');
+                listEl.querySelectorAll('.pwaTrkView').forEach(function(b) {
+                    b.onclick = function() {
+                        dbTrackGet(b.dataset.id).then(function(t) { close(); _trkViewOnMap(t); });
+                    };
+                });
+                listEl.querySelectorAll('.pwaTrkGpx').forEach(function(b) {
+                    b.onclick = function() { dbTrackGet(b.dataset.id).then(_trkExportGpx); };
+                });
+                listEl.querySelectorAll('.pwaTrkRen').forEach(function(b) {
+                    b.onclick = function() {
+                        dbTrackGet(b.dataset.id).then(function(t) {
+                            if (!t) return;
+                            var nn = prompt('Nom du parcours :', t.name);
+                            if (nn && nn.trim()) {
+                                t.name = nn.trim();
+                                dbTrackPut(t).then(refresh);
+                            }
+                        });
+                    };
+                });
+                listEl.querySelectorAll('.pwaTrkDel').forEach(function(b) {
+                    b.onclick = function() {
+                        if (!confirm('Supprimer ce parcours definitivement ?')) return;
+                        dbTrackDel(b.dataset.id).then(refresh);
+                    };
+                });
+                listEl.querySelectorAll('.pwaTrkResumeT').forEach(function(b) {
+                    b.onclick = function() {
+                        dbTrackGet(b.dataset.id).then(function(t) {
+                            if (!t) return;
+                            close();
+                            _trk = t; _trk.status = 'paused';
+                            _trkLastTickTs = Date.now();
+                            _trkShowWidget(); _trkStartTick();
+                            _trkResume();
+                        });
+                    };
+                });
+            });
+        }
+        refresh();
+    }
+
+    // --- Reprise apres reload si un parcours etait en cours ---
+    function _trkRecoverOnLoad() {
+        dbTrackAll().then(function(tracks) {
+            var live = tracks.filter(function(t) { return t.status !== 'done'; })
+                .sort(function(a, b) { return (b.startedAt || 0) - (a.startedAt || 0); })[0];
+            if (!live) return;
+            setTimeout(function() {
+                var go = confirm('Un parcours interrompu a ete trouve ('
+                    + _trkFmtDist(live.distance || 0) + ', '
+                    + (live.points ? live.points.length : 0) + ' points).\n\n'
+                    + 'OK = reprendre l\'enregistrement\n'
+                    + 'Annuler = le conserver tel quel (consultable dans Mes parcours)');
+                if (go) {
+                    _trk = live; _trk.status = 'paused';
+                    _trkLastTickTs = Date.now();
+                    _trkShowWidget(); _trkStartTick();
+                    _trkResume();
+                } else {
+                    live.status = 'done';
+                    dbTrackPut(live);
+                }
+            }, 2500);
+        });
+    }
+    window.addEventListener('load', function() {
+        setTimeout(_trkRecoverOnLoad, 1800);
+    });
+
+    function openTracksFeature() { _trkOpenManager(); }
+    window._pwaTracks = openTracksFeature;
 
     // ===== GPS warm-up =====
     // Le premier appel a navigator.geolocation peut prendre 5-15s sur smartphone
