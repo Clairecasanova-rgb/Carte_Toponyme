@@ -656,32 +656,32 @@
             'font-family:Segoe UI,sans-serif;';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
-        var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;'
-            + 'letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;'
-            + 'border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
-        var btn = 'background:#8b4513;color:#fff;border:none;padding:10px 12px;border-radius:6px;'
-            + 'cursor:pointer;font:600 12px Segoe UI;text-align:left;width:100%;';
-        var btn2 = 'background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:10px 12px;'
-            + 'border-radius:6px;cursor:pointer;font:600 12px Segoe UI;text-align:left;width:100%;';
-        var liveStyle = 'background:' + (_liveOn ? '#c0392b' : '#1a73e8') + ';color:#fff;border:none;'
-            + 'padding:10px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;text-align:left;width:100%;';
+        // Styles IDENTIQUES au menu hors-ligne (coherence UI globale).
+        var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
+        var btnPrimary = 'background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var btnSecondary = 'background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var btnAccent = 'background:#5a3a1a;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        // Live ON = etat actif (teal, comme le mode test du menu hors-ligne)
+        var liveStyle = _liveOn
+            ? 'background:#16a085;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;'
+            : btnAccent;
         m.innerHTML =
-            '<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;max-height:88vh;'
-            + 'overflow-y:auto;padding:18px 20px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Position &amp; parcours</h2>' +
-            '<button id="pwaPPClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:88vh;'
+            + 'overflow-y:auto;padding:20px 22px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;font-family:Segoe UI,sans-serif;">Position &amp; parcours</h2>' +
+            '<button id="pwaPPClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;line-height:1;padding:0 4px;">&times;</button>' +
             '</div>' +
             '<div style="' + sectionTitle + '">Ma position</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
-            '<button id="pwaPosA" style="' + btn + '">Publier ma position sur la carte</button>' +
-            '<button id="pwaPosB" style="' + btn2 + '">Envoyer ma position (lien)</button>' +
+            '<button id="pwaPosA" style="' + btnPrimary + '">Publier ma position sur la carte</button>' +
+            '<button id="pwaPosB" style="' + btnSecondary + '">Envoyer ma position (lien)</button>' +
             '<button id="pwaPosC" style="' + liveStyle + '">'
             + (_liveOn ? 'Arreter le partage en direct' : 'Partager ma position en direct') + '</button>' +
             '</div>' +
             '<div style="' + sectionTitle + '">Parcours de marche</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
-            '<button id="pwaPosTrk" style="' + btn + '">Enregistrer / consulter mes parcours</button>' +
+            '<button id="pwaPosTrk" style="' + btnPrimary + '">Enregistrer / consulter mes parcours</button>' +
             '</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
