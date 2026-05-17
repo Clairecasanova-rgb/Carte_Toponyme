@@ -590,6 +590,24 @@ self.addEventListener('message', (event) => {
             .catch(() => event.ports[0] && event.ports[0].postMessage({ ok: false }));
     }
 
+    // Stocke un Blob photo (cree hors-ligne) dans PHOTO_CACHE sous son URL
+    // publique deterministe -> l'apercu <img src=publicUrl> marche hors-ligne
+    // avant meme la synchro (et apres : meme URL = vraie photo uploadee).
+    if (data.type === 'CACHE_PHOTO' && data.url && data.blob) {
+        event.waitUntil((async () => {
+            try {
+                const cache = await caches.open(PHOTO_CACHE);
+                await cache.put(data.url, new Response(data.blob, {
+                    status: 200,
+                    headers: { 'Content-Type': data.mime || 'image/jpeg' }
+                }));
+                event.ports[0] && event.ports[0].postMessage({ ok: true });
+            } catch (e) {
+                event.ports[0] && event.ports[0].postMessage({ ok: false, error: e.message });
+            }
+        })());
+    }
+
     if (data.type === 'CACHE_PAGE' && data.url) {
         // Mise en cache EXPLICITE de la page courante (HTML) + de pwa-ui.js.
         // Indispensable : le 1er chargement d'une carte n'est pas intercepte

@@ -298,6 +298,22 @@
     // ou un Blob -- on les serialise au mieux pour IndexedDB.
     var _origFetch = window.fetch.bind(window);
 
+    // Extrait le Blob image d'un body d'upload Storage (Blob/File direct, ou
+    // 1re entree Blob d'un FormData). Sert a cacher la photo hors-ligne.
+    function _extractImageBlob(body) {
+        try {
+            if (!body) return null;
+            if (typeof Blob !== 'undefined' && body instanceof Blob) return body;
+            if (typeof FormData !== 'undefined' && body instanceof FormData) {
+                var it = body.entries();
+                for (var p = it.next(); !p.done; p = it.next()) {
+                    if (p.value[1] instanceof Blob) return p.value[1];
+                }
+            }
+        } catch(_e) {}
+        return null;
+    }
+
     async function serializeBody(body) {
         if (!body) return { type: 'null', value: null };
         if (typeof body === 'string') return { type: 'string', value: body };
@@ -441,6 +457,17 @@
                 if (isStorageMut && method === 'POST') {
                     var pathMatch = /\/object\/([^\/]+)\/(.+)$/.exec(url);
                     var fakeUrl = pathMatch ? url.replace('/object/', '/object/public/') : url;
+                    // Mettre le Blob photo en cache sous l'URL publique : apercu
+                    // <img> fonctionnel hors-ligne avant meme la synchro.
+                    try {
+                        var _imgBlob = _extractImageBlob(init.body);
+                        if (_imgBlob && navigator.serviceWorker && navigator.serviceWorker.controller) {
+                            navigator.serviceWorker.controller.postMessage({
+                                type: 'CACHE_PHOTO', url: fakeUrl,
+                                blob: _imgBlob, mime: _imgBlob.type || 'image/jpeg'
+                            });
+                        }
+                    } catch(_e) { console.warn('[PWA] Cache photo offline echoue :', _e); }
                     return new Response(JSON.stringify({ Key: pathMatch ? pathMatch[2] : '', queued: true, offline: true, publicUrl: fakeUrl }),
                         { status: 202, headers: { 'Content-Type': 'application/json' } });
                 }
@@ -2554,7 +2581,11 @@
         if (!map || !layer) return;
         var g = body.geometry;
         var name = body.name || body.nom || 'Point en attente';
-        var labelHtml = '<span style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;">En attente</span> <strong>' + escapeHtml(name) + '</strong>';
+        var _ph = body.photo_url || body.photo_url2 || '';
+        var _phHtml = _ph
+            ? '<br><img src="' + escapeHtml(_ph) + '" alt="photo" style="max-width:180px;max-height:140px;border-radius:6px;margin-top:6px;display:block;" onerror="this.style.display=\'none\'">'
+            : '';
+        var labelHtml = '<span style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;">En attente</span> <strong>' + escapeHtml(name) + '</strong>' + _phHtml;
 
         if (g.type === 'Point' && g.coordinates) {
             var lat = g.coordinates[1], lon = g.coordinates[0];
