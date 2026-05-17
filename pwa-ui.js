@@ -663,15 +663,16 @@
             'font-family:Segoe UI,sans-serif;';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
-        // Styles IDENTIQUES au menu hors-ligne (coherence UI globale).
+        // Meme palette (brun/creme/olive) mais ton DISCRET : fonds clairs,
+        // texte brun, bordure fine — pas d'aplats satures.
         var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
-        var btnPrimary = 'background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
-        var btnSecondary = 'background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
-        var btnAccent = 'background:#5a3a1a;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
-        // Live ON = etat actif (teal, comme le mode test du menu hors-ligne)
+        var btnDiscret = 'background:#f7f3ec;color:#5a3a1a;border:1px solid #e3dac8;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var btnPrimary = btnDiscret;
+        var btnSecondary = btnDiscret;
+        // Live ON : teinte teal douce (etat actif) ; OFF : discret comme le reste
         var liveStyle = _liveOn
-            ? 'background:#16a085;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;'
-            : btnAccent;
+            ? 'background:#e6f4f0;color:#0e7a68;border:1px solid #bfe3da;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;'
+            : btnDiscret;
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:88vh;'
             + 'overflow-y:auto;padding:20px 22px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
