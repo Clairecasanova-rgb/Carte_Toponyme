@@ -37,6 +37,34 @@
         o.minNativeZoom = 8;
         o.maxZoom = 22;
         o.minZoom = 0;
+        _attachTileErrorFallback(layer);
+    }
+
+    // Fallback robuste INDEPENDANT des metadonnees : si une tuile echoue
+    // HORS-LIGNE (zoom au-dela du cache, ex: contexte Corse z>10), on baisse
+    // maxNativeZoom de cette couche au niveau qui echoue -1. Leaflet agrandit
+    // alors la tuile cachee la plus profonde -> flou mais JAMAIS de trou.
+    // Converge tout seul vers le zoom reellement cache, par couche, sans
+    // savoir ce qui a ete telecharge.
+    function _attachTileErrorFallback(layer) {
+        if (!layer || layer.__pwaTileErrHook) return;
+        layer.__pwaTileErrHook = true;
+        layer.on('tileerror', function(e) {
+            try {
+                var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
+                if (!offline) return;
+                var z = (e && e.coords && typeof e.coords.z === 'number')
+                    ? e.coords.z
+                    : (layer._map ? layer._map.getZoom() : null);
+                if (z == null) return;
+                var cur = (layer.options.maxNativeZoom != null) ? layer.options.maxNativeZoom : 21;
+                var target = Math.max(8, Math.min(cur, z) - 1);
+                if (target < cur) {
+                    layer.options.maxNativeZoom = target;
+                    if (layer._map) { try { layer.redraw(); } catch(_e) {} }
+                }
+            } catch(_e) {}
+        });
     }
     if (typeof L !== 'undefined' && L.TileLayer && L.TileLayer.prototype) {
         var _origTLOnAdd = L.TileLayer.prototype.onAdd;
@@ -97,11 +125,15 @@
             map.eachLayer(function(l) {
                 if (!(l instanceof L.TileLayer)) return;
                 if (offline && maxCached) {
-                    // Hors-ligne : cap au zoom cache -> upscale CSS au-dela
+                    // Hors-ligne avec indice : cap au zoom cache -> upscale CSS
                     if (l.options.maxNativeZoom !== maxCached) {
                         l.options.maxNativeZoom = maxCached;
                         if (l._map) try { l.redraw(); } catch(_e) {}
                     }
+                } else if (offline) {
+                    // Hors-ligne SANS metadonnees : on ne force PAS un cap haut
+                    // (ferait clignoter des trous). Le hook 'tileerror'
+                    // (_attachTileErrorFallback) baissera tout seul au besoin.
                 } else {
                     // En ligne : maxNativeZoom haut (le SW gere le > max serveur)
                     if (l.options.maxNativeZoom !== 21) {
