@@ -2367,8 +2367,8 @@
             '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Nom du raccourci</h2>' +
             '<button id="pwaRClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
-            '<p style="margin:0 0 14px;font-size:12px;color:#666;line-height:1.5;">Ce nom apparaitra sous l\'icone sur ton ecran d\'accueil apres installation. Max 12 caracteres pour le nom court (au-dela : tronque).</p>' +
-            '<input type="text" id="pwaRInput" maxlength="60" value="' + escapeHtml(defaultName) + '" placeholder="ex. Brando, Cap Corse..." style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-bottom:6px;">' +
+            '<p style="margin:0 0 14px;font-size:12px;color:#666;line-height:1.5;">Nom du raccourci sur l\'ecran d\'accueil (max 12 caracteres).</p>' +
+            '<input type="text" id="pwaRInput" maxlength="60" value="' + escapeHtml(defaultName) + '" placeholder="Nom du raccourci" style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-bottom:6px;">' +
             '<div id="pwaRPreview" style="font-size:11px;color:#888;margin-bottom:14px;"></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button id="pwaRReset" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Defaut</button>' +
