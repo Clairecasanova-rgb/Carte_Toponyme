@@ -775,12 +775,23 @@
             'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
-        // Style cohérent avec l'UI moderne (palette brun/olive + dark accents)
-        var btnPrimary = 'background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
-        var btnSecondary = 'background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
-        var btnAccent = 'background:#5a3a1a;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
-        var btnDanger = 'background:#fff;color:#c0392b;border:1px solid #e8a8a0;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
-        var btnTest = 'background:' + (isForcedOffline() ? '#16a085' : '#fff') + ';color:' + (isForcedOffline() ? '#fff' : '#8b4513') + ';border:1px solid ' + (isForcedOffline() ? '#16a085' : '#d8cdb8') + ';padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        // Ton DISCRET, meme palette brun/creme/olive. Hierarchie conservee :
+        // les actions auparavant en couleur foncee (primary/accent) restent
+        // mises en avant via un fond creme plus chaud + texte plus appuye ;
+        // les autres en creme tres clair.
+        var _bbase = 'padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        // Emphase (ex-#8b4513) : fond creme chaud, bordure ambree, texte appuye
+        var btnPrimary = 'background:#efe1cd;color:#5a3a1a;border:1px solid #d8c2a0;font-weight:700;' + _bbase;
+        // Secondaire : creme tres clair
+        var btnSecondary = 'background:#f7f3ec;color:#5a3a1a;border:1px solid #e3dac8;' + _bbase;
+        // Accent (ex-#5a3a1a, le plus fonce) : meme emphase que primary
+        var btnAccent = btnPrimary;
+        // Danger : rouge sobre, fond clair
+        var btnDanger = 'background:#fcf1ef;color:#c0392b;border:1px solid #e8c8c4;' + _bbase;
+        // Test : actif = teal doux ; inactif = secondaire discret
+        var btnTest = isForcedOffline()
+            ? 'background:#e6f4f0;color:#0e7a68;border:1px solid #bfe3da;' + _bbase
+            : 'background:#f7f3ec;color:#5a3a1a;border:1px solid #e3dac8;' + _bbase;
         var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
 
         m.innerHTML =
