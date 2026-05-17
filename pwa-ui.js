@@ -3038,6 +3038,8 @@
     var _trkWatch = null;       // id watchPosition
     var _trkPoly = null;        // polyline live
     var _trkWake = null;        // WakeLockSentinel
+    var _trkWakeOk = false;     // verrou ecran reellement actif ?
+    var _trkWakeWarned = false; // avertissement deja affiche ?
     var _trkSaveCount = 0;      // throttle persistance
     var _trkTick = null;        // interval maj widget
     var _trkLastTickTs = 0;     // pour cumuler la duree active
@@ -3060,15 +3062,40 @@
             + (se < 10 ? '0' : '') + se + 's';
     }
 
+    function _trkWakeWarn() {
+        if (_trkWakeWarned) return;
+        _trkWakeWarned = true;
+        showToast('Verrou ecran indisponible : regler le delai de mise en veille du '
+            + 'telephone sur long/jamais et desactiver l\'economie de batterie '
+            + 'pendant l\'enregistrement (sinon verrouillage auto -> GPS suspendu).', 9000);
+    }
     function _trkAcquireWake() {
+        if (!(navigator.wakeLock && navigator.wakeLock.request)) {
+            _trkWakeOk = false;
+            if (_trk && _trk.status === 'recording') _trkWakeWarn();
+            return;
+        }
         try {
-            if (navigator.wakeLock && navigator.wakeLock.request) {
-                navigator.wakeLock.request('screen').then(function(s) {
-                    _trkWake = s;
-                    s.addEventListener('release', function() { _trkWake = null; });
-                }).catch(function() {});
-            }
-        } catch(_e) {}
+            navigator.wakeLock.request('screen').then(function(s) {
+                _trkWake = s;
+                _trkWakeOk = true;
+                s.addEventListener('release', function() {
+                    _trkWake = null;
+                    _trkWakeOk = false;
+                    // Release systeme (economie batterie...) : re-tenter si
+                    // l'enregistrement continue et la page est visible.
+                    if (_trk && _trk.status === 'recording'
+                        && document.visibilityState === 'visible') {
+                        setTimeout(_trkAcquireWake, 1500);
+                    }
+                });
+            }).catch(function() {
+                _trkWakeOk = false;
+                if (_trk && _trk.status === 'recording') _trkWakeWarn();
+            });
+        } catch(_e) {
+            _trkWakeOk = false;
+        }
     }
     function _trkReleaseWake() {
         try { if (_trkWake) { _trkWake.release(); _trkWake = null; } } catch(_e) {}
@@ -3384,7 +3411,10 @@
         var dur = _trkActiveDuration();
         var dist = _trk.distance || 0;
         t.innerHTML = (_trk.status === 'recording' ? 'Enregistrement' : 'En pause')
-            + '<br>' + _trkFmtDist(dist) + '<br>' + _trkFmtDur(dur);
+            + '<br>' + _trkFmtDist(dist) + '<br>' + _trkFmtDur(dur)
+            + (_trkWakeOk ? ''
+               : '<br><span style="color:#5a2a00;font-size:11px;">verrou ecran inactif '
+                 + '— risque de mise en veille auto</span>');
     }
     function _trkHideWidget() {
         var w = document.getElementById('pwaTrkWidget');
