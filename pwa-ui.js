@@ -3843,18 +3843,53 @@
             var txt = 'Ma position : ' + lat + ', ' + lon
                 + ' (precision ~' + Math.round(c.accuracy || 0) + ' m)'
                 + '\nCarte : ' + carteUrl;
-            if (navigator.share) {
+            // navigator.share exige un geste utilisateur RECENT : impossible
+            // de l'appeler directement apres le fix GPS asynchrone (activation
+            // expiree -> rejet silencieux). On affiche un panneau ; le tap sur
+            // "Partager" devient un geste valide.
+            var ex = document.getElementById('pwaPosShareModal');
+            if (ex) ex.remove();
+            var m = document.createElement('div');
+            m.id = 'pwaPosShareModal';
+            m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100070;' +
+                'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+            (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+            m.innerHTML =
+                '<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:20px 22px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+                '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Ma position</h2>' +
+                '<button id="pwaPSClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+                '</div>' +
+                '<div style="font-size:12px;color:#5a3a1a;background:#faf7f2;border:1px solid #f0ebe3;border-radius:6px;padding:8px 10px;margin-bottom:12px;word-break:break-all;line-height:1.5;">'
+                + lat + ', ' + lon + ' (~' + Math.round(c.accuracy || 0) + ' m)<br>'
+                + '<a href="' + mapsUrl + '" target="_blank" rel="noopener" style="color:#1a73e8;">Ouvrir dans Maps</a></div>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                (navigator.share ? '<button id="pwaPSshare" style="flex:1;background:#8b4513;color:#fff;border:none;border-radius:8px;padding:10px;font:600 13px Segoe UI;cursor:pointer;">Partager</button>' : '') +
+                '<button id="pwaPScopy" style="flex:1;background:#f0ebe3;color:#5a3a1a;border:none;border-radius:8px;padding:10px;font:600 13px Segoe UI;cursor:pointer;">Copier</button>' +
+                '</div></div>';
+            function close() { m.remove(); }
+            m.querySelector('#pwaPSClose').onclick = close;
+            m.onclick = function(e) { if (e.target === m) close(); };
+            var sh = m.querySelector('#pwaPSshare');
+            if (sh) sh.onclick = function() {
                 navigator.share({ title: 'Ma position', text: txt, url: mapsUrl })
-                    .catch(function() {});
-            } else if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(txt + '\n' + mapsUrl).then(function() {
-                    showToast('Position copiee dans le presse-papier.', 5000);
-                }).catch(function() {
-                    prompt('Copier la position :', txt + '\n' + mapsUrl);
-                });
-            } else {
-                prompt('Copier la position :', txt + '\n' + mapsUrl);
-            }
+                    .then(close)
+                    .catch(function(err) {
+                        if (err && err.name === 'AbortError') return;  // annule par l'utilisateur
+                        showToast('Partage indisponible : utiliser Copier.', 5000);
+                    });
+            };
+            m.querySelector('#pwaPScopy').onclick = function() {
+                var full = txt + '\n' + mapsUrl;
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(full).then(function() {
+                        showToast('Position copiee.', 4000); close();
+                    }).catch(function() { prompt('Copier la position :', full); });
+                } else {
+                    prompt('Copier la position :', full);
+                }
+            };
         });
     }
     window._pwaSharePos = _shareMyPositionOnMap;
