@@ -1158,7 +1158,7 @@
                   '<select id="pwaCorseCtx" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-top:3px;">' +
                   '<option value="" selected>Aucun</option>' +
                   '<option value="10">Leger — zooms 8-10 (~3 Mo)</option>' +
-                  '<option value="13">Detaille — zooms 8-13 (~40 Mo)</option>' +
+                  '<option value="14">Detaille — couches 8-14, Plan IGN 8-15 (~350 Mo)</option>' +
                   '</select></label>') +
 
             (_pendingCommunePolys
@@ -1216,12 +1216,14 @@
             var _ctxSel = document.getElementById('pwaCorseCtx');
             var corseCtxZmax = _ctxSel ? (parseInt(_ctxSel.value, 10) || 0) : 0;
             var includeCorse = corseCtxZmax > 0;
-            // Estimation tuiles contexte Corse selon le zmax (par couche) :
-            // 8-10 ~80, 8-13 ~1300 (croissance x4 par niveau).
+            // Estimation tuiles contexte Corse selon le zmax (par couche,
+            // cumul 8..zmax, croissance ~x4 par niveau) :
             var corseTilesPerLayer = !includeCorse ? 0
-                : (corseCtxZmax >= 13 ? 1300 : corseCtxZmax >= 12 ? 350
-                   : corseCtxZmax >= 11 ? 90 : 25);
-            var corseTiles = corseTilesPerLayer * nLayers;
+                : (corseCtxZmax >= 14 ? 4300 : corseCtxZmax >= 13 ? 1300
+                   : corseCtxZmax >= 12 ? 350 : corseCtxZmax >= 11 ? 90 : 25);
+            // + Plan IGN pousse a z15 sur la Corse (detaille) : ~12800 tuiles
+            var corseTiles = corseTilesPerLayer * nLayers
+                + (corseCtxZmax >= 14 ? 12800 : 0);
             var totalTiles = totalT * nLayers + corseTiles;
             var nProjects = getCheckedProjects().length;
             var estMo = (totalTiles * 0.04).toFixed(1);
@@ -1920,6 +1922,23 @@
             for (var cz = 8; cz <= ctxZmax; cz++) {
                 if (cz >= zmin && cz <= zmax) continue;
                 addTilesForBounds(cz, CORSE_BOUNDS.north, CORSE_BOUNDS.south, CORSE_BOUNDS.west, CORSE_BOUNDS.east);
+            }
+            // Contexte detaille (ctxZmax >= 14) : pousser le Plan IGN J+1
+            // (couche legere) jusqu'a z15 sur toute la Corse, comme l'install
+            // complet. Les couches lourdes restent a ctxZmax.
+            if (ctxZmax >= 14) {
+                var _planUrl = null;
+                for (var _pi = 0; _pi < layerUrls.length; _pi++) {
+                    if (/GEOGRAPHICALGRIDSYSTEMS\.PLANIGNV2|GEOGRAPHICALGRIDSYSTEMS\.MAPS\.BDUNI\.J1/i.test(layerUrls[_pi])) {
+                        _planUrl = layerUrls[_pi]; break;
+                    }
+                }
+                if (_planUrl) {
+                    for (var pz = ctxZmax + 1; pz <= 15; pz++) {
+                        addTilesForBounds(pz, CORSE_BOUNDS.north, CORSE_BOUNDS.south,
+                            CORSE_BOUNDS.west, CORSE_BOUNDS.east, [_planUrl]);
+                    }
+                }
             }
         }
 
