@@ -716,7 +716,6 @@
                 (isPrecachedZoneVisible() ? 'Masquer la zone hors-ligne sur la carte' :
                  (getStoredZone() ? 'Afficher la zone hors-ligne sur la carte' : 'Aucune zone hors-ligne enregistree')) +
             '</button>' +
-            '<button id="pwaMCheckCache" style="' + btnSecondary + '">Verifier cache de la zone visible</button>' +
             '<button id="pwaMClear" style="' + btnSecondary + '">Consulter / gerer le cache hors-ligne</button>' +
             '</div>' +
 
@@ -787,48 +786,6 @@
             if (isAppOffline()) { showToast('Pas de connexion reseau (ou mode test active)'); return; }
             replayQueue().then(function() { showToast('Synchro terminee'); m.remove(); });
         };
-        document.getElementById('pwaMCheckCache').onclick = function() {
-            var map = findLeafletMap();
-            if (!map) { showToast('Carte non detectee'); return; }
-            var bounds = map.getBounds();
-            var zoom = map.getZoom();
-            var layerUrls = collectTileLayerUrls(map);
-            var n = Math.pow(2, zoom);
-            var nb = bounds.getNorth(), sb = bounds.getSouth(), wb = bounds.getWest(), eb = bounds.getEast();
-            var xmin = Math.floor((wb + 180) / 360 * n);
-            var xmax = Math.floor((eb + 180) / 360 * n);
-            var ymin = Math.floor((1 - Math.log(Math.tan(nb * Math.PI/180) + 1/Math.cos(nb * Math.PI/180))/Math.PI)/2 * n);
-            var ymax = Math.floor((1 - Math.log(Math.tan(sb * Math.PI/180) + 1/Math.cos(sb * Math.PI/180))/Math.PI)/2 * n);
-            var expected = [];
-            for (var x = Math.min(xmin,xmax); x <= Math.max(xmin,xmax); x++) {
-                for (var y = Math.min(ymin,ymax); y <= Math.max(ymin,ymax); y++) {
-                    layerUrls.forEach(function(tpl) {
-                        if (tpl.indexOf('{s}') !== -1) {
-                            ['a','b','c'].forEach(function(s) {
-                                expected.push(tpl.replace('{z}',zoom).replace('{x}',x).replace('{y}',y).replace('{s}',s));
-                            });
-                        } else {
-                            expected.push(tpl.replace('{z}',zoom).replace('{x}',x).replace('{y}',y));
-                        }
-                    });
-                }
-            }
-            caches.open('tiles-topo-v1').then(function(cache) {
-                Promise.all(expected.map(function(u) { return cache.match(u).then(function(r) { return !!r; }); }))
-                    .then(function(results) {
-                        var hits = results.filter(function(x) { return x; }).length;
-                        alert('Zone visible (zoom ' + zoom + ') : ' + hits + ' / ' + expected.length + ' tuiles dans le cache. ' +
-                              'Couches actives : ' + layerUrls.length + '.\n\n' +
-                              (hits === 0 ? 'Aucune tuile cachee. Pre-charge cette zone d\'abord.' :
-                               hits < expected.length ? 'Certaines tuiles manquent. Re-pre-charger cette zone peut aider.' :
-                               'Toutes les tuiles sont cachees.'));
-                    });
-            }).catch(function(e) {
-                alert('Erreur lecture cache : ' + e.message);
-            });
-            m.remove();
-        };
-
         document.getElementById('pwaMSimOffline').onclick = function() {
             var newState = !isForcedOffline();
             setForcedOffline(newState);
@@ -2866,6 +2823,57 @@
         });
     }
 
+    // Conversion tuile -> coords + bbox d'un batch (pour centrer la carte)
+    function _tileToLon(x, z) { return x / Math.pow(2, z) * 360 - 180; }
+    function _tileToLat(y, z) {
+        var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z);
+        return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+    }
+    function _parseXYZ(u) {
+        try {
+            var url = new URL(u);
+            if (/data\.geopf\.fr\/wmts/i.test(u)) {
+                var z = null, x = null, y = null;
+                url.searchParams.forEach(function(v, k) {
+                    var kl = k.toLowerCase();
+                    if (kl === 'tilematrix') z = parseInt(v, 10);
+                    else if (kl === 'tilecol') x = parseInt(v, 10);
+                    else if (kl === 'tilerow') y = parseInt(v, 10);
+                });
+                if (z != null && x != null && y != null) return { z: z, x: x, y: y };
+                return null;
+            }
+            var m = url.pathname.match(/\/tile\/(\d+)\/(\d+)\/(\d+)\/?$/);
+            if (m && /arcgisonline/i.test(u)) return { z: +m[1], y: +m[2], x: +m[3] };
+            m = url.pathname.match(/\/(\d+)\/(\d+)\/(\d+)\.[a-z0-9]+$/i);
+            if (m) return { z: +m[1], x: +m[2], y: +m[3] };
+            return null;
+        } catch (e) { return null; }
+    }
+    function _batchBounds(b) {
+        if (typeof L === 'undefined') return null;
+        if (b && b.kind === 'context') {
+            return L.latLngBounds(
+                [CORSE_BOUNDS.south, CORSE_BOUNDS.west],
+                [CORSE_BOUNDS.north, CORSE_BOUNDS.east]);
+        }
+        var urls = (b && b.urls) || [];
+        if (!urls.length) return null;
+        var minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity, got = false;
+        var step = Math.max(1, Math.ceil(urls.length / 4000));
+        for (var i = 0; i < urls.length; i += step) {
+            var t = _parseXYZ(urls[i]);
+            if (!t) continue;
+            var lo1 = _tileToLon(t.x, t.z), lo2 = _tileToLon(t.x + 1, t.z);
+            var la1 = _tileToLat(t.y, t.z), la2 = _tileToLat(t.y + 1, t.z);
+            minLon = Math.min(minLon, lo1, lo2); maxLon = Math.max(maxLon, lo1, lo2);
+            minLat = Math.min(minLat, la1, la2); maxLat = Math.max(maxLat, la1, la2);
+            got = true;
+        }
+        if (!got) return null;
+        return L.latLngBounds([minLat, minLon], [maxLat, maxLon]);
+    }
+
     // ===== Modal : gerer / supprimer les caches par DL lance =====
     // Liste chaque pre-cache lance par l'utilisateur (zone, communes, contexte
     // Corse...) + suppression selective. La suppression d'un batch n'efface
@@ -2923,17 +2931,32 @@
                     var mo = ((b.count || 0) * 0.04).toFixed(b.count > 250 ? 0 : 1);
                     var dt = b.date ? new Date(b.date).toLocaleDateString('fr-FR') +
                         ' ' + new Date(b.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
-                    return '<label style="display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid #f4efe7;cursor:pointer;">' +
+                    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid #f4efe7;">' +
+                        '<label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;">' +
                         '<input type="checkbox" class="pwaCMcb" data-id="' + b.id + '">' +
                         '<span style="flex:1;">' +
                         '<strong>' + escapeHtml(b.label || b.id) + '</strong>' +
                         (b.kind === 'context' ? ' <span style="color:#16a085;font-size:10px;">(contexte, preserve au vidage)</span>' : '') +
                         '<br><span style="color:#999;font-size:11px;">' + (b.count || 0) + ' elements · ~' + mo + ' Mo · ' + dt + '</span>' +
-                        '</span></label>';
+                        '</span></label>' +
+                        '<button class="pwaCMfocus" data-id="' + b.id + '" style="flex:none;background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:6px 10px;font:600 11px Segoe UI;cursor:pointer;">Centrer</button>' +
+                        '</div>';
                 }).join('');
                 listEl.querySelectorAll('input.pwaCMcb').forEach(function(cb) {
                     cb.onchange = function() {
                         delBtn.disabled = listEl.querySelectorAll('input.pwaCMcb:checked').length === 0;
+                    };
+                });
+                listEl.querySelectorAll('button.pwaCMfocus').forEach(function(fb) {
+                    fb.onclick = function() {
+                        var b = batches.filter(function(x) { return x.id === fb.dataset.id; })[0];
+                        if (!b) return;
+                        var bnds = _batchBounds(b);
+                        if (!bnds) { showToast('Zone indeterminee pour ce telechargement.', 4000); return; }
+                        var mp = findLeafletMap();
+                        if (!mp) { showToast('Carte non detectee.', 3000); return; }
+                        close();
+                        try { mp.fitBounds(bnds, { padding: [40, 40] }); } catch(_e) {}
                     };
                 });
                 delBtn.disabled = true;
