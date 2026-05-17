@@ -521,6 +521,7 @@
             statsEl.innerHTML =
                 '<strong>Cache local (' + s.version + ')</strong><br>' +
                 'Tuiles : ' + s.tiles + '<br>' +
+                (s.context ? 'Contexte Corse (installe) : ' + s.context + ' tuiles<br>' : '') +
                 'Photos : ' + s.photos + '<br>' +
                 'API : ' + s.api + '<br>' +
                 'Cartes HTML : ' + s.html;
@@ -613,24 +614,45 @@
                     return Promise.all(regs.map(function(r) { return r.unregister(); }));
                   })
                 : Promise.resolve();
-            // 2. Vider tous les caches
+            // 2. Vider les caches SAUF le contexte Corse installe (cher a
+            //    retelecharger) : une MAJ PWA rafraichit le code, pas les
+            //    donnees hors-ligne de l'utilisateur.
             var cachePromise = 'caches' in window
                 ? caches.keys().then(function(keys) {
-                    return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+                    return Promise.all(keys
+                        .filter(function(k) { return k !== 'corse-context'; })
+                        .map(function(k) { return caches.delete(k); }));
                   })
                 : Promise.resolve();
             Promise.all([swPromise, cachePromise]).then(function() {
-                _setCorseContextLevel('');  // cache vide -> flag contexte Corse obsolete
-                showToast('Mise a jour : rechargement...');
+                // flag contexte Corse CONSERVE (le cache CTX n'a pas ete vide)
+                showToast('Mise a jour : rechargement (contexte Corse conserve)...');
                 setTimeout(function() { location.reload(true); }, 800);
             });
         };
         document.getElementById('pwaMClear').onclick = function() {
-            if (!confirm('Vider tout le cache offline ? Tu auras besoin de reseau au prochain demarrage.')) return;
-            clearCache().then(function() {
-                _setCorseContextLevel('');  // cache vide -> flag contexte Corse obsolete
-                showToast('Cache vide.'); m.remove();
-            });
+            var ctxLvl = _getCorseContextLevel();
+            if (ctxLvl) {
+                // Un contexte Corse a ete telecharge a l'installation : laisser
+                // le choix de le garder (cher a retelecharger) ou tout effacer.
+                var wipeAll = confirm(
+                    'Vider le cache.\n\n' +
+                    'Un contexte Corse "' + (ctxLvl === 'full' ? 'complet (8-14)' : 'leger (8-10)') +
+                    '" a ete telecharge a l\'installation.\n\n' +
+                    'OK = TOUT supprimer (y compris ce contexte Corse)\n' +
+                    'Annuler = vider le reste mais GARDER le contexte Corse');
+                clearCache(wipeAll).then(function() {
+                    if (wipeAll) _setCorseContextLevel('');
+                    showToast(wipeAll ? 'Cache entierement vide.'
+                        : 'Cache vide (contexte Corse conserve).', 5000);
+                    m.remove();
+                });
+            } else {
+                if (!confirm('Vider tout le cache offline ? Tu auras besoin de reseau au prochain demarrage.')) return;
+                clearCache(true).then(function() {
+                    showToast('Cache vide.'); m.remove();
+                });
+            }
         };
     }
 
@@ -1720,7 +1742,11 @@
                 }, 500);
             }
         };
-        navigator.serviceWorker.controller.postMessage({ type: 'PRECACHE_URLS', urls: allUrls }, [ch.port2]);
+        // context=true -> le SW range ces tuiles dans CTX_CACHE (preserve au
+        // vidage de cache sauf choix explicite de l'utilisateur).
+        var _isCtx = (precacheTag === 'corse-light' || precacheTag === 'corse-full');
+        navigator.serviceWorker.controller.postMessage(
+            { type: 'PRECACHE_URLS', urls: allUrls, context: _isCtx }, [ch.port2]);
     }
 
     // ===== Bandeau de progression leger (pre-cache sans modale) =====
@@ -2341,12 +2367,13 @@
         });
     }
 
-    function clearCache() {
+    function clearCache(wipeContext) {
         return new Promise(function(resolve) {
             if (!navigator.serviceWorker.controller) { resolve(false); return; }
             var ch = new MessageChannel();
             ch.port1.onmessage = function(e) { resolve(e.data && e.data.cleared); };
-            navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' }, [ch.port2]);
+            navigator.serviceWorker.controller.postMessage(
+                { type: 'CLEAR_CACHE', wipeContext: !!wipeContext }, [ch.port2]);
         });
     }
 
@@ -2414,6 +2441,16 @@
     window.addEventListener('load', function() {
         setTimeout(function() {
             updateStatusBadge();
+            // 0. Mettre en cache la page courante (HTML) si en ligne, pour
+            //    qu'elle soit lancable hors-ligne. Le 1er chargement n'est PAS
+            //    intercepte par le SW -> sans ca : "Offline" au lancement.
+            try {
+                if (navigator.onLine && navigator.serviceWorker && navigator.serviceWorker.controller) {
+                    navigator.serviceWorker.controller.postMessage({
+                        type: 'CACHE_PAGE', url: location.href.split('#')[0]
+                    });
+                }
+            } catch(_e) {}
             // 0. Patcher les TileLayers deja en place (maxNativeZoom etc.)
             _patchExistingTileLayers();
             // 0bis. Afficher la zone hors-ligne par defaut si une zone est storee

@@ -19,8 +19,14 @@ const TILE_CACHE = 'tiles-' + VERSION;
 const API_CACHE = 'api-' + VERSION;
 const PHOTO_CACHE = 'photos-' + VERSION;
 const HTML_CACHE = 'html-' + VERSION;
+// Contexte Corse telecharge a l'installation. Nom VOLONTAIREMENT sans suffixe
+// de VERSION : il survit aux mises a jour du SW ET au vidage du cache, sauf si
+// l'utilisateur choisit explicitement de le supprimer (wipeContext).
+const CTX_CACHE = 'corse-context';
 
-const MAX_TILES = 100000;   // ~2-5 Go selon le device (limite haute, browser quota prendra le relai)
+// Plus de plafond de tuiles : pas d'eviction LRU cote app. Seul le quota du
+// navigateur peut evincer (sous pression disque). MAX_TILES conserve a titre
+// indicatif mais N'EST PLUS applique.
 const MAX_PHOTOS = 500;
 const API_TTL = 24 * 60 * 60 * 1000;  // 24h
 
@@ -42,7 +48,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then(keys => Promise.all(
-            keys.filter(k => !k.endsWith('-' + VERSION))
+            keys.filter(k => !k.endsWith('-' + VERSION) && k !== CTX_CACHE)
                 .map(k => caches.delete(k))
         )).then(() => self.clients.claim())
     );
@@ -78,17 +84,8 @@ function isHtmlCarte(url) {
 // LRU simple : limite la taille du cache en virant les plus anciennes entrees.
 // Ne s'execute reellement qu'une fois sur N appels pour eviter de scanner
 // le cache complet a chaque tuile (cache.keys() est O(N) sur certains devices).
-const _trimCounters = {};
-async function trimCache(cacheName, maxEntries) {
-    _trimCounters[cacheName] = (_trimCounters[cacheName] || 0) + 1;
-    if (_trimCounters[cacheName] % 50 !== 0) return;
-    const cache = await caches.open(cacheName);
-    const keys = await cache.keys();
-    if (keys.length > maxEntries) {
-        const toDelete = keys.length - maxEntries;
-        await Promise.all(keys.slice(0, toDelete).map(k => cache.delete(k)));
-    }
-}
+// (trimCache supprime : plus de plafond/eviction LRU cote app. Le quota du
+//  navigateur reste le seul garde-fou sous forte pression disque.)
 
 // Helper offline : court-circuite le fetch reseau pour eviter timeouts longs.
 // Inclut aussi le mode test simule (toggle SET_FORCE_OFFLINE depuis le client)
@@ -106,8 +103,17 @@ function _getCache(name) {
 // === Stale-While-Revalidate ===
 async function staleWhileRevalidate(request, cacheName) {
     const cache = await _getCache(cacheName);
-    const cached = await cache.match(request);
-    if (_isOffline()) return cached || new Response('Offline', { status: 503 });
+    let cached = await cache.match(request);
+    // Fallback tolerant (query string / hash differents) avant d'abandonner
+    if (!cached) cached = await cache.match(request, { ignoreSearch: true });
+    if (_isOffline()) {
+        return cached || new Response(
+            '<!DOCTYPE html><meta charset="utf-8"><body style="font:16px system-ui;padding:24px;color:#5a3a1a;">' +
+            '<h2>Carte non disponible hors-ligne</h2>' +
+            '<p>Cette carte n\'a pas encore ete mise en cache. Ouvre-la <b>une fois en ligne</b> ' +
+            '(elle se mettra en cache automatiquement), puis tu pourras la relancer hors-ligne.</p></body>',
+            { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    }
     const networkPromise = fetch(request).then(resp => {
         if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => null);
         return resp;
@@ -162,28 +168,27 @@ self.addEventListener('fetch', (event) => {
     // on laisse le browser HTTP cache faire son job (pas de slowdown).
     // En OFFLINE, on tente le cache et 503 si miss.
     if (isTileUrl(url)) {
-        if (_isOffline()) {
-            event.respondWith(
-                cacheFirst(req, TILE_CACHE, { mode: 'no-cors' })
-                    .finally(() => trimCache(TILE_CACHE, MAX_TILES))
-            );
-        } else {
-            // Online : retourne cache si dispo (rapide), sinon fetch direct
-            // browser-driven (pas de slowdown SW). Cache async en BG.
-            event.respondWith((async () => {
-                try {
-                    const cache = await _getCache(TILE_CACHE);
-                    const cached = await cache.match(req);
-                    if (cached) return cached;
-                    // Cache miss : fetch normal (le browser HTTP cache prend le relais)
-                    const resp = await fetch(req, { mode: 'no-cors' });
-                    if (resp) cache.put(req, resp.clone()).catch(() => null);
-                    return resp;
-                } catch (e) {
-                    return new Response('Tile fetch failed', { status: 503 });
+        event.respondWith((async () => {
+            try {
+                // Cache-first sur LES DEUX caches : tuiles normales + contexte
+                // Corse installe (CTX_CACHE survit au vidage de cache).
+                const tileCache = await _getCache(TILE_CACHE);
+                const ctxCache = await _getCache(CTX_CACHE);
+                let cached = await tileCache.match(req);
+                if (!cached) cached = await ctxCache.match(req);
+                if (cached) return cached;
+                if (_isOffline()) {
+                    return new Response('Offline (not cached)', { status: 503 });
                 }
-            })());
-        }
+                // Online cache miss : fetch direct (browser HTTP cache prend
+                // le relais). Cache async en BG dans TILE_CACHE (pas d'eviction).
+                const resp = await fetch(req, { mode: 'no-cors' });
+                if (resp) tileCache.put(req, resp.clone()).catch(() => null);
+                return resp;
+            } catch (e) {
+                return new Response('Tile fetch failed', { status: 503 });
+            }
+        })());
         return;
     }
 
@@ -213,6 +218,18 @@ self.addEventListener('fetch', (event) => {
         event.respondWith(staleWhileRevalidate(req, HTML_CACHE));
         return;
     }
+
+    // 5bis. Assets same-origin (pwa-ui.js, css, icones, manifest...) :
+    // stale-while-revalidate pour qu'ils soient dispo hors-ligne.
+    // Sans ca, pwa-ui.js tombe en network-first -> 503 hors-ligne -> UI cassee.
+    try {
+        const _u = new URL(url);
+        if (_u.origin === self.location.origin
+            && /\.(js|css|png|jpg|jpeg|svg|json|webmanifest|woff2?)$/i.test(_u.pathname)) {
+            event.respondWith(staleWhileRevalidate(req, STATIC_CACHE));
+            return;
+        }
+    } catch (e) {}
 
     // 6. Reste : network-first par defaut
     event.respondWith(
@@ -335,8 +352,10 @@ self.addEventListener('sync', (event) => {
 
 
 // === Pre-cache une liste d'URLs (tuiles + photos) ===
-async function precacheUrls(urls, port) {
-    const cache = await caches.open(TILE_CACHE);
+// targetCacheName : TILE_CACHE par defaut, CTX_CACHE pour le contexte Corse
+// installe (qui survit au vidage de cache).
+async function precacheUrls(urls, port, targetCacheName) {
+    const cache = await caches.open(targetCacheName || TILE_CACHE);
     let done = 0;
     const errors = [];
     // Limite la concurrence pour ne pas saturer le reseau / le serveur tuile
@@ -373,8 +392,15 @@ self.addEventListener('message', (event) => {
     if (data.type === 'SKIP_WAITING') self.skipWaiting();
 
     if (data.type === 'CLEAR_CACHE') {
-        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
-            .then(() => event.ports[0] && event.ports[0].postMessage({ cleared: true }));
+        // Par defaut on PRESERVE le contexte Corse (cher a retelecharger).
+        // Suppression seulement si l'utilisateur l'a explicitement demande.
+        const wipeContext = data.wipeContext === true;
+        caches.keys().then(keys => Promise.all(
+            keys.filter(k => wipeContext || k !== CTX_CACHE)
+                .map(k => caches.delete(k))
+        )).then(() => event.ports[0] && event.ports[0].postMessage({
+            cleared: true, contextKept: !wipeContext
+        }));
     }
 
     if (data.type === 'CACHE_STATS') {
@@ -382,10 +408,33 @@ self.addEventListener('message', (event) => {
             caches.open(TILE_CACHE).then(c => c.keys().then(k => k.length)),
             caches.open(PHOTO_CACHE).then(c => c.keys().then(k => k.length)),
             caches.open(API_CACHE).then(c => c.keys().then(k => k.length)),
-            caches.open(HTML_CACHE).then(c => c.keys().then(k => k.length))
-        ]).then(([tiles, photos, api, html]) => {
-            event.ports[0] && event.ports[0].postMessage({ tiles, photos, api, html, version: VERSION });
+            caches.open(HTML_CACHE).then(c => c.keys().then(k => k.length)),
+            caches.open(CTX_CACHE).then(c => c.keys().then(k => k.length)).catch(() => 0)
+        ]).then(([tiles, photos, api, html, context]) => {
+            event.ports[0] && event.ports[0].postMessage({ tiles, photos, api, html, context, version: VERSION });
         });
+    }
+
+    if (data.type === 'CACHE_PAGE' && data.url) {
+        // Mise en cache EXPLICITE de la page courante (HTML) + de pwa-ui.js.
+        // Indispensable : le 1er chargement d'une carte n'est pas intercepte
+        // par le SW (pas encore actif), donc sans ca le HTML n'est jamais
+        // cache et la carte est "Offline" au lancement hors-ligne.
+        event.waitUntil((async () => {
+            try {
+                const cache = await caches.open(HTML_CACHE);
+                const existing = await cache.match(data.url, { ignoreSearch: true });
+                if (existing) {
+                    event.ports[0] && event.ports[0].postMessage({ cached: true, already: true });
+                    return;
+                }
+                const resp = await fetch(data.url, { cache: 'no-store' });
+                if (resp && resp.ok) await cache.put(data.url, resp.clone());
+                event.ports[0] && event.ports[0].postMessage({ cached: !!(resp && resp.ok) });
+            } catch (e) {
+                event.ports[0] && event.ports[0].postMessage({ cached: false, error: e.message });
+            }
+        })());
     }
 
     if (data.type === 'PRECACHE_URLS' && Array.isArray(data.urls)) {
@@ -393,7 +442,8 @@ self.addEventListener('message', (event) => {
         // si l'utilisateur passe l'app en arriere-plan ou ferme l'onglet.
         // Le browser garantit que le SW ne sera pas tue avant la fin de la
         // promise. Indispensable pour les gros telechargements (1000+ tuiles).
-        event.waitUntil(precacheUrls(data.urls, event.ports[0]));
+        event.waitUntil(precacheUrls(data.urls, event.ports[0],
+            data.context === true ? CTX_CACHE : TILE_CACHE));
     }
 
     if (data.type === 'REPLAY_QUEUE') {
