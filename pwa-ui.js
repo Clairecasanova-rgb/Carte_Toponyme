@@ -644,37 +644,57 @@
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(b);
         return b;
     }
+    // Fenetre regroupant "Ma position" + "Parcours de marche",
+    // ouverte depuis le bouton flottant Position.
     function _togglePosMenu() {
-        var ex = document.getElementById('pwaPosMenu');
+        var ex = document.getElementById('pwaPosPanel');
         if (ex) { ex.remove(); return; }
-        var mn = document.createElement('div');
-        mn.id = 'pwaPosMenu';
-        mn.style.cssText =
-            'position:fixed !important;bottom:84px !important;left:10px !important;' +
-            'z-index:100052 !important;display:flex;flex-direction:column;gap:6px;' +
-            'background:#fff;border-radius:10px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,0.28);' +
-            'pointer-events:auto !important;';
-        var bs = 'display:block;width:100%;text-align:left;border:none;border-radius:6px;'
-            + 'padding:9px 12px;font:600 12px Segoe UI;cursor:pointer;white-space:nowrap;';
-        mn.innerHTML =
-            '<button id="pwaPosA" style="' + bs + 'background:#8b4513;color:#fff;">Publier sur la carte</button>' +
-            '<button id="pwaPosB" style="' + bs + 'background:#f0ebe3;color:#5a3a1a;">Envoyer (lien)</button>' +
-            '<button id="pwaPosC" style="' + bs + 'background:'
-            + (_liveOn ? '#c0392b' : '#1a73e8') + ';color:#fff;">'
-            + (_liveOn ? 'Arreter le partage live' : 'Partager en direct') + '</button>';
-        (document.body || document.documentElement).appendChild(mn);
-        document.getElementById('pwaPosA').onclick = function() { mn.remove(); _shareMyPositionOnMap(); };
-        document.getElementById('pwaPosB').onclick = function() { mn.remove(); _shareMyPositionLink(); };
-        document.getElementById('pwaPosC').onclick = function() { mn.remove(); _liveToggle(); };
-        setTimeout(function() {
-            document.addEventListener('click', function _c(ev) {
-                if (mn.parentNode && !mn.contains(ev.target)
-                    && (!ev.target.closest || !ev.target.closest('#pwaPosBtn'))) {
-                    mn.remove();
-                }
-                document.removeEventListener('click', _c);
-            });
-        }, 50);
+        var m = document.createElement('div');
+        m.id = 'pwaPosPanel';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;' +
+            'font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;'
+            + 'letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;'
+            + 'border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
+        var btn = 'background:#8b4513;color:#fff;border:none;padding:10px 12px;border-radius:6px;'
+            + 'cursor:pointer;font:600 12px Segoe UI;text-align:left;width:100%;';
+        var btn2 = 'background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:10px 12px;'
+            + 'border-radius:6px;cursor:pointer;font:600 12px Segoe UI;text-align:left;width:100%;';
+        var liveStyle = 'background:' + (_liveOn ? '#c0392b' : '#1a73e8') + ';color:#fff;border:none;'
+            + 'padding:10px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;text-align:left;width:100%;';
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;max-height:88vh;'
+            + 'overflow-y:auto;padding:18px 20px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Position &amp; parcours</h2>' +
+            '<button id="pwaPPClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<div style="' + sectionTitle + '">Ma position</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaPosA" style="' + btn + '">Publier ma position sur la carte</button>' +
+            '<button id="pwaPosB" style="' + btn2 + '">Envoyer ma position (lien)</button>' +
+            '<button id="pwaPosC" style="' + liveStyle + '">'
+            + (_liveOn ? 'Arreter le partage en direct' : 'Partager ma position en direct') + '</button>' +
+            '</div>' +
+            '<div style="' + sectionTitle + '">Parcours de marche</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaPosTrk" style="' + btn + '">Enregistrer / consulter mes parcours</button>' +
+            '</div>' +
+            '</div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        function close() { m.remove(); }
+        m.querySelector('#pwaPPClose').onclick = close;
+        m.onclick = function(e) { if (e.target === m) close(); };
+        m.querySelector('#pwaPosA').onclick = function() { close(); _shareMyPositionOnMap(); };
+        m.querySelector('#pwaPosB').onclick = function() { close(); _shareMyPositionLink(); };
+        m.querySelector('#pwaPosC').onclick = function() { close(); _liveToggle(); };
+        m.querySelector('#pwaPosTrk').onclick = function() { close(); openTracksFeature(); };
     }
 
     // Refresh badge si on entre/sort du fullscreen (re-parenter au bon contexte)
@@ -782,19 +802,8 @@
             '<button id="pwaMClear" style="' + btnSecondary + '">Consulter / gerer le cache hors-ligne</button>' +
             '</div>' +
 
-            // Section : MA POSITION
-            '<div style="' + sectionTitle + '">Ma position</div>' +
-            '<div style="display:flex;flex-direction:column;gap:6px;">' +
-            '<button id="pwaMPosMap" style="' + btnPrimary + '">Publier ma position sur la carte</button>' +
-            '<button id="pwaMPosLink" style="' + btnSecondary + '">Envoyer ma position (lien)</button>' +
-            '<button id="pwaMPosLive" style="' + btnSecondary + '">Partager ma position en direct (on/off)</button>' +
-            '</div>' +
-
-            // Section : PARCOURS
-            '<div style="' + sectionTitle + '">Parcours de marche</div>' +
-            '<div style="display:flex;flex-direction:column;gap:6px;">' +
-            '<button id="pwaMTracks" style="' + btnPrimary + '">Enregistrer / consulter mes parcours</button>' +
-            '</div>' +
+            // Position & parcours : regroupes dans la fenetre du bouton Position
+            // (flottant, au-dessus du badge). Plus de doublon dans ce menu.
 
             // Section : SYNCHRONISATION
             '<div style="' + sectionTitle + '">Synchronisation</div>' +
@@ -851,10 +860,6 @@
                 showToast('Aucune zone pre-cachee. Utilise "Pre-charger une zone" d\'abord.');
             }
         };
-        document.getElementById('pwaMPosMap').onclick = function() { m.remove(); _shareMyPositionOnMap(); };
-        document.getElementById('pwaMPosLink').onclick = function() { m.remove(); _shareMyPositionLink(); };
-        document.getElementById('pwaMPosLive').onclick = function() { m.remove(); _liveToggle(); };
-        document.getElementById('pwaMTracks').onclick = function() { m.remove(); openTracksFeature(); };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
             if (isAppOffline()) { showToast('Pas de connexion reseau (ou mode test active)'); return; }
