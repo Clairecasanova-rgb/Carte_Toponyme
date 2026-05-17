@@ -4111,20 +4111,11 @@
         if (!pb) return;
         var lbl = document.getElementById('pwaPosLbl');
         var dot = document.getElementById('pwaPosDot');
-        if (lbl) lbl.textContent = _liveOn ? 'Itineraire — LIVE' : 'Itineraire';
-        if (dot) {
-            if (_liveOn) {
-                dot.style.display = 'inline-block';
-                dot.style.animation = 'pwaLivePulse 1.1s ease-in-out infinite';
-            } else {
-                dot.style.display = 'none';
-                dot.style.animation = '';
-            }
-        }
-        // Fond rouge + point pulsant : impossible de manquer que le partage
-        // de position est actif.
+        // Live actif : libelle "Position (live)" + bouton bleu (comme avant).
+        if (lbl) lbl.textContent = _liveOn ? 'Position (live)' : 'Itineraire';
+        if (dot) { dot.style.display = 'none'; dot.style.animation = ''; }
         pb.style.setProperty('background',
-            _liveOn ? 'rgba(211,47,47,0.96)' : 'rgba(255,255,255,0.95)', 'important');
+            _liveOn ? 'rgba(26,115,232,0.95)' : 'rgba(255,255,255,0.95)', 'important');
         pb.style.setProperty('color', _liveOn ? '#fff' : '#5a3a1a', 'important');
     }
     function _liveToggle() {
