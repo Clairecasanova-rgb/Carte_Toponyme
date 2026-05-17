@@ -1813,7 +1813,9 @@
         return _zoneLayer !== null;
     }
 
-    async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds, precacheTag, precacheLabel) {
+    // deepLayerSpec : { url, zmax } -> une couche precise (ex: Plan IGN J+1,
+    // tuiles legeres) cachee plus profond que les autres sur la meme emprise.
+    async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds, precacheTag, precacheLabel, deepLayerSpec) {
         if (!navigator.serviceWorker.controller) {
             alert('Service Worker non actif (la page doit etre en HTTPS et rechargee).');
             return;
@@ -1825,7 +1827,8 @@
         }
         var tileUrls = [];
 
-        function addTilesForBounds(z, nb, sb, wb, eb) {
+        function addTilesForBounds(z, nb, sb, wb, eb, templates) {
+            var tpls = templates || layerUrls;
             var n = Math.pow(2, z);
             var xmin = Math.floor((wb + 180) / 360 * n);
             var xmax = Math.floor((eb + 180) / 360 * n);
@@ -1833,7 +1836,7 @@
             var ymax = Math.floor((1 - Math.log(Math.tan(sb * Math.PI / 180) + 1 / Math.cos(sb * Math.PI / 180)) / Math.PI) / 2 * n);
             for (var x = Math.min(xmin, xmax); x <= Math.max(xmin, xmax); x++) {
                 for (var y = Math.min(ymin, ymax); y <= Math.max(ymin, ymax); y++) {
-                    layerUrls.forEach(function(tpl) {
+                    tpls.forEach(function(tpl) {
                         if (tpl.indexOf('{s}') !== -1) {
                             ['a','b','c'].forEach(function(sub) {
                                 tileUrls.push(tpl.replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{s}', sub));
@@ -1851,6 +1854,17 @@
         var wb = bounds.getWest(), eb = bounds.getEast();
         for (var z = zmin; z <= zmax; z++) {
             addTilesForBounds(z, nb, sb, wb, eb);
+        }
+
+        // 1bis. Couche dediee (ex: Plan IGN J+1, tuiles legeres) poussee plus
+        // profond sur la meme emprise -> rendu net a zoom eleve sans gonfler
+        // le stockage des couches lourdes.
+        var _effZmax = zmax;
+        if (deepLayerSpec && deepLayerSpec.url && deepLayerSpec.zmax > zmax) {
+            for (var dz = zmax + 1; dz <= deepLayerSpec.zmax; dz++) {
+                addTilesForBounds(dz, nb, sb, wb, eb, [deepLayerSpec.url]);
+            }
+            _effZmax = deepLayerSpec.zmax;
         }
 
         // 2. Contexte Corse optionnel (zooms 8-10)
@@ -1922,7 +1936,7 @@
                         [bounds.getSouth(), bounds.getWest()],
                         [bounds.getNorth(), bounds.getEast()]
                     ],
-                    zmin: zmin, zmax: zmax,
+                    zmin: zmin, zmax: _effZmax,
                     includeCorse: !!includeCorse,
                     nLayers: layerUrls.length,
                     timestamp: Date.now()
@@ -1961,7 +1975,7 @@
                         kind: _isCtxB ? 'context' : 'tiles',
                         contextCache: _isCtxB,
                         date: Date.now(),
-                        zmin: zmin, zmax: zmax,
+                        zmin: zmin, zmax: _effZmax,
                         count: allUrls.length,
                         urls: _isCtxB ? [] : allUrls  // context = cache dedie, pas besoin des urls
                     });
@@ -2041,16 +2055,33 @@
             [CORSE_BOUNDS.north, CORSE_BOUNDS.east]
         );
         var zmax = (kind === 'full') ? 14 : 10;
-        // Estimation conservatrice : light ~ nLayers*4 Mo, full ~ nLayers*180 Mo
+        // Plan IGN J+1 (tuiles legeres ~15 Ko) : pousse plus profond que les
+        // couches lourdes sur le contexte COMPLET (rendu net niveau rue/chemin
+        // sur toute la Corse). z15 ≈ +~190 Mo seulement pour cette couche.
+        var _deepSpec = null;
+        if (kind === 'full') {
+            for (var _li = 0; _li < layerUrls.length; _li++) {
+                if (/GEOGRAPHICALGRIDSYSTEMS\.PLANIGNV2/i.test(layerUrls[_li])) {
+                    _deepSpec = { url: layerUrls[_li], zmax: 15 };
+                    break;
+                }
+            }
+        }
+        // Estimation : light ~ nLayers*4 Mo ; full ~ nLayers*180 Mo
+        // (+~190 Mo si Plan IGN pousse a z15 sur toute la Corse).
         var _nL = layerUrls.length || 1;
         var _estBytes = (kind === 'full' ? _nL * 180 : _nL * 4) * 1e6;
+        if (_deepSpec) _estBytes += 190 * 1e6;
         _checkQuotaBeforeDownload(_estBytes).then(function(okq) {
             if (!okq) { showToast('Telechargement annule (espace insuffisant).', 5000); return; }
             _requestPersistentStorage(false);
             showToast(kind === 'full'
-                ? 'Telechargement du fond Corse complet (~350 Mo). Garde l\'app ouverte...'
+                ? ('Telechargement du fond Corse complet'
+                   + (_deepSpec ? ' + Plan IGN detaille (z15)' : '')
+                   + '. Garder l\'app ouverte...')
                 : 'Telechargement du contexte Corse (leger)...', 6000);
-            startPrecache(map, bounds, 8, zmax, false, layerUrls, [], 'corse-' + kind);
+            startPrecache(map, bounds, 8, zmax, false, layerUrls, [],
+                'corse-' + kind, null, _deepSpec);
         });
     }
 
