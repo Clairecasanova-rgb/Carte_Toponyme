@@ -116,12 +116,45 @@
             return mx || null;
         }).catch(function() { return null; });
     }
+    // Zoom max reellement cache (indice metadonnees), maj par
+    // _applyAdaptiveNativeZoom. Sert a RE-ARMER maxNativeZoom avant chaque
+    // changement de vue : ainsi une zone detaillee re-tente son zoom natif
+    // (net) au lieu de rester bloquee sur le cap baisse par 'tileerror'
+    // dans une zone contexte-seul.
+    var _maxCachedHint = null;
+    function _setupNativeZoomReprobe(attempt) {
+        attempt = attempt || 0;
+        var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
+        if (!map) {
+            if (attempt < 15) setTimeout(function() { _setupNativeZoomReprobe(attempt + 1); }, 700);
+            return;
+        }
+        if (map.__pwaReprobe) return;
+        map.__pwaReprobe = true;
+        function rearm() {
+            var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
+            if (!offline) return;
+            var ceil = _maxCachedHint || 21;
+            map.eachLayer(function(l) {
+                if (l instanceof L.TileLayer && l.options.maxNativeZoom !== ceil) {
+                    // Pas de redraw : le move/zoom en cours va re-demander les
+                    // tuiles avec cette nouvelle valeur. 'tileerror' rabaissera
+                    // uniquement la ou le cache est moins profond.
+                    l.options.maxNativeZoom = ceil;
+                }
+            });
+        }
+        map.on('zoomstart', rearm);
+        map.on('movestart', rearm);
+    }
+
     function _applyAdaptiveNativeZoom() {
         if (typeof L === 'undefined') return;
         var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
         if (!map) return;
         var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
         _computeMaxCachedZoom().then(function(maxCached) {
+            _maxCachedHint = maxCached || null;  // memorise pour le re-armement
             map.eachLayer(function(l) {
                 if (!(l instanceof L.TileLayer)) return;
                 if (offline && maxCached) {
@@ -3100,6 +3133,8 @@
             _patchExistingTileLayers();
             // 0ter. maxNativeZoom adaptatif selon ce qui est reellement cache
             setTimeout(_applyAdaptiveNativeZoom, 400);
+            // 0quater. re-armement par vue (net dans zones detaillees)
+            setTimeout(function() { _setupNativeZoomReprobe(0); }, 700);
             // 0bis. Afficher la zone hors-ligne par defaut si une zone est storee
             //       (l'utilisateur peut la masquer via le menu si besoin)
             try {
