@@ -632,15 +632,14 @@
             'z-index:100050 !important;display:flex !important;align-items:center;gap:6px;' +
             'padding:6px 11px;border:none;border-radius:14px;font:600 11px/1 Segoe UI,sans-serif;' +
             'background:rgba(255,255,255,0.95);color:#5a3a1a;box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
-            'cursor:pointer;user-select:none;';
+            'cursor:pointer;user-select:none;pointer-events:auto !important;';
         b.innerHTML =
-            '<svg viewBox="0 0 24 24" width="13" height="13" fill="#c0392b" aria-hidden="true">' +
+            '<svg viewBox="0 0 24 24" width="13" height="13" fill="#c0392b" aria-hidden="true" style="pointer-events:none;">' +
             '<path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/>' +
-            '</svg><span>Position</span>';
+            '</svg><span style="pointer-events:none;">Position</span>';
+        // PAS de L.DomEvent.disableClickPropagation : il bloque le clic sur ce
+        // petit bouton au-dessus de la carte (le badge marche sans, on s'aligne).
         b.onclick = function(e) { e.stopPropagation(); _togglePosMenu(); };
-        if (typeof L !== 'undefined' && L.DomEvent) {
-            L.DomEvent.disableClickPropagation(b);
-        }
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(b);
         return b;
@@ -653,15 +652,13 @@
         mn.style.cssText =
             'position:fixed !important;bottom:84px !important;left:10px !important;' +
             'z-index:100052 !important;display:flex;flex-direction:column;gap:6px;' +
-            'background:#fff;border-radius:10px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,0.28);';
+            'background:#fff;border-radius:10px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,0.28);' +
+            'pointer-events:auto !important;';
         var bs = 'display:block;width:100%;text-align:left;border:none;border-radius:6px;'
             + 'padding:9px 12px;font:600 12px Segoe UI;cursor:pointer;white-space:nowrap;';
         mn.innerHTML =
             '<button id="pwaPosA" style="' + bs + 'background:#8b4513;color:#fff;">Publier sur la carte</button>' +
             '<button id="pwaPosB" style="' + bs + 'background:#f0ebe3;color:#5a3a1a;">Envoyer (lien)</button>';
-        if (typeof L !== 'undefined' && L.DomEvent) {
-            L.DomEvent.disableClickPropagation(mn);
-        }
         (document.body || document.documentElement).appendChild(mn);
         document.getElementById('pwaPosA').onclick = function() { mn.remove(); _shareMyPositionOnMap(); };
         document.getElementById('pwaPosB').onclick = function() { mn.remove(); _shareMyPositionLink(); };
