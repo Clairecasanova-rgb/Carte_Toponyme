@@ -1650,41 +1650,108 @@
         var ch = new MessageChannel();
         ch.port1.onmessage = function(ev) {
             var d = ev.data;
-            if (modal && d.progress !== undefined) {
-                var pct = Math.round((d.progress / d.total) * 100);
+            if (d.progress === undefined) return;
+            var pct = d.total ? Math.round((d.progress / d.total) * 100) : 0;
+            // Progression : barre dans la modale si ouverte, sinon bandeau leger
+            // (cas du pre-cache declenche a l'installation, sans modale).
+            if (modal) {
                 modal.querySelector('#pwaPBar').style.width = pct + '%';
                 modal.querySelector('#pwaPLabel').textContent = d.progress + ' / ' + d.total + ' (' + pct + '%)' + (d.errors ? ' — ' + d.errors + ' erreurs' : '');
-                if (d.done) {
-                    // Memoriser la zone precachee pour visualisation ulterieure
-                    var zone = {
-                        bounds: [
-                            [bounds.getSouth(), bounds.getWest()],
-                            [bounds.getNorth(), bounds.getEast()]
-                        ],
-                        zmin: zmin, zmax: zmax,
-                        includeCorse: !!includeCorse,
-                        nLayers: layerUrls.length,
-                        timestamp: Date.now()
-                    };
-                    // Si pre-cache via selection commune, stocker les polygones reels
-                    if (_pendingCommunePolys) {
-                        zone.communes = _pendingCommunePolys.map(function(p) {
-                            return { code: p.code, nom: p.nom, polygons: p.polygons };
-                        });
-                        _pendingCommunePolys = null;
-                    }
-                    setStoredZone(zone);
-                    _setZoneHidden(false);  // nouvelle zone : afficher par defaut
-                    // Afficher immediatement la nouvelle zone sur la carte
-                    try { showPrecachedZoneOnMap(true); } catch(_e) {}
-                    setTimeout(function() {
-                        if (modal && modal.parentNode) modal.remove();
-                        showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
-                    }, 500);
+            } else {
+                _updatePrecacheBanner(d.progress, d.total, pct, d.errors, d.done);
+            }
+            // Completion : TOUJOURS executee (independante de la modale) sinon
+            // la zone n'est jamais sauvegardee quand on pre-cache depuis l'install.
+            if (d.done) {
+                var zone = {
+                    bounds: [
+                        [bounds.getSouth(), bounds.getWest()],
+                        [bounds.getNorth(), bounds.getEast()]
+                    ],
+                    zmin: zmin, zmax: zmax,
+                    includeCorse: !!includeCorse,
+                    nLayers: layerUrls.length,
+                    timestamp: Date.now()
+                };
+                if (_pendingCommunePolys) {
+                    zone.communes = _pendingCommunePolys.map(function(p) {
+                        return { code: p.code, nom: p.nom, polygons: p.polygons };
+                    });
+                    _pendingCommunePolys = null;
                 }
+                setStoredZone(zone);
+                _setZoneHidden(false);  // nouvelle zone : afficher par defaut
+                try { showPrecachedZoneOnMap(true); } catch(_e) {}
+                setTimeout(function() {
+                    if (modal && modal.parentNode) modal.remove();
+                    showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
+                }, 500);
             }
         };
         navigator.serviceWorker.controller.postMessage({ type: 'PRECACHE_URLS', urls: allUrls }, [ch.port2]);
+    }
+
+    // ===== Bandeau de progression leger (pre-cache sans modale) =====
+    // Utilise quand le pre-cache est declenche depuis le flux d'installation
+    // (pas de modale pwaPrecacheModal ouverte). Petit bandeau en haut, discret.
+    function _updatePrecacheBanner(progress, total, pct, errors, done) {
+        var b = document.getElementById('pwaPrecacheBanner');
+        if (!b) {
+            b = document.createElement('div');
+            b.id = 'pwaPrecacheBanner';
+            b.style.cssText =
+                'position:fixed !important;top:14px !important;left:50% !important;' +
+                'transform:translateX(-50%);z-index:100045 !important;' +
+                'display:flex;align-items:center;gap:10px;padding:8px 16px;' +
+                'background:rgba(40,40,40,0.95);color:#fff;border-radius:20px;' +
+                'box-shadow:0 4px 14px rgba(0,0,0,0.25);font:600 12px Segoe UI,sans-serif;' +
+                'max-width:90vw;';
+            (document.body || document.documentElement).appendChild(b);
+        }
+        if (done) {
+            b.innerHTML = 'Fonds Corse hors-ligne pret (' + progress + ' tuiles' +
+                (errors ? ', ' + errors + ' erreurs' : '') + ')';
+            setTimeout(function() { if (b.parentNode) b.parentNode.removeChild(b); }, 5000);
+            return;
+        }
+        b.innerHTML =
+            '<span style="display:inline-block;width:60px;height:6px;background:rgba(255,255,255,0.25);border-radius:3px;overflow:hidden;">' +
+            '<span style="display:block;height:100%;width:' + pct + '%;background:#27ae60;transition:width .3s;"></span></span>' +
+            '<span>Telechargement fonds Corse ' + pct + '% (' + progress + '/' + total + ')</span>';
+    }
+
+    // ===== Pre-cache Corse complete (declenche a l'installation) =====
+    // kind = 'light'  -> zooms 8-10  (~quelques Mo, reperage ile entiere)
+    // kind = 'full'   -> zooms 8-14  (~350 Mo, routes/chemins partout)
+    // Attend que le SW soit actif + la carte prete (retries), puis lance
+    // startPrecache sur la bbox Corse avec les couches actives.
+    function _startCorsePrecache(kind, _attempt) {
+        if (kind !== 'light' && kind !== 'full') return;
+        _attempt = _attempt || 0;
+        var map = findLeafletMap();
+        var swReady = navigator.serviceWorker && navigator.serviceWorker.controller;
+        if ((!map || !swReady) && _attempt < 20) {
+            setTimeout(function() { _startCorsePrecache(kind, _attempt + 1); }, 700);
+            return;
+        }
+        if (!map || !swReady) {
+            showToast('Pre-cache Corse impossible (carte ou Service Worker non pret). Reessaie via "Pre-charger une zone".', 7000);
+            return;
+        }
+        var layerUrls = collectTileLayerUrls(map);
+        if (layerUrls.length === 0) {
+            showToast('Aucune couche de tuiles active pour le pre-cache Corse.', 6000);
+            return;
+        }
+        var bounds = L.latLngBounds(
+            [CORSE_BOUNDS.south, CORSE_BOUNDS.west],
+            [CORSE_BOUNDS.north, CORSE_BOUNDS.east]
+        );
+        var zmax = (kind === 'full') ? 14 : 10;
+        showToast(kind === 'full'
+            ? 'Telechargement du fond Corse complet (~350 Mo). Garde l\'app ouverte...'
+            : 'Telechargement du contexte Corse (leger)...', 6000);
+        startPrecache(map, bounds, 8, zmax, false, layerUrls, []);
     }
 
     // ===== Personnalisation nom du raccourci PWA =====
@@ -1859,24 +1926,79 @@
             return;
         }
         openRenameShortcutModal(function(newName) {
-            if (newName) {
-                // Verifier si le nom a vraiment change vs le manifest courant
-                var cur = getCurrentCustomName();
-                if (cur.name === newName) {
-                    // Meme nom, pas besoin de reload, install direct
-                    triggerInstall();
-                    return;
-                }
+            // Apres le choix du nom : proposer de pre-charger les fonds Corse.
+            openInstallTilesModal(function(tileChoice) {
+                _proceedInstall(newName, tileChoice);
+            });
+        });
+    }
+
+    // Modale : proposer le telechargement des fonds de carte Corse a l'install.
+    // 3 choix : leger (8-10, ~qq Mo) / complet (8-14, ~350 Mo) / plus tard.
+    function openInstallTilesModal(onChoice) {
+        var existing = document.getElementById('pwaInstallTilesModal');
+        if (existing) existing.remove();
+        var map = findLeafletMap();
+        var nLayers = map ? countActiveTileLayers(map) : 1;
+        // Estimations indicatives (Corse entiere, dependent du nb de couches actives)
+        var lightMo = Math.max(3, Math.round(nLayers * 3));
+        var fullMo = Math.max(180, nLayers * 175);
+
+        var m = document.createElement('div');
+        m.id = 'pwaInstallTilesModal';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:12px;max-width:460px;width:100%;padding:20px 24px;">' +
+            '<h2 style="margin:0 0 6px;font-size:17px;color:#5a3a1a;">Fonds de carte hors-ligne</h2>' +
+            '<p style="margin:0 0 16px;font-size:12px;color:#666;line-height:1.5;">' +
+            'Pour que la carte fonctionne sans reseau, telecharge les fonds de la Corse. ' +
+            'Tu pourras toujours pre-cacher une zone precise plus tard (zoom detaille).</p>' +
+            '<button id="pwaTilesLight" style="display:block;width:100%;text-align:left;background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
+            'Leger — contexte Corse <span style="color:#8b7355;">(zooms 8-10, ~' + lightMo + ' Mo)</span><br>' +
+            '<span style="font-weight:400;font-size:11px;color:#888;">Voir l\'ile entiere + grands axes. Rapide.</span></button>' +
+            '<button id="pwaTilesFull" style="display:block;width:100%;text-align:left;background:#8b4513;color:#fff;border:none;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
+            'Complet — toute la Corse <span style="opacity:.85;">(zooms 8-14, ~' + fullMo + ' Mo)</span><br>' +
+            '<span style="font-weight:400;font-size:11px;opacity:.85;">Se reperer routes/chemins partout. ~10-15 min en 4G.</span></button>' +
+            '<button id="pwaTilesNone" style="display:block;width:100%;text-align:left;background:#fff;color:#8b7355;border:1px solid #e0d8c8;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">' +
+            'Plus tard — installer sans telecharger</button>' +
+            '</div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        function pick(choice) { m.remove(); onChoice(choice); }
+        document.getElementById('pwaTilesLight').onclick = function() { pick('light'); };
+        document.getElementById('pwaTilesFull').onclick = function() { pick('full'); };
+        document.getElementById('pwaTilesNone').onclick = function() { pick('none'); };
+        m.onclick = function(e) { if (e.target === m) pick('none'); };
+    }
+
+    // Procede a l'installation + lance le pre-cache Corse selon le choix.
+    // Si le nom a change -> reload (manifest regenere) puis precache APRES reload
+    // (sinon le reload tuerait le telechargement). Sinon install + precache direct.
+    function _proceedInstall(newName, tileChoice) {
+        if (newName) {
+            var cur = getCurrentCustomName();
+            if (cur.name !== newName) {
                 showToast('Rechargement pour appliquer le nom...');
                 setTimeout(function() {
                     sessionStorage.setItem('pwaInstallAfterReload', '1');
+                    if (tileChoice === 'light' || tileChoice === 'full') {
+                        try { sessionStorage.setItem('pwaPrecacheChoice', tileChoice); } catch(_e) {}
+                    }
                     location.reload();
                 }, 600);
                 return;
             }
-            // Pas de changement de nom -> declencher l'install direct
-            triggerInstall();
-        });
+        }
+        // Pas de reload : install direct puis pre-cache Corse en parallele
+        triggerInstall();
+        if (tileChoice === 'light' || tileChoice === 'full') {
+            setTimeout(function() { _startCorsePrecache(tileChoice); }, 1200);
+        }
     }
 
     function triggerInstall() {
@@ -1930,6 +2052,13 @@
                 sessionStorage.removeItem('pwaInstallAfterReload');
                 showToast('Preparation de l\'installation...', 3000);
                 _pollInstallPrompt();
+            }
+            // Reprise du pre-cache Corse choisi avant le reload (le download ne
+            // pouvait pas survivre au reload, on le lance maintenant : SW actif).
+            var pcChoice = sessionStorage.getItem('pwaPrecacheChoice');
+            if (pcChoice === 'light' || pcChoice === 'full') {
+                sessionStorage.removeItem('pwaPrecacheChoice');
+                setTimeout(function() { _startCorsePrecache(pcChoice); }, 2500);
             }
         } catch(_e) {}
     });
