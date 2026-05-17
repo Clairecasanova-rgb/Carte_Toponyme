@@ -2535,8 +2535,7 @@
             '<div style="background:#fff;border-radius:12px;max-width:460px;width:100%;padding:20px 24px;">' +
             '<h2 style="margin:0 0 6px;font-size:17px;color:#5a3a1a;">Fonds de carte hors-ligne</h2>' +
             '<p style="margin:0 0 16px;font-size:12px;color:#666;line-height:1.5;">' +
-            'Pour que la carte fonctionne sans reseau, telecharge les fonds de la Corse. ' +
-            'Tu pourras toujours pre-cacher une zone precise plus tard (zoom detaille).</p>' +
+            'Fonds de la Corse pour l\'usage hors-ligne. Une zone precise reste pre-cachable plus tard.</p>' +
             '<button id="pwaTilesLight" style="display:block;width:100%;text-align:left;background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
             'Leger — Satellite + Plan IGN <span style="color:#8b7355;">(zooms 8-10, ~' + lightMo + ' Mo)</span><br>' +
             '<span style="font-weight:400;font-size:11px;color:#888;">Vue ile entiere + grands axes. Rapide.</span></button>' +
