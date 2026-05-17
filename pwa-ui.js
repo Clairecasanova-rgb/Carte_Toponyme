@@ -3154,6 +3154,7 @@
         _trk.status = 'paused';
         _trkStopWatch();
         _trkReleaseWake();
+        _trkExitEco();
         _trkUpdateWidget();
         _trkPersist(true);
     }
@@ -3173,6 +3174,7 @@
         _trk.endedAt = Date.now();
         _trkStopWatch();
         _trkReleaseWake();
+        _trkExitEco();
         _trkStopTick();
         var saved = _trk;
         _trkPersist(true);
@@ -3228,15 +3230,58 @@
             (rec
                 ? '<button id="pwaTrkPause" style="background:#f39c12;color:#fff;border:none;border-radius:8px;padding:5px 10px;font:600 11px Segoe UI;cursor:pointer;">Pause</button>'
                 : '<button id="pwaTrkResume" style="background:#27ae60;color:#fff;border:none;border-radius:8px;padding:5px 10px;font:600 11px Segoe UI;cursor:pointer;">Reprendre</button>') +
+            (rec ? '<button id="pwaTrkEco" style="background:#34495e;color:#fff;border:none;border-radius:8px;padding:5px 10px;font:600 11px Segoe UI;cursor:pointer;">Veille eco</button>' : '') +
             '<button id="pwaTrkStop" style="background:#c0392b;color:#fff;border:none;border-radius:8px;padding:5px 10px;font:600 11px Segoe UI;cursor:pointer;">Arreter</button>';
         var pb = document.getElementById('pwaTrkPause');
         if (pb) pb.onclick = _trkPause;
         var rb = document.getElementById('pwaTrkResume');
         if (rb) rb.onclick = _trkResume;
+        var eb = document.getElementById('pwaTrkEco');
+        if (eb) eb.onclick = _trkEnterEco;
         var sb = document.getElementById('pwaTrkStop');
         if (sb) sb.onclick = function() {
             if (confirm('Arreter et enregistrer ce parcours ?')) _trkStop();
         };
+    }
+
+    // ===== Mode veille eco : ecran quasi-noir (OLED ~= eteint) =====
+    // L'enregistrement continue dessous (watch + Wake Lock inchanges). Sur
+    // ecran OLED/AMOLED le noir consomme quasi rien. Tap = retour a la carte.
+    var _trkEcoEl = null;
+    function _trkEnterEco() {
+        if (_trkEcoEl) return;
+        _trkEcoEl = document.createElement('div');
+        _trkEcoEl.id = 'pwaTrkEco';
+        _trkEcoEl.style.cssText =
+            'position:fixed !important;inset:0 !important;z-index:2000000 !important;' +
+            'background:#000 !important;color:#1c1c1c;' +
+            'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+            'gap:18px;font:600 13px Segoe UI,sans-serif;-webkit-tap-highlight-color:transparent;' +
+            'user-select:none;text-align:center;';
+        _trkEcoEl.innerHTML =
+            '<div id="pwaTrkEcoTxt" style="color:#222;font-size:15px;line-height:2;"></div>' +
+            '<div style="color:#141414;font-size:11px;">Toucher l\'ecran pour revenir</div>';
+        _trkEcoEl.addEventListener('click', _trkExitEco);
+        _trkEcoEl.addEventListener('touchstart', function(e) {
+            e.preventDefault(); _trkExitEco();
+        }, { passive: false });
+        (document.body || document.documentElement).appendChild(_trkEcoEl);
+        _trkAcquireWake();           // s'assurer que l'ecran reste alloue
+        _trkUpdateEco();
+        showToast('Veille eco activee. Ecran maintenu, enregistrement en cours.', 4000);
+    }
+    function _trkExitEco() {
+        if (_trkEcoEl && _trkEcoEl.parentNode) _trkEcoEl.parentNode.removeChild(_trkEcoEl);
+        _trkEcoEl = null;
+    }
+    function _trkUpdateEco() {
+        if (!_trkEcoEl || !_trk) return;
+        var t = document.getElementById('pwaTrkEcoTxt');
+        if (!t) return;
+        var dur = _trkActiveDuration();
+        var dist = _trk.distance || 0;
+        t.innerHTML = (_trk.status === 'recording' ? 'Enregistrement' : 'En pause')
+            + '<br>' + _trkFmtDist(dist) + '<br>' + _trkFmtDur(dur);
     }
     function _trkHideWidget() {
         var w = document.getElementById('pwaTrkWidget');
@@ -3244,7 +3289,10 @@
     }
     function _trkStartTick() {
         _trkStopTick();
-        _trkTick = setInterval(_trkUpdateWidget, 1000);
+        _trkTick = setInterval(function() {
+            _trkUpdateWidget();
+            _trkUpdateEco();
+        }, 1000);
     }
     function _trkStopTick() {
         if (_trkTick) { clearInterval(_trkTick); _trkTick = null; }
