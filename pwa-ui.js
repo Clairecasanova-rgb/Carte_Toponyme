@@ -1121,7 +1121,13 @@
             if (c.totalAll > 5000) {
                 if (!confirm('Telecharger ' + c.totalAll + ' tuiles ? Ca peut prendre plusieurs minutes et utiliser ~' + (c.totalAll * 0.04).toFixed(0) + ' Mo de stockage.')) return;
             }
-            startPrecache(map, bounds, c.zmin, c.zmax, c.includeCorse, c.layerUrls, c.projectIds);
+            // Verif quota navigateur avant de lancer (~45 Ko/tuile, conservateur)
+            var _estBytes = c.totalAll * 45000;
+            _checkQuotaBeforeDownload(_estBytes).then(function(ok) {
+                if (!ok) return;
+                _requestPersistentStorage(false);
+                startPrecache(map, bounds, c.zmin, c.zmax, c.includeCorse, c.layerUrls, c.projectIds);
+            });
         };
 
         updateEstim();
@@ -1518,6 +1524,63 @@
         } catch(_e) {}
     }
 
+    // ===== Anti-eviction : stockage persistant + verif quota =====
+    // navigator.storage.persist() : si accorde, le navigateur n'evince PLUS
+    // automatiquement (seul un vidage manuel supprime). Accorde sans prompt
+    // pour une PWA installee sur Android Chrome.
+    function _requestPersistentStorage(verbose) {
+        if (!(navigator.storage && navigator.storage.persist)) {
+            return Promise.resolve(false);
+        }
+        var persistedCheck = navigator.storage.persisted
+            ? navigator.storage.persisted() : Promise.resolve(false);
+        return persistedCheck.then(function(already) {
+            if (already) {
+                console.log('[PWA] Stockage deja persistant');
+                return true;
+            }
+            return navigator.storage.persist().then(function(granted) {
+                console.log('[PWA] Stockage persistant : ' + (granted ? 'ACCORDE' : 'refuse'));
+                if (verbose) {
+                    showToast(granted
+                        ? 'Stockage persistant active : tes tuiles ne seront plus evincees automatiquement.'
+                        : 'Stockage persistant refuse. Installe la carte sur l\'ecran d\'accueil pour l\'obtenir.', 6000);
+                }
+                return granted;
+            }).catch(function() { return false; });
+        }).catch(function() { return false; });
+    }
+
+    // {usage, quota, available} en octets, ou null si API indispo
+    function _storageEstimate() {
+        if (!(navigator.storage && navigator.storage.estimate)) {
+            return Promise.resolve(null);
+        }
+        return navigator.storage.estimate().then(function(e) {
+            var usage = e.usage || 0, quota = e.quota || 0;
+            return { usage: usage, quota: quota, available: Math.max(0, quota - usage) };
+        }).catch(function() { return null; });
+    }
+
+    // Verifie si estimatedBytes rentre dans l'espace dispo. Promise<bool> :
+    // true = continuer (OK ou utilisateur confirme malgre l'avertissement).
+    function _checkQuotaBeforeDownload(estimatedBytes) {
+        return _storageEstimate().then(function(est) {
+            if (!est || !est.quota) return true;  // API indispo : ne pas bloquer
+            if (estimatedBytes > est.available * 0.9) {
+                var needMo = Math.round(estimatedBytes / 1e6);
+                var freeMo = Math.round(est.available / 1e6);
+                return confirm(
+                    'Espace de stockage potentiellement insuffisant.\n\n' +
+                    'Telechargement estime : ~' + needMo + ' Mo\n' +
+                    'Espace disponible : ~' + freeMo + ' Mo\n\n' +
+                    'Le navigateur risque de refuser ou d\'evincer des tuiles en cours de route.\n' +
+                    'Telecharger quand meme ?');
+            }
+            return true;
+        });
+    }
+
     // ===== Persistance + visualisation de la zone pre-cachee =====
     // On stocke les bounds + zoom range dans localStorage par carte.
     // L'utilisateur peut afficher cette zone sur la carte a tout moment via
@@ -1806,10 +1869,17 @@
             [CORSE_BOUNDS.north, CORSE_BOUNDS.east]
         );
         var zmax = (kind === 'full') ? 14 : 10;
-        showToast(kind === 'full'
-            ? 'Telechargement du fond Corse complet (~350 Mo). Garde l\'app ouverte...'
-            : 'Telechargement du contexte Corse (leger)...', 6000);
-        startPrecache(map, bounds, 8, zmax, false, layerUrls, [], 'corse-' + kind);
+        // Estimation conservatrice : light ~ nLayers*4 Mo, full ~ nLayers*180 Mo
+        var _nL = layerUrls.length || 1;
+        var _estBytes = (kind === 'full' ? _nL * 180 : _nL * 4) * 1e6;
+        _checkQuotaBeforeDownload(_estBytes).then(function(okq) {
+            if (!okq) { showToast('Telechargement annule (espace insuffisant).', 5000); return; }
+            _requestPersistentStorage(false);
+            showToast(kind === 'full'
+                ? 'Telechargement du fond Corse complet (~350 Mo). Garde l\'app ouverte...'
+                : 'Telechargement du contexte Corse (leger)...', 6000);
+            startPrecache(map, bounds, 8, zmax, false, layerUrls, [], 'corse-' + kind);
+        });
     }
 
     // ===== Personnalisation nom du raccourci PWA =====
@@ -2038,6 +2108,9 @@
     // Si le nom a change -> reload (manifest regenere) puis precache APRES reload
     // (sinon le reload tuerait le telechargement). Sinon install + precache direct.
     function _proceedInstall(newName, tileChoice) {
+        // Demander le stockage persistant des l'install (PWA installee =
+        // accorde sans prompt) pour proteger les fonds telecharges.
+        _requestPersistentStorage(true);
         if (newName) {
             var cur = getCurrentCustomName();
             if (cur.name !== newName) {
@@ -2441,6 +2514,9 @@
     window.addEventListener('load', function() {
         setTimeout(function() {
             updateStatusBadge();
+            // 0. Demander le stockage persistant (silencieux). Accorde sans
+            //    prompt pour une PWA installee -> evite l'eviction des tuiles.
+            _requestPersistentStorage(false);
             // 0. Mettre en cache la page courante (HTML) si en ligne, pour
             //    qu'elle soit lancable hors-ligne. Le 1er chargement n'est PAS
             //    intercepte par le SW -> sans ca : "Offline" au lancement.
