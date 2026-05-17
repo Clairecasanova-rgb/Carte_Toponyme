@@ -619,15 +619,77 @@
         return b;
     }
 
+    // Bouton flottant "Position" juste au-dessus du badge en ligne/hors-ligne.
+    function _ensurePosBtn() {
+        var b = document.getElementById('pwaPosBtn');
+        if (b) return b;
+        b = document.createElement('button');
+        b.id = 'pwaPosBtn';
+        b.type = 'button';
+        b.title = 'Partager ma position';
+        b.style.cssText =
+            'position:fixed !important;bottom:46px !important;left:10px !important;' +
+            'z-index:100050 !important;display:flex !important;align-items:center;gap:6px;' +
+            'padding:6px 11px;border:none;border-radius:14px;font:600 11px/1 Segoe UI,sans-serif;' +
+            'background:rgba(255,255,255,0.95);color:#5a3a1a;box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
+            'cursor:pointer;user-select:none;';
+        b.innerHTML =
+            '<svg viewBox="0 0 24 24" width="13" height="13" fill="#c0392b" aria-hidden="true">' +
+            '<path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/>' +
+            '</svg><span>Position</span>';
+        b.onclick = function(e) { e.stopPropagation(); _togglePosMenu(); };
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(b);
+        }
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(b);
+        return b;
+    }
+    function _togglePosMenu() {
+        var ex = document.getElementById('pwaPosMenu');
+        if (ex) { ex.remove(); return; }
+        var mn = document.createElement('div');
+        mn.id = 'pwaPosMenu';
+        mn.style.cssText =
+            'position:fixed !important;bottom:84px !important;left:10px !important;' +
+            'z-index:100052 !important;display:flex;flex-direction:column;gap:6px;' +
+            'background:#fff;border-radius:10px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,0.28);';
+        var bs = 'display:block;width:100%;text-align:left;border:none;border-radius:6px;'
+            + 'padding:9px 12px;font:600 12px Segoe UI;cursor:pointer;white-space:nowrap;';
+        mn.innerHTML =
+            '<button id="pwaPosA" style="' + bs + 'background:#8b4513;color:#fff;">Publier sur la carte</button>' +
+            '<button id="pwaPosB" style="' + bs + 'background:#f0ebe3;color:#5a3a1a;">Envoyer (lien)</button>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(mn);
+        }
+        (document.body || document.documentElement).appendChild(mn);
+        document.getElementById('pwaPosA').onclick = function() { mn.remove(); _shareMyPositionOnMap(); };
+        document.getElementById('pwaPosB').onclick = function() { mn.remove(); _shareMyPositionLink(); };
+        setTimeout(function() {
+            document.addEventListener('click', function _c(ev) {
+                if (mn.parentNode && !mn.contains(ev.target)
+                    && (!ev.target.closest || !ev.target.closest('#pwaPosBtn'))) {
+                    mn.remove();
+                }
+                document.removeEventListener('click', _c);
+            });
+        }, 50);
+    }
+
     // Refresh badge si on entre/sort du fullscreen (re-parenter au bon contexte)
     document.addEventListener('fullscreenchange', function() {
         var b = document.getElementById('pwaStatusBadge');
         if (b) { b.remove(); }
+        var pb = document.getElementById('pwaPosBtn');
+        if (pb) { pb.remove(); }
+        var pm = document.getElementById('pwaPosMenu');
+        if (pm) { pm.remove(); }
         setTimeout(updateStatusBadge, 100);
     });
 
     function updateStatusBadge() {
         var b = ensureBadge();
+        _ensurePosBtn();
         var online = !isAppOffline();
         var forced = isForcedOffline();
         b.style.color = online ? '#2e7d32' : '#c62828';
@@ -3980,13 +4042,11 @@
         }
         function sync() {
             var badge = document.getElementById('pwaStatusBadge');
-            if (!badge) return;
-            if (panel.classList.contains('open')) {
-                // Derriere la fiche detail (z-index 10002)
-                badge.style.setProperty('z-index', '9000', 'important');
-            } else {
-                badge.style.setProperty('z-index', '100050', 'important');
-            }
+            var pb = document.getElementById('pwaPosBtn');
+            var open = panel.classList.contains('open');
+            var zi = open ? '9000' : '100050';
+            if (badge) badge.style.setProperty('z-index', zi, 'important');
+            if (pb) pb.style.setProperty('z-index', zi, 'important');
         }
         sync();
         new MutationObserver(sync).observe(panel, {
@@ -4013,19 +4073,25 @@
         function adjust() {
             var badge = document.getElementById('pwaStatusBadge');
             if (!badge) return;
+            var pb = document.getElementById('pwaPosBtn');
             var isMobile = window.innerWidth <= 768;
             var isOpen = !sidebar.classList.contains('collapsed');
+            var bottom, left;
             if (isOpen && isMobile) {
                 var h = sidebar.offsetHeight;
                 var maxBottom = Math.floor(window.innerHeight * 0.55);
-                badge.style.setProperty('bottom', Math.min(h + 8, maxBottom) + 'px', 'important');
-                badge.style.setProperty('left', '10px', 'important');
+                bottom = Math.min(h + 8, maxBottom); left = 10;
             } else if (isOpen && !isMobile) {
-                badge.style.setProperty('left', (sidebar.offsetWidth + 12) + 'px', 'important');
-                badge.style.setProperty('bottom', '10px', 'important');
+                bottom = 10; left = sidebar.offsetWidth + 12;
             } else {
-                badge.style.setProperty('bottom', '10px', 'important');
-                badge.style.setProperty('left', '10px', 'important');
+                bottom = 10; left = 10;
+            }
+            badge.style.setProperty('bottom', bottom + 'px', 'important');
+            badge.style.setProperty('left', left + 'px', 'important');
+            // Bouton Position : juste au-dessus du badge (~36 px plus haut)
+            if (pb) {
+                pb.style.setProperty('bottom', (bottom + 36) + 'px', 'important');
+                pb.style.setProperty('left', left + 'px', 'important');
             }
         }
         adjust();
