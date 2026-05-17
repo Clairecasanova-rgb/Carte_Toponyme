@@ -2678,6 +2678,14 @@
                 Promise.all(ops).then(function() {
                     return Promise.all(selected.map(function(b) { return dbBatchDel(b.id); }));
                 }).then(function() {
+                    return dbBatchAll();
+                }).then(function(remaining) {
+                    // Plus aucun telechargement -> retirer le contour de zone
+                    // (il vient du localStorage, independant du cache).
+                    if (!remaining || remaining.length === 0) {
+                        try { clearStoredZone(); } catch(_e) {}
+                        try { hidePrecachedZoneOnMap(); } catch(_e) {}
+                    }
                     showToast(selected.length + ' telechargement(s) supprime(s)'
                         + (delUrls.length ? ' (' + delUrls.length + ' tuiles)' : ''), 5000);
                     delBtn.textContent = 'Supprimer la selection';
@@ -2690,6 +2698,9 @@
             if (!confirm('Tout supprimer : TOUS les caches (tuiles, contexte Corse, photos, donnees). La carte ne sera plus disponible hors-ligne tant qu\'elle n\'est pas rechargee en ligne. Continuer ?')) return;
             clearCache(true).then(function() {
                 _setCorseContextLevel('');
+                // Retirer le contour de zone (localStorage, hors cache)
+                try { clearStoredZone(); } catch(_e) {}
+                try { hidePrecachedZoneOnMap(); } catch(_e) {}
                 return dbBatchAll();
             }).then(function(batches) {
                 return Promise.all(batches.map(function(b) { return dbBatchDel(b.id); }));
