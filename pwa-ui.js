@@ -958,7 +958,6 @@
             '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Selection par commune</h2>' +
             '<button id="pwaCCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
-            '<div style="font-size:11px;color:#666;margin-bottom:8px;">Coche une ou plusieurs communes de Corse. La zone pre-cachee couvrira la bounding box englobante.</div>' +
             '<input id="pwaCSearch" type="search" placeholder="Rechercher une commune" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">' +
             '<div id="pwaCStatus" style="font-size:11px;color:#999;margin-bottom:6px;">Chargement...</div>' +
             '<div id="pwaCList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:200px;max-height:50vh;font-size:13px;"></div>' +
