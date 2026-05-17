@@ -144,7 +144,7 @@ function _buildTileUrl(url, info, z2, x2, y2) {
 
 // Cherche une tuile ancetre cachee, la recadre+agrandit en 256x256.
 // Renvoie une Response image, ou null si rien d'exploitable.
-async function _ancestorTile(url) {
+async function _ancestorTile(url, allowNetwork) {
     if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') {
         return null;
     }
@@ -152,8 +152,8 @@ async function _ancestorTile(url) {
     if (!info) return null;
     const tileCache = await _getCache(TILE_CACHE);
     const ctxCache = await _getCache(CTX_CACHE);
-    // Remonter jusqu'a 6 niveaux de zoom
-    for (let k = 1; k <= 6; k++) {
+    // Remonter jusqu'a 8 niveaux de zoom (couvre depasser largement le max serveur)
+    for (let k = 1; k <= 8; k++) {
         const za = info.z - k;
         if (za < 0) break;
         const factor = 1 << k;            // 2^k
@@ -163,6 +163,16 @@ async function _ancestorTile(url) {
         if (!aUrl) continue;
         let resp = await tileCache.match(aUrl);
         if (!resp) resp = await ctxCache.match(aUrl);
+        // Pas en cache + en ligne : recuperer l'ancetre depuis le reseau
+        // (cas "depasser le zoom max serveur" en ligne : z demande 404 mais
+        // un zoom inferieur existe -> on l'agrandit).
+        if ((!resp || !resp.ok) && allowNetwork && !_isOffline()) {
+            const net = await _fetchTileReadable(aUrl);
+            if (net && net.ok) {
+                resp = net;
+                tileCache.put(aUrl, net.clone()).catch(() => null);
+            }
+        }
         if (!resp || !resp.ok) continue;
         try {
             const blob = await resp.blob();
@@ -295,7 +305,7 @@ self.addEventListener('fetch', (event) => {
                 if (_isOffline()) {
                     // Pas en cache + hors-ligne : recadrer la tuile parente
                     // cachee (zoom inferieur) pour ne PAS laisser de trou.
-                    const anc = await _ancestorTile(url);
+                    const anc = await _ancestorTile(url, false);
                     if (anc) return anc;
                     return new Response('Offline (not cached)', { status: 503 });
                 }
@@ -306,12 +316,13 @@ self.addEventListener('fetch', (event) => {
                     tileCache.put(url, resp.clone()).catch(() => null);
                     return resp;
                 }
-                // Fetch echoue : tenter la tuile parente cachee
-                const anc2 = await _ancestorTile(url);
+                // Fetch KO (404 = zoom au-dela du max serveur) : recuperer un
+                // ancetre (cache OU reseau) et l'agrandir -> pas de trou.
+                const anc2 = await _ancestorTile(url, true);
                 if (anc2) return anc2;
                 return resp || new Response('Tile fetch failed', { status: 503 });
             } catch (e) {
-                const anc3 = await _ancestorTile(url).catch(() => null);
+                const anc3 = await _ancestorTile(url, true).catch(() => null);
                 if (anc3) return anc3;
                 return new Response('Tile fetch failed', { status: 503 });
             }
