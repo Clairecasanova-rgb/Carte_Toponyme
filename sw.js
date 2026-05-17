@@ -266,8 +266,12 @@ async function cacheFirst(request, cacheName, opts = {}) {
 // === Network-First === (pour API Supabase - timeout court car JSON petit)
 async function networkFirst(request, cacheName) {
     const cache = await _getCache(cacheName);
+    // ignoreVary : le pre-cache et l'app peuvent envoyer des en-tetes
+    // legerement differents (apikey only vs +Content-Type/Prefer). Sans ca,
+    // le Vary de Supabase fait rater le match -> projets vides hors-ligne.
+    const MATCH = { ignoreVary: true };
     if (_isOffline()) {
-        const cached = await cache.match(request);
+        const cached = await cache.match(request, MATCH);
         return cached || new Response(JSON.stringify({ offline: true }),
             { status: 503, headers: { 'Content-Type': 'application/json' } });
     }
@@ -276,7 +280,7 @@ async function networkFirst(request, cacheName) {
         if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => null);
         return resp;
     } catch (e) {
-        const cached = await cache.match(request);
+        const cached = await cache.match(request, MATCH);
         return cached || new Response(JSON.stringify({ offline: true, error: 'no network' }),
             { status: 503, headers: { 'Content-Type': 'application/json' } });
     }

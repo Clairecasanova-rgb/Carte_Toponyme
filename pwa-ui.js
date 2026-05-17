@@ -1875,31 +1875,44 @@
             }
         }
 
-        // 3. Pre-cache des projets : fetch Supabase REST pour les data + photos
+        // 3. Pre-cache des projets : on doit fetch EXACTEMENT les memes URLs
+        // que l'app a l'execution (loadCustomFeatures / loadModifications),
+        // sinon la cle de cache du SW ne matche pas -> rien hors-ligne.
+        //   loadCustomFeatures : /custom_features?select=*&order=created_at.desc
+        //                        [&projet_id=eq.<pid>]&limit=1000&offset=<n>
+        //   loadModifications  : /corrections?select=*&projet_id=eq.<pid>
         var projectPhotoUrls = [];
         if (projectIds && projectIds.length > 0) {
             showToast('Telechargement data des projets...', 3000);
-            for (var pi = 0; pi < projectIds.length; pi++) {
+            var supaBase = (typeof window.SUPABASE_URL !== 'undefined' && window.SUPABASE_URL) || '';
+            var supaKey = (typeof window.SUPABASE_KEY !== 'undefined' && window.SUPABASE_KEY) || '';
+            var supaHdr = { apikey: supaKey, Authorization: 'Bearer ' + supaKey };
+            for (var pi = 0; pi < projectIds.length && supaBase && supaKey; pi++) {
                 var pid = projectIds[pi];
                 try {
-                    var supaBase = (typeof window.SUPABASE_URL !== 'undefined' && window.SUPABASE_URL) || '';
-                    var supaKey = (typeof window.SUPABASE_KEY !== 'undefined' && window.SUPABASE_KEY) || '';
-                    if (!supaBase || !supaKey) continue;
-                    var url = supaBase + '/rest/v1/custom_features?projet_id=eq.' + pid + '&select=*';
-                    var resp = await fetch(url, {
-                        headers: { apikey: supaKey, Authorization: 'Bearer ' + supaKey }
-                    });
-                    if (resp.ok) {
-                        // Le SW cache automatiquement via network-first (api cache)
-                        var data = await resp.json();
-                        if (Array.isArray(data)) {
-                            data.forEach(function(f) {
-                                if (f.photo_url) projectPhotoUrls.push(f.photo_url);
-                                if (f.photo_url2) projectPhotoUrls.push(f.photo_url2);
-                            });
-                            console.log('[Pre-cache] Projet ' + pid + ' : ' + data.length + ' features chargees');
-                        }
+                    // 3a. custom_features (pagine par 1000, URL byte-exacte)
+                    var cfBase = supaBase + '/rest/v1/custom_features?select=*&order=created_at.desc'
+                        + '&projet_id=eq.' + encodeURIComponent(pid);
+                    var offset = 0, pageSize = 1000, total = 0;
+                    while (true) {
+                        var cfUrl = cfBase + '&limit=' + pageSize + '&offset=' + offset;
+                        var cfResp = await fetch(cfUrl, { headers: supaHdr });
+                        if (!cfResp.ok) break;
+                        var page = await cfResp.json();
+                        if (!Array.isArray(page)) break;
+                        page.forEach(function(f) {
+                            if (f.photo_url) projectPhotoUrls.push(f.photo_url);
+                            if (f.photo_url2) projectPhotoUrls.push(f.photo_url2);
+                        });
+                        total += page.length;
+                        if (page.length < pageSize) break;
+                        offset += pageSize;
+                        if (offset > 50000) break;  // garde-fou
                     }
+                    // 3b. corrections (loadModifications, vue projet)
+                    var corrUrl = supaBase + '/rest/v1/corrections?select=*&projet_id=eq.' + pid;
+                    try { await fetch(corrUrl, { headers: supaHdr }); } catch (e2) {}
+                    console.log('[Pre-cache] Projet ' + pid + ' : ' + total + ' features + corrections');
                 } catch (e) {
                     console.warn('[Pre-cache] Echec projet ' + pid + ' :', e);
                 }
