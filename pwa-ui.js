@@ -2178,33 +2178,36 @@
             showToast('Pre-cache Corse impossible (carte ou Service Worker non pret). Reessaie via "Pre-charger une zone".', 7000);
             return;
         }
-        var layerUrls = collectTileLayerUrls(map);
-        if (layerUrls.length === 0) {
-            showToast('Aucune couche de tuiles active pour le pre-cache Corse.', 6000);
-            return;
+        // Jeu de couches DETERMINISTE (independant des calques affiches) :
+        // Satellite HD IGN + Plan IGN J+1. On reutilise en priorite l'URL
+        // reelle de la couche sur la carte (pour que l'affichage hors-ligne
+        // corresponde), sinon l'URL canonique connue.
+        var _avail = (typeof listAvailableLayers === 'function')
+            ? listAvailableLayers(map) : [];
+        function _findUrl(re) {
+            for (var i = 0; i < _avail.length; i++) {
+                if (_avail[i].url && re.test(_avail[i].url)) return _avail[i].url;
+            }
+            return null;
         }
+        var SAT_FALLBACK = 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
+        var PLAN_FALLBACK = 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png';
+        var satUrl = _findUrl(/ORTHOIMAGERY\.ORTHOPHOTOS(?!\.\d)/i) || SAT_FALLBACK;
+        var planUrl = _findUrl(/GEOGRAPHICALGRIDSYSTEMS\.PLANIGNV2/i)
+            || _findUrl(/GEOGRAPHICALGRIDSYSTEMS\.MAPS\.BDUNI\.J1/i) || PLAN_FALLBACK;
+        // Light ET full conservent les 2 couches (satellite + Plan IGN J+1).
+        var layerUrls = [satUrl, planUrl];
         var bounds = L.latLngBounds(
             [CORSE_BOUNDS.south, CORSE_BOUNDS.west],
             [CORSE_BOUNDS.north, CORSE_BOUNDS.east]
         );
         var zmax = (kind === 'full') ? 14 : 10;
-        // Plan IGN J+1 (tuiles legeres ~15 Ko) : pousse plus profond que les
-        // couches lourdes sur le contexte COMPLET (rendu net niveau rue/chemin
-        // sur toute la Corse). z15 ≈ +~190 Mo seulement pour cette couche.
-        var _deepSpec = null;
-        if (kind === 'full') {
-            for (var _li = 0; _li < layerUrls.length; _li++) {
-                if (/GEOGRAPHICALGRIDSYSTEMS\.PLANIGNV2/i.test(layerUrls[_li])) {
-                    _deepSpec = { url: layerUrls[_li], zmax: 15 };
-                    break;
-                }
-            }
-        }
-        // Estimation : light ~ nLayers*4 Mo ; full ~ nLayers*180 Mo
-        // (+~190 Mo si Plan IGN pousse a z15 sur toute la Corse).
-        var _nL = layerUrls.length || 1;
-        var _estBytes = (kind === 'full' ? _nL * 180 : _nL * 4) * 1e6;
-        if (_deepSpec) _estBytes += 190 * 1e6;
+        // Plan IGN J+1 (tuiles legeres) pousse a z15 sur le contexte COMPLET
+        // (rendu net rue/chemin sur toute la Corse, surcout ~+190 Mo).
+        var _deepSpec = (kind === 'full') ? { url: planUrl, zmax: 15 } : null;
+        // Estimation : light (sat+plan 8-10) ~10 Mo ; full (sat+plan 8-14) ~470 Mo
+        // (dont Plan IGN z15 ~+190 Mo).
+        var _estBytes = (kind === 'full' ? 470 : 10) * 1e6;
         _checkQuotaBeforeDownload(_estBytes).then(function(okq) {
             if (!okq) { showToast('Telechargement annule (espace insuffisant).', 5000); return; }
             _requestPersistentStorage(false);
@@ -2463,10 +2466,10 @@
         var existing = document.getElementById('pwaInstallTilesModal');
         if (existing) existing.remove();
         var map = findLeafletMap();
-        var nLayers = map ? countActiveTileLayers(map) : 1;
-        // Estimations indicatives (Corse entiere, dependent du nb de couches actives)
-        var lightMo = Math.max(3, Math.round(nLayers * 3));
-        var fullMo = Math.max(180, nLayers * 175);
+        // Jeu deterministe : Satellite HD + Plan IGN J+1 (independant des
+        // calques affiches). Estimations Corse entiere fixes.
+        var lightMo = 10;   // sat + plan, 8-10
+        var fullMo = 470;   // sat 8-14 + plan 8-15
 
         var m = document.createElement('div');
         m.id = 'pwaInstallTilesModal';
@@ -2481,10 +2484,10 @@
             'Pour que la carte fonctionne sans reseau, telecharge les fonds de la Corse. ' +
             'Tu pourras toujours pre-cacher une zone precise plus tard (zoom detaille).</p>' +
             '<button id="pwaTilesLight" style="display:block;width:100%;text-align:left;background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
-            'Leger — contexte Corse <span style="color:#8b7355;">(zooms 8-10, ~' + lightMo + ' Mo)</span><br>' +
-            '<span style="font-weight:400;font-size:11px;color:#888;">Voir l\'ile entiere + grands axes. Rapide.</span></button>' +
+            'Leger — Satellite + Plan IGN <span style="color:#8b7355;">(zooms 8-10, ~' + lightMo + ' Mo)</span><br>' +
+            '<span style="font-weight:400;font-size:11px;color:#888;">Vue ile entiere + grands axes. Rapide.</span></button>' +
             '<button id="pwaTilesFull" style="display:block;width:100%;text-align:left;background:#8b4513;color:#fff;border:none;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
-            'Complet — toute la Corse <span style="opacity:.85;">(zooms 8-14, ~' + fullMo + ' Mo)</span><br>' +
+            'Complet — Satellite 8-14 + Plan IGN 8-15 <span style="opacity:.85;">(~' + fullMo + ' Mo)</span><br>' +
             '<span style="font-weight:400;font-size:11px;opacity:.85;">Se reperer routes/chemins partout. ~10-15 min en 4G.</span></button>' +
             '<button id="pwaTilesNone" style="display:block;width:100%;text-align:left;background:#fff;color:#8b7355;border:1px solid #e0d8c8;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">' +
             'Plus tard — installer sans telecharger</button>' +
