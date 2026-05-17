@@ -3343,6 +3343,90 @@
         }, 1500);
     }
 
+    // --- Partage du parcours sur la carte collaborative (Supabase) ---
+    // Le parcours devient un custom_features de type 'polyline' (LineString),
+    // visible par tous les utilisateurs de cette carte. Passe par le wrapper
+    // fetch : hors-ligne -> mis en file et synchronise au retour reseau.
+    function _trkSimplify(points, maxN) {
+        if (!points || points.length <= maxN) return points || [];
+        var step = Math.ceil(points.length / maxN);
+        var out = [];
+        for (var i = 0; i < points.length; i += step) out.push(points[i]);
+        if (out[out.length - 1] !== points[points.length - 1]) {
+            out.push(points[points.length - 1]);
+        }
+        return out;
+    }
+    function _trkShare(track, done) {
+        if (!track || !track.points || track.points.length < 2) {
+            showToast('Parcours trop court pour etre partage.', 4000);
+            return;
+        }
+        var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
+        if (!SU || !SK) {
+            showToast('Partage indisponible (configuration Supabase absente).', 5000);
+            return;
+        }
+        if (track.shared) {
+            if (!confirm('Ce parcours a deja ete partage. Le partager a nouveau (doublon) ?')) return;
+        } else if (!confirm('Partager ce parcours sur la carte collaborative ?\n\n'
+                + track.name + '\n' + _trkFmtDist(track.distance || 0)
+                + ' · ' + _trkFmtDur(track.activeMs || 0)
+                + '\n\nVisible par tous les utilisateurs de cette carte.')) {
+            return;
+        }
+        var pts = _trkSimplify(track.points, 1500);
+        var coords = pts.map(function(p) { return [p.lon, p.lat]; });
+        var desc = 'Parcours GPS · ' + _trkFmtDist(track.distance || 0)
+            + ' · ' + _trkFmtDur(track.activeMs || 0)
+            + (track.gain ? ' · D+ ' + Math.round(track.gain) + ' m' : '')
+            + ' · ' + (track.points.length) + ' points'
+            + ' · ' + new Date(track.startedAt || Date.now()).toLocaleDateString('fr-FR');
+        var body = {
+            projet_id: (window.DRAWING_PROJET_ID || window.PROJET_ID || null),
+            feature_type: 'polyline',
+            geometry: { type: 'LineString', coordinates: coords },
+            name: track.name,
+            description: desc,
+            category: 'Parcours',
+            color: '#e67e22',
+            auteur: (window.CONTRIBUTEUR || window.contributeurActuel || 'Parcours GPS')
+        };
+        try {
+            if (typeof window._mapHash === 'function') {
+                body.created_on_carte_hash = window._mapHash();
+            }
+        } catch(_e) {}
+        showToast('Envoi du parcours...', 3000);
+        fetch(SU + '/rest/v1/custom_features', {
+            method: 'POST',
+            headers: {
+                'apikey': SK, 'Authorization': 'Bearer ' + SK,
+                'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify(body)
+        }).then(function(r) {
+            if (r && (r.ok || r.status === 201 || r.status === 204)) {
+                track.shared = true;
+                dbTrackPut(track);
+                showToast('Parcours partage sur la carte.', 5000);
+                if (typeof window.loadCustomFeatures === 'function') {
+                    setTimeout(function() { window.loadCustomFeatures(); }, 600);
+                }
+            } else if (r && r.status === 202) {
+                // wrapper offline : mis en file
+                track.shared = true;
+                dbTrackPut(track);
+                showToast('Hors-ligne : parcours mis en file, partage au retour reseau.', 6000);
+            } else {
+                showToast('Echec du partage (HTTP ' + (r ? r.status : '?') + ').', 6000);
+            }
+            if (typeof done === 'function') done();
+        }).catch(function(e) {
+            showToast('Echec du partage : ' + (e && e.message ? e.message : 'erreur reseau'), 6000);
+        });
+    }
+
     // --- Modale gestion des parcours ---
     function _trkOpenManager(highlightId) {
         var existing = document.getElementById('pwaTrkMgr');
@@ -3384,6 +3468,7 @@
                 listEl.innerHTML = tracks.map(function(t) {
                     var hl = (t.id === highlightId) ? 'background:#fdf6ec;' : '';
                     var st = t.status !== 'done' ? ' <span style="color:#e67e22;">(interrompu)</span>' : '';
+                    if (t.shared) st += ' <span style="color:#16a085;">(partage)</span>';
                     return '<div data-id="' + t.id + '" style="border-bottom:1px solid #f4efe7;padding:8px 6px;' + hl + '">' +
                         '<div style="font-weight:600;color:#5a3a1a;">' + escapeHtml(t.name) + st + '</div>' +
                         '<div style="color:#999;font-size:11px;margin:2px 0 6px;">' +
@@ -3394,6 +3479,7 @@
                         '<button class="pwaTrkView" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Voir sur la carte</button>' +
                         '<button class="pwaTrkRen" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
                         '<button class="pwaTrkGpx" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Export GPX</button>' +
+                        '<button class="pwaTrkShare" data-id="' + t.id + '" style="background:#8b4513;color:#fff;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Partager</button>' +
                         (t.status !== 'done' ? '<button class="pwaTrkResumeT" data-id="' + t.id + '" style="background:#27ae60;color:#fff;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Reprendre</button>' : '') +
                         '<button class="pwaTrkDel" data-id="' + t.id + '" style="background:#fff;color:#c0392b;border:1px solid #e8a8a0;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Supprimer</button>' +
                         '</div></div>';
@@ -3405,6 +3491,13 @@
                 });
                 listEl.querySelectorAll('.pwaTrkGpx').forEach(function(b) {
                     b.onclick = function() { dbTrackGet(b.dataset.id).then(_trkExportGpx); };
+                });
+                listEl.querySelectorAll('.pwaTrkShare').forEach(function(b) {
+                    b.onclick = function() {
+                        dbTrackGet(b.dataset.id).then(function(t) {
+                            if (t) _trkShare(t, refresh);
+                        });
+                    };
                 });
                 listEl.querySelectorAll('.pwaTrkRen').forEach(function(b) {
                     b.onclick = function() {
