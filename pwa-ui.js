@@ -1637,34 +1637,24 @@
         if (_zoneLayer) try { map.removeLayer(_zoneLayer); } catch(_e) {}
         var bb = L.latLngBounds(zone.bounds[0], zone.bounds[1]);
         var hasCommunes = zone.communes && zone.communes.length > 0;
-        var popupHtml =
-            '<strong>Zone hors-ligne</strong><br>' +
-            'Zooms : ' + zone.zmin + ' a ' + zone.zmax + '<br>' +
-            'Couches : ' + (zone.nLayers || '?') + '<br>' +
-            (hasCommunes
-                ? 'Communes : ' + zone.communes.length + ' (' +
-                    zone.communes.slice(0, 3).map(function(c) { return c.nom; }).join(', ') +
-                    (zone.communes.length > 3 ? ' + ' + (zone.communes.length - 3) + ' autre(s)' : '') + ')<br>'
-                : '') +
-            'Pre-cachee le ' + new Date(zone.timestamp || 0).toLocaleDateString('fr-FR') +
-            '<br><br><em>Re-pre-charge pour ajuster la zone.</em>';
-
+        // Contour purement visuel : PAS de popup (inutile au clic) et
+        // interactive:false -> les clics passent a travers vers la carte.
         if (hasCommunes) {
-            // Afficher les polygones reels des communes
             var group = L.featureGroup();
             zone.communes.forEach(function(c) {
                 (c.polygons || []).forEach(function(poly) {
-                    // poly = [outerRing, hole1, hole2, ...] format Leaflet
                     L.polygon(poly, {
-                        color: '#8b4513', weight: 2, fillOpacity: 0.10, dashArray: '6,4'
-                    }).bindPopup(popupHtml).addTo(group);
+                        color: '#8b4513', weight: 2, fillOpacity: 0.10,
+                        dashArray: '6,4', interactive: false
+                    }).addTo(group);
                 });
             });
             _zoneLayer = group.addTo(map);
         } else {
             _zoneLayer = L.rectangle(bb, {
-                color: '#8b4513', weight: 3, fillOpacity: 0.10, dashArray: '8,4'
-            }).bindPopup(popupHtml).addTo(map);
+                color: '#8b4513', weight: 3, fillOpacity: 0.10,
+                dashArray: '8,4', interactive: false
+            }).addTo(map);
         }
         // Fit sur la zone si demande
         if (!persistent) map.fitBounds(bb, { padding: [40, 40] });
@@ -2481,6 +2471,177 @@
             .catch(function() {});
     }
 
+
+    // ===== Indicateur d'acquisition GPS (bouton "localise") =====
+    // Le LocateControl Folium a timeout=8000 : trop court pour un cold-start
+    // GPS hors-ligne (30s-2min). On affiche un indicateur clair au clic, et si
+    // le plugin echoue par timeout on relance un fix long nous-memes puis on
+    // re-declenche le bouton (position alors chaude -> fix quasi-instantane).
+    var _geoIndEl = null, _geoHardTimer = null, _geoRetryDone = false, _geoWatchId = null;
+
+    function _geoShowIndicator(text) {
+        if (!_geoIndEl) {
+            _geoIndEl = document.createElement('div');
+            _geoIndEl.id = 'pwaGeoIndicator';
+            _geoIndEl.style.cssText =
+                'position:fixed !important;top:14px !important;left:50% !important;' +
+                'transform:translateX(-50%);z-index:100070 !important;' +
+                'display:flex;align-items:center;gap:10px;padding:9px 16px;' +
+                'background:rgba(40,40,40,0.95);color:#fff;border-radius:22px;' +
+                'box-shadow:0 4px 14px rgba(0,0,0,0.28);font:600 12px Segoe UI,sans-serif;' +
+                'max-width:90vw;';
+            (document.body || document.documentElement).appendChild(_geoIndEl);
+        }
+        _geoIndEl.innerHTML =
+            '<span style="width:14px;height:14px;border:2px solid rgba(255,255,255,0.35);' +
+            'border-top-color:#27ae60;border-radius:50%;display:inline-block;' +
+            'animation:pwaGeoSpin 0.8s linear infinite;flex:none;"></span>' +
+            '<span style="flex:1;">' + text + '</span>' +
+            '<button id="pwaGeoCancel" style="background:none;border:none;color:#bbb;' +
+            'font-size:18px;cursor:pointer;padding:0 2px;line-height:1;flex:none;">&times;</button>';
+        if (!document.getElementById('pwaGeoSpinStyle')) {
+            var st = document.createElement('style');
+            st.id = 'pwaGeoSpinStyle';
+            st.textContent = '@keyframes pwaGeoSpin{to{transform:rotate(360deg)}}';
+            document.head.appendChild(st);
+        }
+        document.getElementById('pwaGeoCancel').onclick = function() { _geoHideIndicator(); };
+    }
+    function _geoHideIndicator() {
+        if (_geoHardTimer) { clearTimeout(_geoHardTimer); _geoHardTimer = null; }
+        if (_geoWatchId != null && navigator.geolocation) {
+            try { navigator.geolocation.clearWatch(_geoWatchId); } catch(_e) {}
+            _geoWatchId = null;
+        }
+        if (_geoIndEl && _geoIndEl.parentNode) _geoIndEl.parentNode.removeChild(_geoIndEl);
+        _geoIndEl = null;
+    }
+    function _geoFinalMessage(msg) {
+        if (!_geoIndEl) _geoShowIndicator('');
+        _geoIndEl.innerHTML =
+            '<span style="flex:1;">' + msg + '</span>' +
+            '<button id="pwaGeoCancel" style="background:none;border:none;color:#bbb;' +
+            'font-size:18px;cursor:pointer;padding:0 2px;line-height:1;flex:none;">&times;</button>';
+        document.getElementById('pwaGeoCancel').onclick = function() { _geoHideIndicator(); };
+        setTimeout(function() {
+            // Auto-hide seulement si c'est toujours ce message d'echec
+            if (_geoIndEl && /introuvable|echec|refus/i.test(_geoIndEl.textContent)) _geoHideIndicator();
+        }, 9000);
+    }
+
+    function _geoStartAcquisition() {
+        _geoRetryDone = false;
+        var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
+        _geoShowIndicator(offline
+            ? 'Acquisition GPS… (hors-ligne : peut prendre jusqu\'a 1-2 min, ciel degage)'
+            : 'Acquisition GPS en cours…');
+        if (_geoHardTimer) clearTimeout(_geoHardTimer);
+        // Cap dur : si rien apres 2min30, on abandonne avec un message
+        _geoHardTimer = setTimeout(function() {
+            _geoFinalMessage('Position GPS introuvable. Va a ciel degage et reessaie.');
+        }, 150000);
+    }
+
+    // Repli : le LocateControl a echoue (timeout 8s trop court). On tente un
+    // fix long nous-memes puis on re-clique le bouton (position chaude).
+    function _geoLongRetry(locateAnchor) {
+        if (_geoRetryDone || !navigator.geolocation) return;
+        _geoRetryDone = true;
+        var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
+        _geoShowIndicator(offline
+            ? 'GPS lent (demarrage a froid hors-ligne)… recherche en cours, reste a ciel degage'
+            : 'GPS lent… recherche en cours');
+        navigator.geolocation.getCurrentPosition(
+            function() {
+                // Position desormais chaude (cachee par l'OS). Re-declencher le
+                // bouton : le LocateControl la recupere via maximumAge -> instant.
+                if (locateAnchor) {
+                    try { locateAnchor.click(); } catch(_e) {}
+                }
+                // Filet : si le plugin ne reagit pas vite, on hide quand meme apres 6s
+                setTimeout(function() {
+                    if (_geoIndEl) _geoHideIndicator();
+                }, 6000);
+            },
+            function(err) {
+                _geoFinalMessage(err && err.code === 1
+                    ? 'Geolocalisation refusee. Autorise-la dans les reglages.'
+                    : 'Position GPS introuvable. Va a ciel degage et reessaie.');
+            },
+            { enableHighAccuracy: true, timeout: offline ? 120000 : 30000, maximumAge: 0 }
+        );
+    }
+
+    function _hookLocateControl(attempt) {
+        attempt = attempt || 0;
+        var map = findLeafletMap();
+        var ctl = document.querySelector('.leaflet-control-locate');
+        if ((!map || !ctl) && attempt < 20) {
+            setTimeout(function() { _hookLocateControl(attempt + 1); }, 600);
+            return;
+        }
+        if (!map || !ctl) return;
+        var anchor = ctl.querySelector('a') || ctl;
+
+        // Clic utilisateur : si ca DEMARRE une acquisition (le plugin ajoute la
+        // classe 'requesting'/'active' juste apres), afficher l'indicateur.
+        anchor.addEventListener('click', function() {
+            setTimeout(function() {
+                var starting = ctl.classList.contains('requesting')
+                    || ctl.classList.contains('active');
+                if (starting) _geoStartAcquisition();
+                else _geoHideIndicator();  // l'utilisateur a stoppe le suivi
+            }, 60);
+        });
+
+        // Succes : le plugin a trouve la position
+        map.on('locationfound', function() { _geoHideIndicator(); });
+
+        // Echec : timeout 8s du plugin trop court -> repli fix long
+        map.on('locationerror', function(e) {
+            if (!_geoIndEl) return;  // pas d'acquisition en cours, ignorer
+            if (!_geoRetryDone) {
+                _geoLongRetry(anchor);
+            } else {
+                _geoFinalMessage(e && e.code === 1
+                    ? 'Geolocalisation refusee. Autorise-la dans les reglages.'
+                    : 'Position GPS introuvable. Va a ciel degage et reessaie.');
+            }
+        });
+    }
+    window.addEventListener('load', function() {
+        setTimeout(function() { _hookLocateControl(0); }, 1200);
+    });
+
+    // ===== Badge derriere la fiche detail quand elle est ouverte =====
+    // #modernDetailPanel (z-index 10002) : sur mobile = bottom-sheet, le badge
+    // (z-index 100050) passait par-dessus. Quand la fiche est .open, on
+    // descend le badge sous la fiche ; on le restaure a la fermeture.
+    function _watchDetailPanelForBadge(attempt) {
+        attempt = attempt || 0;
+        var panel = document.getElementById('modernDetailPanel');
+        if (!panel) {
+            if (attempt < 15) setTimeout(function() { _watchDetailPanelForBadge(attempt + 1); }, 700);
+            return;
+        }
+        function sync() {
+            var badge = document.getElementById('pwaStatusBadge');
+            if (!badge) return;
+            if (panel.classList.contains('open')) {
+                // Derriere la fiche detail (z-index 10002)
+                badge.style.setProperty('z-index', '9000', 'important');
+            } else {
+                badge.style.setProperty('z-index', '100050', 'important');
+            }
+        }
+        sync();
+        new MutationObserver(sync).observe(panel, {
+            attributes: true, attributeFilter: ['class']
+        });
+    }
+    window.addEventListener('load', function() {
+        setTimeout(function() { _watchDetailPanelForBadge(0); }, 1000);
+    });
 
     // ===== Bootstrap + auto-sync robuste =====
     // L'event 'online' ne tire que si la page est OUVERTE pendant la transition
