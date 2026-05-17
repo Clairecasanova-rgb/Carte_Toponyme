@@ -509,10 +509,12 @@
             m.remove();
             if (isPrecachedZoneVisible()) {
                 hidePrecachedZoneOnMap();
-                showToast('Zone hors-ligne masquee.');
+                _setZoneHidden(true);  // memorise : ne plus afficher au reload
+                showToast('Zone hors-ligne masquee (ne reapparaitra plus au rechargement).');
             } else if (getStoredZone()) {
+                _setZoneHidden(false);  // memorise : reafficher au reload
                 showPrecachedZoneOnMap(false);
-                showToast('Zone hors-ligne affichee (zoome sur la zone). Re-pre-charge pour l\'ajuster.', 5000);
+                showToast('Zone hors-ligne affichee. Restera visible au rechargement (en ligne et hors-ligne).', 5000);
             } else {
                 showToast('Aucune zone pre-cachee. Utilise "Pre-charger une zone" d\'abord.');
             }
@@ -1460,6 +1462,23 @@
     function clearStoredZone() {
         try { localStorage.removeItem(_zoneKey()); } catch(_e) {}
     }
+    // Flag : l'utilisateur a-t-il explicitement masque la zone ?
+    // Par defaut la zone est AFFICHEE (en ligne comme hors-ligne). Si l'utilisateur
+    // clique "Masquer", on memorise pour ne plus l'afficher au prochain chargement.
+    function _zoneHiddenKey() {
+        var fn = (location.pathname.split('/').pop()) || 'carte.html';
+        return 'pwaZoneHidden_' + fn;
+    }
+    function _zoneHiddenByUser() {
+        try { return localStorage.getItem(_zoneHiddenKey()) === '1'; }
+        catch(_e) { return false; }
+    }
+    function _setZoneHidden(hidden) {
+        try {
+            if (hidden) localStorage.setItem(_zoneHiddenKey(), '1');
+            else localStorage.removeItem(_zoneHiddenKey());
+        } catch(_e) {}
+    }
 
     // Layer Leaflet pour afficher la zone precachee (rectangle OU polygones communes).
     // `_zoneLayer` peut etre un seul layer ou un FeatureGroup si plusieurs polygones.
@@ -1632,6 +1651,9 @@
                         _pendingCommunePolys = null;
                     }
                     setStoredZone(zone);
+                    _setZoneHidden(false);  // nouvelle zone : afficher par defaut
+                    // Afficher immediatement la nouvelle zone sur la carte
+                    try { showPrecachedZoneOnMap(true); } catch(_e) {}
                     setTimeout(function() {
                         if (modal && modal.parentNode) modal.remove();
                         showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
@@ -2210,6 +2232,13 @@
             updateStatusBadge();
             // 0. Patcher les TileLayers deja en place (maxNativeZoom etc.)
             _patchExistingTileLayers();
+            // 0bis. Afficher la zone hors-ligne par defaut si une zone est storee
+            //       (l'utilisateur peut la masquer via le menu si besoin)
+            try {
+                if (getStoredZone() && !_zoneHiddenByUser()) {
+                    showPrecachedZoneOnMap(true);  // persistent=true : pas de fitBounds
+                }
+            } catch(_e) {}
             // 1. Restaurer les markers orange "en attente" depuis la queue IndexedDB
             //    (avant le replay : si on est online, le replay videra la queue et
             //    les markers seront remplaces par les vraies features ; si on est
