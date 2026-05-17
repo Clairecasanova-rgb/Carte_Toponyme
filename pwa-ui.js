@@ -719,6 +719,13 @@
             '<button id="pwaMClear" style="' + btnSecondary + '">Consulter / gerer le cache hors-ligne</button>' +
             '</div>' +
 
+            // Section : MA POSITION
+            '<div style="' + sectionTitle + '">Ma position</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaMPosMap" style="' + btnPrimary + '">Publier ma position sur la carte</button>' +
+            '<button id="pwaMPosLink" style="' + btnSecondary + '">Envoyer ma position (lien)</button>' +
+            '</div>' +
+
             // Section : PARCOURS
             '<div style="' + sectionTitle + '">Parcours de marche</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
@@ -780,6 +787,8 @@
                 showToast('Aucune zone pre-cachee. Utilise "Pre-charger une zone" d\'abord.');
             }
         };
+        document.getElementById('pwaMPosMap').onclick = function() { m.remove(); _shareMyPositionOnMap(); };
+        document.getElementById('pwaMPosLink').onclick = function() { m.remove(); _shareMyPositionLink(); };
         document.getElementById('pwaMTracks').onclick = function() { m.remove(); openTracksFeature(); };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
@@ -3697,6 +3706,99 @@
 
     function openTracksFeature() { _trkOpenManager(); }
     window._pwaTracks = openTracksFeature;
+
+    // ===== Partage de ma position =====
+    // Acquisition GPS ponctuelle (haute precision).
+    function _getPositionOnce(onOk) {
+        if (!navigator.geolocation) {
+            showToast('Geolocalisation indisponible sur cet appareil.', 5000);
+            return;
+        }
+        showToast('Acquisition de la position...', 3000);
+        navigator.geolocation.getCurrentPosition(
+            function(pos) { onOk(pos.coords); },
+            function(err) {
+                showToast(err && err.code === 1
+                    ? 'Geolocalisation refusee. Autoriser l\'acces a la position.'
+                    : 'Position introuvable. Se placer a ciel degage et reessayer.', 6000);
+            },
+            { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+        );
+    }
+    // A — Publie un point "Position de ..." sur la carte collaborative.
+    // Passe par le wrapper fetch -> hors-ligne : mis en file + marqueur orange.
+    function _shareMyPositionOnMap() {
+        var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
+        if (!SU || !SK) {
+            showToast('Partage indisponible (configuration Supabase absente).', 5000);
+            return;
+        }
+        _getPositionOnce(function(c) {
+            var auteur = (window.CONTRIBUTEUR || window.contributeurActuel || 'Position partagee');
+            var d = new Date();
+            var hh = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            var body = {
+                projet_id: (window.DRAWING_PROJET_ID || window.PROJET_ID || null),
+                feature_type: 'point',
+                geometry: { type: 'Point', coordinates: [c.longitude, c.latitude] },
+                name: 'Position de ' + auteur + ' — ' + hh,
+                description: 'Position partagee · precision ~' + Math.round(c.accuracy || 0)
+                    + ' m · ' + d.toLocaleDateString('fr-FR') + ' ' + hh,
+                category: 'Position',
+                color: '#c0392b',
+                auteur: auteur
+            };
+            try {
+                if (typeof window._mapHash === 'function') body.created_on_carte_hash = window._mapHash();
+            } catch(_e) {}
+            showToast('Envoi de la position...', 3000);
+            fetch(SU + '/rest/v1/custom_features', {
+                method: 'POST',
+                headers: {
+                    'apikey': SK, 'Authorization': 'Bearer ' + SK,
+                    'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify(body)
+            }).then(function(r) {
+                if (r && (r.ok || r.status === 201 || r.status === 204)) {
+                    showToast('Position publiee sur la carte.', 5000);
+                    if (typeof window.loadCustomFeatures === 'function') {
+                        setTimeout(function() { window.loadCustomFeatures(); }, 600);
+                    }
+                } else if (r && r.status === 202) {
+                    showToast('Hors-ligne : position mise en file, publiee au retour reseau.', 6000);
+                } else {
+                    showToast('Echec de la publication (HTTP ' + (r ? r.status : '?') + ').', 6000);
+                }
+            }).catch(function(e) {
+                showToast('Echec : ' + (e && e.message ? e.message : 'erreur reseau'), 6000);
+            });
+        });
+    }
+    // B — Partage externe via navigator.share (lien carte universel maps).
+    function _shareMyPositionLink() {
+        _getPositionOnce(function(c) {
+            var lat = c.latitude.toFixed(6), lon = c.longitude.toFixed(6);
+            var mapsUrl = 'https://www.google.com/maps?q=' + lat + ',' + lon;
+            var carteUrl = location.href.split('#')[0].split('?')[0] + '#' + lat + ',' + lon;
+            var txt = 'Ma position : ' + lat + ', ' + lon
+                + ' (precision ~' + Math.round(c.accuracy || 0) + ' m)'
+                + '\nCarte : ' + carteUrl;
+            if (navigator.share) {
+                navigator.share({ title: 'Ma position', text: txt, url: mapsUrl })
+                    .catch(function() {});
+            } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(txt + '\n' + mapsUrl).then(function() {
+                    showToast('Position copiee dans le presse-papier.', 5000);
+                }).catch(function() {
+                    prompt('Copier la position :', txt + '\n' + mapsUrl);
+                });
+            } else {
+                prompt('Copier la position :', txt + '\n' + mapsUrl);
+            }
+        });
+    }
+    window._pwaSharePos = _shareMyPositionOnMap;
 
     // ===== GPS warm-up =====
     // Le premier appel a navigator.geolocation peut prendre 5-15s sur smartphone
