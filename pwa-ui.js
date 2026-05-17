@@ -814,7 +814,7 @@
             '<button id="pwaCCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
             '<div style="font-size:11px;color:#666;margin-bottom:8px;">Coche une ou plusieurs communes de Corse. La zone pre-cachee couvrira la bounding box englobante.</div>' +
-            '<input id="pwaCSearch" type="search" placeholder="Rechercher (ex: Brando, Bastia, 2B043)..." style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">' +
+            '<input id="pwaCSearch" type="search" placeholder="Rechercher une commune" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">' +
             '<div id="pwaCStatus" style="font-size:11px;color:#999;margin-bottom:6px;">Chargement...</div>' +
             '<div id="pwaCList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:200px;max-height:50vh;font-size:13px;"></div>' +
             '<div id="pwaCSelected" style="font-size:11px;color:#5a3a1a;margin-top:8px;min-height:18px;"></div>' +
@@ -1074,7 +1074,7 @@
                 ? ''  // selection commune : le nom est auto-derive des communes
                 : '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
                   'Nom de cette selection (pour la retrouver dans la liste)<br>' +
-                  '<input type="text" id="pwaPName" maxlength="50" placeholder="ex. Sentier Cap Corse, Chez moi..." ' +
+                  '<input type="text" id="pwaPName" maxlength="50" placeholder="Nom de la selection" ' +
                   'style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;margin-top:3px;"></label>') +
 
             '<div id="pwaPEstim" style="font-size:11px;color:#666;background:#faf7f2;padding:8px;border-radius:4px;margin-bottom:12px;"></div>' +
@@ -2649,8 +2649,7 @@
             '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Mes telechargements hors-ligne</h2>' +
             '<button id="pwaCMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
-            '<div id="pwaCMTotal" style="font-size:12px;color:#5a3a1a;background:#faf7f2;border:1px solid #f0ebe3;border-radius:6px;padding:8px 10px;margin-bottom:8px;"></div>' +
-            '<p style="margin:0 0 10px;font-size:11px;color:#666;line-height:1.5;">Chaque ligne = un telechargement que tu as lance. Coche ceux a supprimer (les tuiles partagees avec un cache conserve ne sont PAS effacees).</p>' +
+            '<div id="pwaCMTotal" style="font-size:12px;color:#5a3a1a;background:#faf7f2;border:1px solid #f0ebe3;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>' +
             '<div id="pwaCMList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:120px;max-height:48vh;font-size:13px;">Chargement...</div>' +
             '<div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap;">' +
             '<button id="pwaCMWipeAll" style="background:#fff;color:#c0392b;border:1px solid #e8a8a0;padding:8px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">Tout supprimer</button>' +
@@ -2966,6 +2965,52 @@
     }
     window.addEventListener('load', function() {
         setTimeout(function() { _watchDetailPanelForBadge(0); }, 1000);
+    });
+
+    // ===== Badge s'adapte au panneau (afficher/masquer) =====
+    // Meme logique que le FAB geoloc (_setupGeolocFabPosition cote carte) :
+    //  - mobile + sidebar ouverte (bottom-sheet) : remonter le badge au-dessus
+    //  - desktop + sidebar ouverte (370px a gauche) : decaler le badge a droite
+    //    de la sidebar (le badge est en bas-GAUCHE, donc masque sinon)
+    //  - sinon : position par defaut (bas 10 / gauche 10)
+    function _watchSidebarForBadge(attempt) {
+        attempt = attempt || 0;
+        var sidebar = document.getElementById('searchContainer');
+        if (!sidebar) {
+            if (attempt < 15) setTimeout(function() { _watchSidebarForBadge(attempt + 1); }, 700);
+            return;
+        }
+        function adjust() {
+            var badge = document.getElementById('pwaStatusBadge');
+            if (!badge) return;
+            var isMobile = window.innerWidth <= 768;
+            var isOpen = !sidebar.classList.contains('collapsed');
+            if (isOpen && isMobile) {
+                var h = sidebar.offsetHeight;
+                var maxBottom = Math.floor(window.innerHeight * 0.55);
+                badge.style.setProperty('bottom', Math.min(h + 8, maxBottom) + 'px', 'important');
+                badge.style.setProperty('left', '10px', 'important');
+            } else if (isOpen && !isMobile) {
+                badge.style.setProperty('left', (sidebar.offsetWidth + 12) + 'px', 'important');
+                badge.style.setProperty('bottom', '10px', 'important');
+            } else {
+                badge.style.setProperty('bottom', '10px', 'important');
+                badge.style.setProperty('left', '10px', 'important');
+            }
+        }
+        adjust();
+        window.addEventListener('resize', adjust);
+        new MutationObserver(adjust).observe(sidebar, {
+            attributes: true, attributeFilter: ['class']
+        });
+        if (typeof ResizeObserver !== 'undefined') {
+            new ResizeObserver(adjust).observe(sidebar);
+        }
+        setTimeout(adjust, 600);
+        setTimeout(adjust, 1600);
+    }
+    window.addEventListener('load', function() {
+        setTimeout(function() { _watchSidebarForBadge(0); }, 1000);
     });
 
     // ===== Bootstrap + auto-sync robuste =====
