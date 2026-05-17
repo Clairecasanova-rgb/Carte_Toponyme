@@ -626,7 +626,7 @@
         b = document.createElement('button');
         b.id = 'pwaPosBtn';
         b.type = 'button';
-        b.title = 'Partager ma position';
+        b.title = 'Itineraire : partage de position et parcours';
         b.style.cssText =
             'position:fixed !important;bottom:46px !important;left:10px !important;' +
             'z-index:100050 !important;display:flex !important;align-items:center;gap:6px;' +
@@ -636,7 +636,7 @@
         b.innerHTML =
             '<svg viewBox="0 0 24 24" width="13" height="13" fill="#c0392b" aria-hidden="true" style="pointer-events:none;">' +
             '<path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/>' +
-            '</svg><span style="pointer-events:none;">Position</span>';
+            '</svg><span style="pointer-events:none;">Itineraire</span>';
         // PAS de L.DomEvent.disableClickPropagation : il bloque le clic sur ce
         // petit bouton au-dessus de la carte (le badge marche sans, on s'aligne).
         b.onclick = function(e) { e.stopPropagation(); _togglePosMenu(); };
@@ -669,7 +669,7 @@
             '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:88vh;'
             + 'overflow-y:auto;padding:20px 22px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;font-family:Segoe UI,sans-serif;">Position &amp; parcours</h2>' +
+            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;font-family:Segoe UI,sans-serif;">Itineraire &amp; position</h2>' +
             '<button id="pwaPPClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;line-height:1;padding:0 4px;">&times;</button>' +
             '</div>' +
             '<div style="' + sectionTitle + '">Ma position</div>' +
@@ -4100,7 +4100,7 @@
         var pb = document.getElementById('pwaPosBtn');
         if (!pb) return;
         var sp = pb.querySelector('span');
-        if (sp) sp.textContent = _liveOn ? 'Position (live)' : 'Position';
+        if (sp) sp.textContent = _liveOn ? 'Itineraire (live)' : 'Itineraire';
         pb.style.setProperty('background',
             _liveOn ? 'rgba(26,115,232,0.95)' : 'rgba(255,255,255,0.95)', 'important');
         pb.style.setProperty('color', _liveOn ? '#fff' : '#5a3a1a', 'important');
