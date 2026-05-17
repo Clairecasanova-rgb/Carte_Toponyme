@@ -633,15 +633,25 @@
             'padding:6px 11px;border:none;border-radius:14px;font:600 11px/1 Segoe UI,sans-serif;' +
             'background:rgba(255,255,255,0.95);color:#5a3a1a;box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
             'cursor:pointer;user-select:none;pointer-events:auto !important;';
+        if (!document.getElementById('pwaLivePulseStyle')) {
+            var ps = document.createElement('style');
+            ps.id = 'pwaLivePulseStyle';
+            ps.textContent = '@keyframes pwaLivePulse{0%,100%{opacity:1}50%{opacity:.2}}';
+            document.head.appendChild(ps);
+        }
         b.innerHTML =
             '<svg viewBox="0 0 24 24" width="13" height="13" fill="#c0392b" aria-hidden="true" style="pointer-events:none;">' +
             '<path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/>' +
-            '</svg><span style="pointer-events:none;">Itineraire</span>';
+            '</svg>' +
+            '<span id="pwaPosDot" style="display:none;width:8px;height:8px;border-radius:50%;' +
+            'background:#ff5252;pointer-events:none;flex:none;"></span>' +
+            '<span id="pwaPosLbl" style="pointer-events:none;">Itineraire</span>';
         // PAS de L.DomEvent.disableClickPropagation : il bloque le clic sur ce
         // petit bouton au-dessus de la carte (le badge marche sans, on s'aligne).
         b.onclick = function(e) { e.stopPropagation(); _togglePosMenu(); };
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(b);
+        try { _liveUpdateIndicator(); } catch(_e) {}  // refleter l'etat live
         return b;
     }
     // Fenetre regroupant "Ma position" + "Parcours de marche",
@@ -4099,10 +4109,22 @@
     function _liveUpdateIndicator() {
         var pb = document.getElementById('pwaPosBtn');
         if (!pb) return;
-        var sp = pb.querySelector('span');
-        if (sp) sp.textContent = _liveOn ? 'Itineraire (live)' : 'Itineraire';
+        var lbl = document.getElementById('pwaPosLbl');
+        var dot = document.getElementById('pwaPosDot');
+        if (lbl) lbl.textContent = _liveOn ? 'Itineraire — LIVE' : 'Itineraire';
+        if (dot) {
+            if (_liveOn) {
+                dot.style.display = 'inline-block';
+                dot.style.animation = 'pwaLivePulse 1.1s ease-in-out infinite';
+            } else {
+                dot.style.display = 'none';
+                dot.style.animation = '';
+            }
+        }
+        // Fond rouge + point pulsant : impossible de manquer que le partage
+        // de position est actif.
         pb.style.setProperty('background',
-            _liveOn ? 'rgba(26,115,232,0.95)' : 'rgba(255,255,255,0.95)', 'important');
+            _liveOn ? 'rgba(211,47,47,0.96)' : 'rgba(255,255,255,0.95)', 'important');
         pb.style.setProperty('color', _liveOn ? '#fff' : '#5a3a1a', 'important');
     }
     function _liveToggle() {
