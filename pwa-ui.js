@@ -3285,17 +3285,53 @@
             'user-select:none;text-align:center;';
         _trkEcoEl.innerHTML =
             '<div id="pwaTrkEcoTxt" style="color:#222;font-size:15px;line-height:2;"></div>' +
-            '<div style="color:#141414;font-size:11px;">Toucher l\'ecran pour revenir</div>';
-        _trkEcoEl.addEventListener('click', _trkExitEco);
+            '<div style="color:#141414;font-size:11px;">Appui long 3 s pour revenir</div>';
+        // Sortie par APPUI LONG (3 s) immobile uniquement : un effleurement ou
+        // un contact en poche ne quitte plus le mode. Tout mouvement annule.
+        var _hold = null, _sx = 0, _sy = 0;
+        function _clearHold() { if (_hold) { clearTimeout(_hold); _hold = null; } }
+        function _startHold(x, y) {
+            _clearHold(); _sx = x; _sy = y;
+            _hold = setTimeout(function() { _hold = null; _trkExitEco(); }, 3000);
+        }
         _trkEcoEl.addEventListener('touchstart', function(e) {
-            e.preventDefault(); _trkExitEco();
+            e.preventDefault();
+            var t = e.touches && e.touches[0];
+            _startHold(t ? t.clientX : 0, t ? t.clientY : 0);
         }, { passive: false });
+        _trkEcoEl.addEventListener('touchmove', function(e) {
+            var t = e.touches && e.touches[0];
+            if (t && (Math.abs(t.clientX - _sx) > 24 || Math.abs(t.clientY - _sy) > 24)) {
+                _clearHold();  // bouge -> effleurement/poche, on annule
+            }
+        }, { passive: true });
+        _trkEcoEl.addEventListener('touchend', _clearHold);
+        _trkEcoEl.addEventListener('touchcancel', _clearHold);
+        // Souris (desktop) : maintien du clic 3 s
+        _trkEcoEl.addEventListener('mousedown', function(e) { _startHold(e.clientX, e.clientY); });
+        _trkEcoEl.addEventListener('mouseup', _clearHold);
+        _trkEcoEl.addEventListener('mouseleave', _clearHold);
         (document.body || document.documentElement).appendChild(_trkEcoEl);
+        // Plein ecran : masque la barre d'URL / chrome du navigateur.
+        // Le clic sur "Veille eco" est un geste utilisateur -> autorise.
+        try {
+            var rfs = _trkEcoEl.requestFullscreen || _trkEcoEl.webkitRequestFullscreen
+                || _trkEcoEl.mozRequestFullScreen || _trkEcoEl.msRequestFullscreen;
+            if (rfs) { var p = rfs.call(_trkEcoEl); if (p && p.catch) p.catch(function(){}); }
+        } catch(_e) {}
         _trkAcquireWake();           // s'assurer que l'ecran reste alloue
         _trkUpdateEco();
-        showToast('Veille eco activee. Ecran maintenu, enregistrement en cours.', 4000);
+        showToast('Veille eco : ecran noir, appui long 3 s pour revenir.', 4000);
     }
     function _trkExitEco() {
+        try {
+            var d = document;
+            if (d.fullscreenElement || d.webkitFullscreenElement || d.mozFullScreenElement) {
+                var efs = d.exitFullscreen || d.webkitExitFullscreen
+                    || d.mozCancelFullScreen || d.msExitFullscreen;
+                if (efs) { var pe = efs.call(d); if (pe && pe.catch) pe.catch(function(){}); }
+            }
+        } catch(_e) {}
         if (_trkEcoEl && _trkEcoEl.parentNode) _trkEcoEl.parentNode.removeChild(_trkEcoEl);
         _trkEcoEl = null;
     }
