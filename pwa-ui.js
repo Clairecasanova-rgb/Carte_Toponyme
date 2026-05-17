@@ -402,7 +402,30 @@
         var dotColor = online ? '#43a047' : (forced ? '#9b59b6' : '#e53935');
         var dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + dotColor + '"></span>';
         var label = online ? 'En ligne' : (forced ? 'Hors ligne (test)' : 'Hors ligne');
-        b.innerHTML = dot + label + ' <span id="pwaQueueCount"></span>';
+        // Petit bouton icone "actualiser" a droite du statut, separe par un trait.
+        // stopPropagation au click pour ne PAS ouvrir le menu hors-ligne.
+        var reloadBtn =
+            '<span style="width:1px;height:14px;background:#ddd;margin:0 2px;flex:none;"></span>' +
+            '<button id="pwaReloadBtn" title="Actualiser la page" ' +
+            'style="display:flex;align-items:center;justify-content:center;' +
+            'width:22px;height:22px;padding:0;border:none;border-radius:50%;flex:none;' +
+            'background:transparent;color:' + (online ? '#2e7d32' : '#c62828') + ';' +
+            'cursor:pointer;-webkit-tap-highlight-color:transparent;">' +
+            '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+            '<path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>' +
+            '</svg></button>';
+        b.innerHTML = dot + '<span>' + label + '</span> <span id="pwaQueueCount"></span>' + reloadBtn;
+        var rb = document.getElementById('pwaReloadBtn');
+        if (rb) {
+            rb.onclick = function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                location.reload();
+            };
+            // Empecher aussi le mousedown/touchstart de remonter au badge
+            rb.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+            rb.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: true });
+        }
         updateQueueBadge();
     }
 
