@@ -17,6 +17,48 @@
     var DB_VERSION = 1;
     var STORE = 'queue';
 
+    // ===== Patch Leaflet : zoom au-dela du max n'efface plus le calque =====
+    // Par defaut, quand on zoome au-dela du maxZoom d'une couche, Leaflet la
+    // fait disparaitre. On preferere garder les tuiles upscalees (floues mais
+    // visibles) pour le reperage offline. On force donc maxNativeZoom = ancien
+    // maxZoom (= dernier zoom ou les tuiles existent reellement) et on bump
+    // maxZoom a 22 (limite Leaflet). Idem pour minNativeZoom / minZoom.
+    function _patchTileLayerOptions(layer) {
+        if (!layer || !layer.options) return;
+        var o = layer.options;
+        if (o.maxNativeZoom == null) o.maxNativeZoom = (o.maxZoom != null ? o.maxZoom : 19);
+        if (o.minNativeZoom == null) o.minNativeZoom = (o.minZoom != null ? o.minZoom : 0);
+        o.maxZoom = 22;
+        o.minZoom = 0;
+    }
+    if (typeof L !== 'undefined' && L.TileLayer && L.TileLayer.prototype) {
+        var _origTLOnAdd = L.TileLayer.prototype.onAdd;
+        L.TileLayer.prototype.onAdd = function(map) {
+            _patchTileLayerOptions(this);
+            // Egalement bump la map elle-meme pour autoriser le zoom au-dela
+            if (map && map.options) {
+                if (map.options.maxZoom == null || map.options.maxZoom < 22) map.options.maxZoom = 22;
+                if (map.options.minZoom == null || map.options.minZoom > 0) map.options.minZoom = 0;
+            }
+            return _origTLOnAdd.call(this, map);
+        };
+    }
+    // Patcher aussi les layers deja attaches a la map au moment du chargement.
+    function _patchExistingTileLayers() {
+        if (typeof L === 'undefined') return;
+        try {
+            var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
+            if (!map) return;
+            if (map.options) {
+                if (map.options.maxZoom == null || map.options.maxZoom < 22) map.options.maxZoom = 22;
+                if (map.options.minZoom == null || map.options.minZoom > 0) map.options.minZoom = 0;
+            }
+            map.eachLayer(function(l) {
+                if (l instanceof L.TileLayer) _patchTileLayerOptions(l);
+            });
+        } catch(_e) {}
+    }
+
     // ===== Mode test hors-ligne simule =====
     // Permet de declencher le comportement offline (queue, marker orange, etc.)
     // sans avoir a couper la 4G. Stocke dans sessionStorage pour survivre aux
@@ -2166,6 +2208,8 @@
     window.addEventListener('load', function() {
         setTimeout(function() {
             updateStatusBadge();
+            // 0. Patcher les TileLayers deja en place (maxNativeZoom etc.)
+            _patchExistingTileLayers();
             // 1. Restaurer les markers orange "en attente" depuis la queue IndexedDB
             //    (avant le replay : si on est online, le replay videra la queue et
             //    les markers seront remplaces par les vraies features ; si on est
