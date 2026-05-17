@@ -26,8 +26,14 @@
     function _patchTileLayerOptions(layer) {
         if (!layer || !layer.options) return;
         var o = layer.options;
+        // maxNativeZoom haut : Leaflet demande les tuiles profondes ; si elles
+        // ne sont pas cachees, le SW renvoie la tuile parente recadree
+        // (_ancestorTile) -> pas de trou au ZOOM.
         if (o.maxNativeZoom == null) o.maxNativeZoom = (o.maxZoom != null ? o.maxZoom : 19);
-        if (o.minNativeZoom == null) o.minNativeZoom = (o.minZoom != null ? o.minZoom : 0);
+        // minNativeZoom = 8 (zoom min du contexte Corse pre-cache) : au DEZOOM
+        // sous 8, Leaflet REDUIT les tuiles z8 au lieu de demander z6/z7 non
+        // caches -> pas de trou au dezoom non plus.
+        o.minNativeZoom = 8;
         o.maxZoom = 22;
         o.minZoom = 0;
     }

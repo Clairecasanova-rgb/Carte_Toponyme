@@ -81,11 +81,126 @@ function isHtmlCarte(url) {
     return /\/carte_polygones_.*\.html$/i.test(url) || /\.html$/i.test(new URL(url).pathname);
 }
 
-// LRU simple : limite la taille du cache en virant les plus anciennes entrees.
-// Ne s'execute reellement qu'une fois sur N appels pour eviter de scanner
-// le cache complet a chaque tuile (cache.keys() est O(N) sur certains devices).
-// (trimCache supprime : plus de plafond/eviction LRU cote app. Le quota du
-//  navigateur reste le seul garde-fou sous forte pression disque.)
+// (Plus de plafond/eviction LRU cote app : seul le quota navigateur peut
+//  evincer, et le client demande navigator.storage.persist() pour l'eviter.)
+
+// ===== Fallback "tuile parente" : zoom/dezoom sans disparition =====
+// Quand une tuile manque (zoom au-dela du contexte cache), on recadre+agrandit
+// la tuile ANCETRE cachee (zoom inferieur) pour combler. Visuel flou mais
+// present et CORRECTEMENT positionne (vs renvoyer brutalement le parent).
+// Necessite des tuiles LISIBLES (cors) -> voir fetch mode 'cors' plus bas.
+
+// Parse z/x/y selon le schema d'URL. Renvoie {z,x,y,kind} ou null.
+function _parseTileCoords(url) {
+    try {
+        const u = new URL(url);
+        // WMTS KVP (IGN data.geopf.fr) : TILEMATRIX/TILECOL/TILEROW (params, case-insensitive)
+        if (/data\.geopf\.fr\/wmts/.test(url)) {
+            let z = null, x = null, y = null;
+            u.searchParams.forEach((v, k) => {
+                const kl = k.toLowerCase();
+                if (kl === 'tilematrix') z = parseInt(v, 10);
+                else if (kl === 'tilecol') x = parseInt(v, 10);
+                else if (kl === 'tilerow') y = parseInt(v, 10);
+            });
+            if (z != null && x != null && y != null) return { z, x, y, kind: 'wmts' };
+            return null;
+        }
+        // ArcGIS REST : .../tile/{z}/{y}/{x}
+        let m = u.pathname.match(/\/tile\/(\d+)\/(\d+)\/(\d+)\/?$/);
+        if (m && /arcgisonline/.test(url)) {
+            return { z: +m[1], y: +m[2], x: +m[3], kind: 'arcgis' };
+        }
+        // Schema XYZ standard : .../{z}/{x}/{y}.ext (OSM, OpenTopoMap, raster-corse)
+        m = u.pathname.match(/\/(\d+)\/(\d+)\/(\d+)\.[a-z0-9]+$/i);
+        if (m) return { z: +m[1], x: +m[2], y: +m[3], kind: 'xyz' };
+        return null;
+    } catch (e) { return null; }
+}
+
+// Reconstruit l'URL d'une tuile pour des coords (z2,x2,y2) donnees.
+function _buildTileUrl(url, info, z2, x2, y2) {
+    try {
+        const u = new URL(url);
+        if (info.kind === 'wmts') {
+            const keys = {};
+            u.searchParams.forEach((v, k) => { keys[k.toLowerCase()] = k; });
+            u.searchParams.set(keys['tilematrix'] || 'TILEMATRIX', String(z2));
+            u.searchParams.set(keys['tilecol'] || 'TILECOL', String(x2));
+            u.searchParams.set(keys['tilerow'] || 'TILEROW', String(y2));
+            return u.toString();
+        }
+        if (info.kind === 'arcgis') {
+            u.pathname = u.pathname.replace(/\/tile\/\d+\/\d+\/\d+(\/?)$/,
+                '/tile/' + z2 + '/' + y2 + '/' + x2 + '$1');
+            return u.toString();
+        }
+        // xyz
+        u.pathname = u.pathname.replace(/\/\d+\/\d+\/\d+(\.[a-z0-9]+)$/i,
+            '/' + z2 + '/' + x2 + '/' + y2 + '$1');
+        return u.toString();
+    } catch (e) { return null; }
+}
+
+// Cherche une tuile ancetre cachee, la recadre+agrandit en 256x256.
+// Renvoie une Response image, ou null si rien d'exploitable.
+async function _ancestorTile(url) {
+    if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') {
+        return null;
+    }
+    const info = _parseTileCoords(url);
+    if (!info) return null;
+    const tileCache = await _getCache(TILE_CACHE);
+    const ctxCache = await _getCache(CTX_CACHE);
+    // Remonter jusqu'a 6 niveaux de zoom
+    for (let k = 1; k <= 6; k++) {
+        const za = info.z - k;
+        if (za < 0) break;
+        const factor = 1 << k;            // 2^k
+        const xa = Math.floor(info.x / factor);
+        const ya = Math.floor(info.y / factor);
+        const aUrl = _buildTileUrl(url, info, za, xa, ya);
+        if (!aUrl) continue;
+        let resp = await tileCache.match(aUrl);
+        if (!resp) resp = await ctxCache.match(aUrl);
+        if (!resp || !resp.ok) continue;
+        try {
+            const blob = await resp.blob();
+            if (!blob || blob.size === 0) continue;  // reponse opaque -> illisible
+            const bmp = await createImageBitmap(blob);
+            const sub = bmp.width / factor;          // taille de la sous-region source
+            const sx = (info.x % factor) * sub;
+            const sy = (info.y % factor) * sub;
+            const canvas = new OffscreenCanvas(256, 256);
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(bmp, sx, sy, sub, sub, 0, 0, 256, 256);
+            bmp.close && bmp.close();
+            const outBlob = await canvas.convertToBlob({ type: 'image/png' });
+            return new Response(outBlob, {
+                status: 200,
+                headers: { 'Content-Type': 'image/png', 'X-Tile-Fallback': 'ancestor-z' + za }
+            });
+        } catch (e) {
+            // tuile illisible (opaque) ou decode echoue : essayer le niveau suivant
+            continue;
+        }
+    }
+    return null;
+}
+
+// Fetch tuile en CORS (reponse LISIBLE -> recadrable). Repli no-cors si le
+// serveur refuse le CORS (rare pour IGN/OSM/ArcGIS/OTM/GitHub, tous CORS-ok).
+async function _fetchTileReadable(url) {
+    try {
+        const r = await fetch(url, { mode: 'cors' });
+        if (r && (r.ok || r.type === 'basic' || r.type === 'cors')) return r;
+        return r;
+    } catch (e) {
+        try { return await fetch(url, { mode: 'no-cors' }); }
+        catch (e2) { return null; }
+    }
+}
 
 // Helper offline : court-circuite le fetch reseau pour eviter timeouts longs.
 // Inclut aussi le mode test simule (toggle SET_FORCE_OFFLINE depuis le client)
@@ -178,14 +293,26 @@ self.addEventListener('fetch', (event) => {
                 if (!cached) cached = await ctxCache.match(req);
                 if (cached) return cached;
                 if (_isOffline()) {
+                    // Pas en cache + hors-ligne : recadrer la tuile parente
+                    // cachee (zoom inferieur) pour ne PAS laisser de trou.
+                    const anc = await _ancestorTile(url);
+                    if (anc) return anc;
                     return new Response('Offline (not cached)', { status: 503 });
                 }
-                // Online cache miss : fetch direct (browser HTTP cache prend
-                // le relais). Cache async en BG dans TILE_CACHE (pas d'eviction).
-                const resp = await fetch(req, { mode: 'no-cors' });
-                if (resp) tileCache.put(req, resp.clone()).catch(() => null);
-                return resp;
+                // Online cache miss : fetch LISIBLE (cors -> recadrable plus
+                // tard). Cache async en BG dans TILE_CACHE (pas d'eviction).
+                const resp = await _fetchTileReadable(url);
+                if (resp && (resp.ok || resp.type === 'opaque')) {
+                    tileCache.put(url, resp.clone()).catch(() => null);
+                    return resp;
+                }
+                // Fetch echoue : tenter la tuile parente cachee
+                const anc2 = await _ancestorTile(url);
+                if (anc2) return anc2;
+                return resp || new Response('Tile fetch failed', { status: 503 });
             } catch (e) {
+                const anc3 = await _ancestorTile(url).catch(() => null);
+                if (anc3) return anc3;
                 return new Response('Tile fetch failed', { status: 503 });
             }
         })());
@@ -368,8 +495,10 @@ async function precacheUrls(urls, port, targetCacheName) {
             try {
                 const existing = await cache.match(u);
                 if (existing) { done++; continue; }
-                const resp = await fetch(u, { mode: 'no-cors' });
-                if (resp) await cache.put(u, resp);
+                // Fetch LISIBLE (cors) pour que la tuile soit recadrable par
+                // _ancestorTile (zoom/dezoom sans trou). Repli no-cors si refus.
+                const resp = await _fetchTileReadable(u);
+                if (resp && (resp.ok || resp.type === 'opaque')) await cache.put(u, resp);
                 done++;
             } catch (e) {
                 errors.push({ url: u, error: e.message });
