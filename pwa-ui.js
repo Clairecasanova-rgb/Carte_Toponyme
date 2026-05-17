@@ -658,10 +658,14 @@
             + 'padding:9px 12px;font:600 12px Segoe UI;cursor:pointer;white-space:nowrap;';
         mn.innerHTML =
             '<button id="pwaPosA" style="' + bs + 'background:#8b4513;color:#fff;">Publier sur la carte</button>' +
-            '<button id="pwaPosB" style="' + bs + 'background:#f0ebe3;color:#5a3a1a;">Envoyer (lien)</button>';
+            '<button id="pwaPosB" style="' + bs + 'background:#f0ebe3;color:#5a3a1a;">Envoyer (lien)</button>' +
+            '<button id="pwaPosC" style="' + bs + 'background:'
+            + (_liveOn ? '#c0392b' : '#1a73e8') + ';color:#fff;">'
+            + (_liveOn ? 'Arreter le partage live' : 'Partager en direct') + '</button>';
         (document.body || document.documentElement).appendChild(mn);
         document.getElementById('pwaPosA').onclick = function() { mn.remove(); _shareMyPositionOnMap(); };
         document.getElementById('pwaPosB').onclick = function() { mn.remove(); _shareMyPositionLink(); };
+        document.getElementById('pwaPosC').onclick = function() { mn.remove(); _liveToggle(); };
         setTimeout(function() {
             document.addEventListener('click', function _c(ev) {
                 if (mn.parentNode && !mn.contains(ev.target)
@@ -783,6 +787,7 @@
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             '<button id="pwaMPosMap" style="' + btnPrimary + '">Publier ma position sur la carte</button>' +
             '<button id="pwaMPosLink" style="' + btnSecondary + '">Envoyer ma position (lien)</button>' +
+            '<button id="pwaMPosLive" style="' + btnSecondary + '">Partager ma position en direct (on/off)</button>' +
             '</div>' +
 
             // Section : PARCOURS
@@ -848,6 +853,7 @@
         };
         document.getElementById('pwaMPosMap').onclick = function() { m.remove(); _shareMyPositionOnMap(); };
         document.getElementById('pwaMPosLink').onclick = function() { m.remove(); _shareMyPositionLink(); };
+        document.getElementById('pwaMPosLive').onclick = function() { m.remove(); _liveToggle(); };
         document.getElementById('pwaMTracks').onclick = function() { m.remove(); openTracksFeature(); };
         document.getElementById('pwaMQueue').onclick = function() { m.remove(); openQueueDetailsModal(); };
         document.getElementById('pwaMReplay').onclick = function() {
@@ -3893,6 +3899,212 @@
         });
     }
     window._pwaSharePos = _shareMyPositionOnMap;
+
+    // ============================================================
+    //  C — Partage de position en DIRECT (polling, opt-in, TTL)
+    //  Necessite la table Supabase live_positions (sql/live_positions.sql).
+    //  Emission tant que l'app est au 1er plan ; sinon les autres voient
+    //  la derniere position (limite web, comme l'enregistrement parcours).
+    // ============================================================
+    var _liveOn = false, _liveWatch = null, _liveLastSent = 0;
+    var _livePoll = null, _liveLayer = null, _liveMarkers = {};
+    var _liveTableMissing = false;
+    var LIVE_TTL_MS = 180000;     // position consideree perimee apres 3 min
+    var LIVE_SEND_MS = 15000;     // upsert au max toutes les 15 s
+    var LIVE_POLL_MS = 15000;     // lecture des autres toutes les 15 s
+
+    function _liveId() {
+        var v;
+        try { v = localStorage.getItem('pwaLiveId'); } catch(_e) {}
+        if (!v) {
+            v = 'lp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+            try { localStorage.setItem('pwaLiveId', v); } catch(_e) {}
+        }
+        return v;
+    }
+    function _liveName() {
+        try { return localStorage.getItem('pwaLiveName') || ''; } catch(_e) { return ''; }
+    }
+    function _liveScope() {
+        try { if (typeof window._mapHash === 'function') return String(window._mapHash()); } catch(_e) {}
+        return (location.pathname.split('/').pop() || 'carte');
+    }
+    function _liveCreds() {
+        return { u: window.SUPABASE_URL, k: window.SUPABASE_KEY };
+    }
+
+    function _liveUpsert(c) {
+        var cr = _liveCreds();
+        if (!cr.u || !cr.k || _liveTableMissing) return;
+        var now = Date.now();
+        var body = [{
+            id: _liveId(),
+            auteur: _liveName() || 'Anonyme',
+            lat: +c.latitude.toFixed(6),
+            lon: +c.longitude.toFixed(6),
+            accuracy: Math.round(c.accuracy || 0),
+            carte_hash: _liveScope(),
+            updated_at: new Date(now).toISOString(),
+            expires_at: new Date(now + LIVE_TTL_MS).toISOString()
+        }];
+        // _origFetch : ne PAS passer par la file offline (positions perimees
+        // inutiles). on_conflict=id + merge-duplicates = upsert.
+        _origFetch(cr.u + '/rest/v1/live_positions?on_conflict=id', {
+            method: 'POST',
+            headers: {
+                'apikey': cr.k, 'Authorization': 'Bearer ' + cr.k,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates,return=minimal'
+            },
+            body: JSON.stringify(body)
+        }).then(function(r) {
+            if (r && (r.status === 404 || r.status === 400)) {
+                r.text().then(function(t) {
+                    if (/live_positions/.test(t) && /does not exist|relation/.test(t)) {
+                        _liveTableMissing = true;
+                        showToast('Partage live : table absente. Executer sql/live_positions.sql dans Supabase.', 8000);
+                        _liveStop(true);
+                    }
+                }).catch(function(){});
+            }
+        }).catch(function(){});
+    }
+
+    function _liveStart() {
+        if (_liveOn) return;
+        if (!navigator.geolocation) { showToast('Geolocalisation indisponible.', 5000); return; }
+        var nm = _liveName();
+        if (!nm) {
+            nm = (window.CONTRIBUTEUR || window.contributeurActuel || '').trim();
+            nm = prompt('Nom affiche aux autres pour le partage en direct :', nm || '');
+            if (nm == null) return;          // annule
+            nm = (nm || 'Anonyme').trim().slice(0, 40);
+            try { localStorage.setItem('pwaLiveName', nm); } catch(_e) {}
+        }
+        if (!confirm('Partager ta position EN DIRECT avec les utilisateurs de cette carte ?\n\n'
+            + '- Visible tant que l\'app reste ouverte (arriere-plan/verrouille = position figee)\n'
+            + '- Expire automatiquement apres 3 min sans maj\n'
+            + '- Arret a tout moment via le bouton Position')) return;
+        _liveOn = true;
+        _liveLastSent = 0;
+        _liveWatch = navigator.geolocation.watchPosition(function(pos) {
+            if (!_liveOn) return;
+            var now = Date.now();
+            if (now - _liveLastSent < LIVE_SEND_MS) return;  // throttle
+            _liveLastSent = now;
+            _liveUpsert(pos.coords);
+        }, function(){}, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+        _liveUpdateIndicator();
+        showToast('Partage en direct active.', 4000);
+    }
+    function _liveStop(silent) {
+        if (!_liveOn && !_liveWatch) { _liveUpdateIndicator(); return; }
+        _liveOn = false;
+        if (_liveWatch != null) {
+            try { navigator.geolocation.clearWatch(_liveWatch); } catch(_e) {}
+            _liveWatch = null;
+        }
+        var cr = _liveCreds();
+        if (cr.u && cr.k && !_liveTableMissing) {
+            try {
+                _origFetch(cr.u + '/rest/v1/live_positions?id=eq.' + encodeURIComponent(_liveId()), {
+                    method: 'DELETE',
+                    headers: { 'apikey': cr.k, 'Authorization': 'Bearer ' + cr.k },
+                    keepalive: true
+                }).catch(function(){});
+            } catch(_e) {}
+        }
+        _liveUpdateIndicator();
+        if (!silent) showToast('Partage en direct arrete.', 4000);
+    }
+    // Best-effort : retirer ma ligne a la fermeture (sinon le TTL s'en charge)
+    window.addEventListener('pagehide', function() { if (_liveOn) _liveStop(true); });
+
+    function _liveEnsureLayer() {
+        var map = findLeafletMap();
+        if (!map || typeof L === 'undefined') return null;
+        if (!_liveLayer) _liveLayer = L.layerGroup().addTo(map);
+        return _liveLayer;
+    }
+    function _liveRender(rows) {
+        var layer = _liveEnsureLayer();
+        if (!layer) return;
+        var mine = _liveId();
+        var present = {};
+        (rows || []).forEach(function(p) {
+            if (!p || p.id === mine || p.lat == null || p.lon == null) return;
+            present[p.id] = true;
+            var ll = [p.lat, p.lon];
+            var ageS = Math.max(0, Math.round((Date.now() - new Date(p.updated_at).getTime()) / 1000));
+            var label = (p.auteur || 'Anonyme') + ' · il y a ' + ageS + ' s';
+            var mk = _liveMarkers[p.id];
+            if (!mk) {
+                mk = L.marker(ll, {
+                    icon: L.divIcon({
+                        className: 'pwa-live-marker',
+                        html: '<div style="width:18px;height:18px;border-radius:50%;background:#1a73e8;'
+                            + 'border:3px solid #fff;box-shadow:0 0 0 2px #1a73e8,0 2px 6px rgba(0,0,0,0.4);"></div>',
+                        iconSize: [18, 18], iconAnchor: [9, 9]
+                    }), zIndexOffset: 8000
+                }).addTo(layer);
+                _liveMarkers[p.id] = mk;
+            } else {
+                mk.setLatLng(ll);
+            }
+            mk.bindTooltip(label, { direction: 'top', offset: [0, -10] });
+        });
+        Object.keys(_liveMarkers).forEach(function(id) {
+            if (!present[id]) {
+                try { layer.removeLayer(_liveMarkers[id]); } catch(_e) {}
+                delete _liveMarkers[id];
+            }
+        });
+    }
+    function _livePollOnce() {
+        var cr = _liveCreds();
+        if (!cr.u || !cr.k || _liveTableMissing) return;
+        var q = cr.u + '/rest/v1/live_positions?select=*'
+            + '&carte_hash=eq.' + encodeURIComponent(_liveScope())
+            + '&expires_at=gt.' + encodeURIComponent(new Date().toISOString());
+        _origFetch(q, { headers: { 'apikey': cr.k, 'Authorization': 'Bearer ' + cr.k } })
+            .then(function(r) {
+                if (!r) return;
+                if (r.status === 404 || r.status === 400) {
+                    return r.text().then(function(t) {
+                        if (/live_positions/.test(t) && /does not exist|relation/.test(t)) {
+                            _liveTableMissing = true;
+                            if (_livePoll) { clearInterval(_livePoll); _livePoll = null; }
+                        }
+                    });
+                }
+                if (r.ok) return r.json().then(_liveRender);
+            }).catch(function(){});
+    }
+    function _liveStartPoll(attempt) {
+        attempt = attempt || 0;
+        if (_livePoll) return;
+        if (!findLeafletMap() && attempt < 20) {
+            setTimeout(function() { _liveStartPoll(attempt + 1); }, 700);
+            return;
+        }
+        _livePollOnce();
+        _livePoll = setInterval(_livePollOnce, LIVE_POLL_MS);
+    }
+    function _liveUpdateIndicator() {
+        var pb = document.getElementById('pwaPosBtn');
+        if (!pb) return;
+        var sp = pb.querySelector('span');
+        if (sp) sp.textContent = _liveOn ? 'Position (live)' : 'Position';
+        pb.style.setProperty('background',
+            _liveOn ? 'rgba(26,115,232,0.95)' : 'rgba(255,255,255,0.95)', 'important');
+        pb.style.setProperty('color', _liveOn ? '#fff' : '#5a3a1a', 'important');
+    }
+    function _liveToggle() {
+        if (_liveOn) _liveStop(); else _liveStart();
+    }
+    window.addEventListener('load', function() {
+        setTimeout(function() { _liveStartPoll(0); }, 1800);
+    });
 
     // ===== GPS warm-up =====
     // Le premier appel a navigator.geolocation peut prendre 5-15s sur smartphone
