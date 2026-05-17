@@ -3285,32 +3285,74 @@
             'user-select:none;text-align:center;';
         _trkEcoEl.innerHTML =
             '<div id="pwaTrkEcoTxt" style="color:#222;font-size:15px;line-height:2;"></div>' +
-            '<div style="color:#141414;font-size:11px;">Appui long 3 s pour revenir</div>';
-        // Sortie par APPUI LONG (3 s) immobile uniquement : un effleurement ou
-        // un contact en poche ne quitte plus le mode. Tout mouvement annule.
-        var _hold = null, _sx = 0, _sy = 0;
-        function _clearHold() { if (_hold) { clearTimeout(_hold); _hold = null; } }
-        function _startHold(x, y) {
-            _clearHold(); _sx = x; _sy = y;
-            _hold = setTimeout(function() { _hold = null; _trkExitEco(); }, 3000);
+            '<div id="pwaTrkEcoSlide" style="position:relative;width:78vw;max-width:320px;' +
+            'height:54px;border-radius:27px;background:#0e0e0e;border:1px solid #1c1c1c;' +
+            'overflow:hidden;touch-action:none;">' +
+            '<div style="position:absolute;inset:0;display:flex;align-items:center;' +
+            'justify-content:center;color:#2a2a2a;font:600 12px Segoe UI;letter-spacing:1px;">' +
+            'Glisser pour revenir &gt;&gt;&gt;</div>' +
+            '<div id="pwaTrkEcoKnob" style="position:absolute;left:3px;top:3px;width:46px;' +
+            'height:46px;border-radius:50%;background:#262626;color:#555;display:flex;' +
+            'align-items:center;justify-content:center;font:700 18px Segoe UI;">&#9654;</div>' +
+            '</div>';
+        // Sortie par GLISSEMENT du curseur d'un bord a l'autre (deverrouillage).
+        // Doit DEMARRER sur le curseur + glisser en continu jusqu'au bout :
+        // un effleurement / contact en poche ne peut pas le declencher.
+        var _drag = false, _grab = 0;
+        function _slideEls() {
+            return {
+                tr: _trkEcoEl.querySelector('#pwaTrkEcoSlide'),
+                kn: _trkEcoEl.querySelector('#pwaTrkEcoKnob')
+            };
+        }
+        function _maxX() {
+            var e = _slideEls();
+            return e.tr ? (e.tr.offsetWidth - e.kn.offsetWidth - 6) : 0;
+        }
+        function _setKnob(x) {
+            var e = _slideEls();
+            if (e.kn) e.kn.style.left = x + 'px';
+        }
+        function _resetKnob() {
+            var e = _slideEls();
+            if (e.kn) {
+                e.kn.style.transition = 'left .2s';
+                e.kn.style.left = '3px';
+                setTimeout(function() { if (e.kn) e.kn.style.transition = ''; }, 220);
+            }
+        }
+        function _pStart(clientX, target) {
+            var e = _slideEls();
+            if (!e.kn || (target !== e.kn && !e.kn.contains(target))) return;
+            _drag = true;
+            _grab = clientX - parseFloat(e.kn.style.left || '3');
+        }
+        function _pMove(clientX) {
+            if (!_drag) return;
+            var mx = _maxX();
+            var x = Math.max(3, Math.min(mx, clientX - _grab));
+            _setKnob(x);
+            if (x >= mx - 2) { _drag = false; _trkExitEco(); }
+        }
+        function _pEnd() {
+            if (_drag) { _drag = false; _resetKnob(); }
         }
         _trkEcoEl.addEventListener('touchstart', function(e) {
             e.preventDefault();
             var t = e.touches && e.touches[0];
-            _startHold(t ? t.clientX : 0, t ? t.clientY : 0);
+            if (t) _pStart(t.clientX, e.target);
         }, { passive: false });
         _trkEcoEl.addEventListener('touchmove', function(e) {
+            e.preventDefault();
             var t = e.touches && e.touches[0];
-            if (t && (Math.abs(t.clientX - _sx) > 24 || Math.abs(t.clientY - _sy) > 24)) {
-                _clearHold();  // bouge -> effleurement/poche, on annule
-            }
-        }, { passive: true });
-        _trkEcoEl.addEventListener('touchend', _clearHold);
-        _trkEcoEl.addEventListener('touchcancel', _clearHold);
-        // Souris (desktop) : maintien du clic 3 s
-        _trkEcoEl.addEventListener('mousedown', function(e) { _startHold(e.clientX, e.clientY); });
-        _trkEcoEl.addEventListener('mouseup', _clearHold);
-        _trkEcoEl.addEventListener('mouseleave', _clearHold);
+            if (t) _pMove(t.clientX);
+        }, { passive: false });
+        _trkEcoEl.addEventListener('touchend', _pEnd);
+        _trkEcoEl.addEventListener('touchcancel', _pEnd);
+        _trkEcoEl.addEventListener('mousedown', function(e) { _pStart(e.clientX, e.target); });
+        _trkEcoEl.addEventListener('mousemove', function(e) { _pMove(e.clientX); });
+        _trkEcoEl.addEventListener('mouseup', _pEnd);
+        _trkEcoEl.addEventListener('mouseleave', _pEnd);
         (document.body || document.documentElement).appendChild(_trkEcoEl);
         // Plein ecran : masque la barre d'URL / chrome du navigateur.
         // Le clic sur "Veille eco" est un geste utilisateur -> autorise.
@@ -3321,7 +3363,7 @@
         } catch(_e) {}
         _trkAcquireWake();           // s'assurer que l'ecran reste alloue
         _trkUpdateEco();
-        showToast('Veille eco : ecran noir, appui long 3 s pour revenir.', 4000);
+        showToast('Veille eco : ecran noir, glisser le curseur pour revenir.', 4000);
     }
     function _trkExitEco() {
         try {
