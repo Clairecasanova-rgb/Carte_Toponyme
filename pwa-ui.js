@@ -3339,7 +3339,8 @@
             'transform:translateX(-50%);z-index:100075 !important;' +
             'background:rgba(30,30,30,0.96);color:#fff;border-radius:14px;' +
             'box-shadow:0 4px 16px rgba(0,0,0,0.35);font:600 12px Segoe UI,sans-serif;' +
-            'padding:8px 12px;display:flex;align-items:center;gap:12px;max-width:94vw;';
+            'padding:8px 12px;display:flex;align-items:center;justify-content:center;' +
+            'flex-wrap:wrap;gap:8px 10px;max-width:94vw;box-sizing:border-box;';
         (document.body || document.documentElement).appendChild(w);
         _trkUpdateWidget();
     }
