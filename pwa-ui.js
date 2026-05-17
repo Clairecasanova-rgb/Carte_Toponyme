@@ -626,7 +626,7 @@
         b = document.createElement('button');
         b.id = 'pwaPosBtn';
         b.type = 'button';
-        b.title = 'Itineraire : partage de position et parcours';
+        b.title = 'Position : partage et parcours';
         b.style.cssText =
             'position:fixed !important;bottom:46px !important;left:10px !important;' +
             'z-index:100050 !important;display:flex !important;align-items:center;gap:6px;' +
@@ -640,12 +640,9 @@
             document.head.appendChild(ps);
         }
         b.innerHTML =
-            '<svg viewBox="0 0 24 24" width="13" height="13" fill="#c0392b" aria-hidden="true" style="pointer-events:none;">' +
-            '<path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/>' +
-            '</svg>' +
             '<span id="pwaPosDot" style="display:none;width:8px;height:8px;border-radius:50%;' +
             'background:#ff5252;pointer-events:none;flex:none;"></span>' +
-            '<span id="pwaPosLbl" style="pointer-events:none;">Itineraire</span>';
+            '<span id="pwaPosLbl" style="pointer-events:none;">Position</span>';
         // PAS de L.DomEvent.disableClickPropagation : il bloque le clic sur ce
         // petit bouton au-dessus de la carte (le badge marche sans, on s'aligne).
         b.onclick = function(e) { e.stopPropagation(); _togglePosMenu(); };
@@ -4111,7 +4108,7 @@
         var lbl = document.getElementById('pwaPosLbl');
         var dot = document.getElementById('pwaPosDot');
         // Live actif : libelle "Position (live)" + bouton bleu (comme avant).
-        if (lbl) lbl.textContent = _liveOn ? 'Position (live)' : 'Itineraire';
+        if (lbl) lbl.textContent = _liveOn ? 'Position (live)' : 'Position';
         if (dot) { dot.style.display = 'none'; dot.style.animation = ''; }
         pb.style.setProperty('background',
             _liveOn ? 'rgba(26,115,232,0.95)' : 'rgba(255,255,255,0.95)', 'important');
