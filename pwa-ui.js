@@ -620,13 +620,17 @@
                   })
                 : Promise.resolve();
             Promise.all([swPromise, cachePromise]).then(function() {
+                _setCorseContextLevel('');  // cache vide -> flag contexte Corse obsolete
                 showToast('Mise a jour : rechargement...');
                 setTimeout(function() { location.reload(true); }, 800);
             });
         };
         document.getElementById('pwaMClear').onclick = function() {
             if (!confirm('Vider tout le cache offline ? Tu auras besoin de reseau au prochain demarrage.')) return;
-            clearCache().then(function() { showToast('Cache vide.'); m.remove(); });
+            clearCache().then(function() {
+                _setCorseContextLevel('');  // cache vide -> flag contexte Corse obsolete
+                showToast('Cache vide.'); m.remove();
+            });
         };
     }
 
@@ -888,6 +892,10 @@
 
         var allLayers = listAvailableLayers(map);
         var allProjects = listAvailableProjects();
+        // Si le contexte Corse a deja ete telecharge a l'installation, ne pas
+        // le reproposer (les tuiles 8-10 sont communes a toutes les cartes du
+        // meme domaine, donc deja en cache).
+        var corseLvl = _getCorseContextLevel();
 
         var layersHtml = allLayers.length === 0
             ? '<div style="font-size:11px;color:#999;font-style:italic;">Aucune couche detectee</div>'
@@ -954,10 +962,17 @@
             '<div style="font-size:10px;color:#999;margin-top:4px;">Pour chaque projet coche : les features (points/polygones) et photos seront mis en cache pour consultation offline.</div>' +
             '</details>' +
 
-            '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#5a3a1a;margin-bottom:12px;cursor:pointer;">' +
-            '<input type="checkbox" id="pwaIncludeCorse" style="margin-top:2px;">' +
-            '<span>Inclure le contexte Corse complet aux zooms 8-10 (~80 tuiles, ~3 Mo). Utile pour dezoomer voir l\'ile entiere hors-ligne.</span>' +
-            '</label>' +
+            (corseLvl
+                ? '<div style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#16a085;margin-bottom:12px;background:#eafaf6;border:1px solid #b8e6da;border-radius:4px;padding:8px 10px;">' +
+                  '<input type="checkbox" id="pwaIncludeCorse" style="display:none;">' +
+                  '<span>Contexte Corse deja telecharge a l\'installation (' +
+                  (corseLvl === 'full' ? 'fond complet zooms 8-14' : 'zooms 8-10') +
+                  '). Inutile de le re-telecharger.</span>' +
+                  '</div>'
+                : '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#5a3a1a;margin-bottom:12px;cursor:pointer;">' +
+                  '<input type="checkbox" id="pwaIncludeCorse" style="margin-top:2px;">' +
+                  '<span>Inclure le contexte Corse complet aux zooms 8-10 (~80 tuiles, ~3 Mo). Utile pour dezoomer voir l\'ile entiere hors-ligne.</span>' +
+                  '</label>') +
 
             '<div id="pwaPEstim" style="font-size:11px;color:#666;background:#faf7f2;padding:8px;border-radius:4px;margin-bottom:12px;"></div>' +
             '<div id="pwaPProgress" style="display:none;margin-bottom:12px;"><div style="background:#eee;border-radius:4px;overflow:hidden;height:20px;"><div id="pwaPBar" style="background:#8b4513;height:100%;width:0%;transition:width 0.2s;"></div></div><div id="pwaPLabel" style="font-size:11px;color:#666;margin-top:4px;text-align:center;">0%</div></div>' +
@@ -1467,6 +1482,20 @@
     // dezoomé : tu peux toujours voir la Corse complete meme hors-ligne).
     var CORSE_BOUNDS = { south: 41.30, west: 8.50, north: 43.05, east: 9.65 };
 
+    // Niveau de contexte Corse deja telecharge ('light' = 8-10, 'full' = 8-14).
+    // Flag GLOBAL (pas par carte) : le cache tuiles est partage par tout le
+    // domaine GitHub Pages, donc valable pour toutes les cartes.
+    function _getCorseContextLevel() {
+        try { return localStorage.getItem('pwaCorseContextLevel') || ''; }
+        catch(_e) { return ''; }
+    }
+    function _setCorseContextLevel(level) {
+        try {
+            if (level) localStorage.setItem('pwaCorseContextLevel', level);
+            else localStorage.removeItem('pwaCorseContextLevel');
+        } catch(_e) {}
+    }
+
     // ===== Persistance + visualisation de la zone pre-cachee =====
     // On stocke les bounds + zoom range dans localStorage par carte.
     // L'utilisateur peut afficher cette zone sur la carte a tout moment via
@@ -1559,7 +1588,7 @@
         return _zoneLayer !== null;
     }
 
-    async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds) {
+    async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds, precacheTag) {
         if (!navigator.serviceWorker.controller) {
             alert('Service Worker non actif (la page doit etre en HTTPS et rechargee).');
             return;
@@ -1681,6 +1710,9 @@
                 }
                 setStoredZone(zone);
                 _setZoneHidden(false);  // nouvelle zone : afficher par defaut
+                // Memoriser le niveau de contexte Corse pour ne plus le reproposer
+                if (precacheTag === 'corse-full') _setCorseContextLevel('full');
+                else if (precacheTag === 'corse-light') _setCorseContextLevel('light');
                 try { showPrecachedZoneOnMap(true); } catch(_e) {}
                 setTimeout(function() {
                     if (modal && modal.parentNode) modal.remove();
@@ -1751,7 +1783,7 @@
         showToast(kind === 'full'
             ? 'Telechargement du fond Corse complet (~350 Mo). Garde l\'app ouverte...'
             : 'Telechargement du contexte Corse (leger)...', 6000);
-        startPrecache(map, bounds, 8, zmax, false, layerUrls, []);
+        startPrecache(map, bounds, 8, zmax, false, layerUrls, [], 'corse-' + kind);
     }
 
     // ===== Personnalisation nom du raccourci PWA =====
