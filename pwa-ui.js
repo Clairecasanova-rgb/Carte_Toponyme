@@ -2202,12 +2202,10 @@
             [CORSE_BOUNDS.north, CORSE_BOUNDS.east]
         );
         var zmax = (kind === 'full') ? 14 : 10;
-        // Plan IGN J+1 (tuiles legeres) pousse a z15 sur le contexte COMPLET
-        // (rendu net rue/chemin sur toute la Corse, surcout ~+190 Mo).
-        var _deepSpec = (kind === 'full') ? { url: planUrl, zmax: 15 } : null;
-        // Estimation : light (sat+plan 8-10) ~10 Mo ; full (sat+plan 8-14) ~470 Mo
-        // (dont Plan IGN z15 ~+190 Mo).
-        var _estBytes = (kind === 'full' ? 470 : 10) * 1e6;
+        // Plan IGN J+1 reste a z14 comme le satellite (pas de z15 : trop lourd).
+        var _deepSpec = null;
+        // Estimation : light (sat+plan 8-10) ~10 Mo ; full (sat+plan 8-14) ~280 Mo.
+        var _estBytes = (kind === 'full' ? 280 : 10) * 1e6;
         _checkQuotaBeforeDownload(_estBytes).then(function(okq) {
             if (!okq) { showToast('Telechargement annule (espace insuffisant).', 5000); return; }
             _requestPersistentStorage(false);
@@ -2469,7 +2467,7 @@
         // Jeu deterministe : Satellite HD + Plan IGN J+1 (independant des
         // calques affiches). Estimations Corse entiere fixes.
         var lightMo = 10;   // sat + plan, 8-10
-        var fullMo = 470;   // sat 8-14 + plan 8-15
+        var fullMo = 280;   // sat + plan, 8-14
 
         var m = document.createElement('div');
         m.id = 'pwaInstallTilesModal';
@@ -2487,7 +2485,7 @@
             'Leger — Satellite + Plan IGN <span style="color:#8b7355;">(zooms 8-10, ~' + lightMo + ' Mo)</span><br>' +
             '<span style="font-weight:400;font-size:11px;color:#888;">Vue ile entiere + grands axes. Rapide.</span></button>' +
             '<button id="pwaTilesFull" style="display:block;width:100%;text-align:left;background:#8b4513;color:#fff;border:none;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
-            'Complet — Satellite 8-14 + Plan IGN 8-15 <span style="opacity:.85;">(~' + fullMo + ' Mo)</span><br>' +
+            'Complet — Satellite + Plan IGN J+1 <span style="opacity:.85;">(zooms 8-14, ~' + fullMo + ' Mo)</span><br>' +
             '<span style="font-weight:400;font-size:11px;opacity:.85;">Se reperer routes/chemins partout. ~10-15 min en 4G.</span></button>' +
             '<button id="pwaTilesNone" style="display:block;width:100%;text-align:left;background:#fff;color:#8b7355;border:1px solid #e0d8c8;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">' +
             'Plus tard — installer sans telecharger</button>' +
