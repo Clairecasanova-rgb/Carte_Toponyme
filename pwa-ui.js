@@ -66,6 +66,53 @@
         } catch(_e) {}
     }
 
+    // ===== maxNativeZoom adaptatif (anti-disparition hors-ligne) =====
+    // Zoom max REELLEMENT telecharge : contexte Corse leger=10 / complet=14,
+    // ou zmax des zones/communes pre-cachees. HORS-LIGNE on cale
+    // maxNativeZoom dessus -> Leaflet AGRANDIT lui-meme au-dela (flou mais
+    // present, sans dependre du SW ni de tuiles lisibles). EN LIGNE on garde
+    // un maxNativeZoom haut (detail reseau complet).
+    function _computeMaxCachedZoom() {
+        return dbBatchAll().then(function(batches) {
+            var mx = 0;
+            (batches || []).forEach(function(b) {
+                if (b.kind !== 'context' && b.zmax) mx = Math.max(mx, b.zmax);
+            });
+            var lvl = (typeof _getCorseContextLevel === 'function') ? _getCorseContextLevel() : '';
+            if (lvl === 'full') mx = Math.max(mx, 14);
+            else if (lvl === 'light') mx = Math.max(mx, 10);
+            try {
+                var z = getStoredZone();
+                if (z && z.zmax) mx = Math.max(mx, z.zmax);
+            } catch(_e) {}
+            return mx || null;
+        }).catch(function() { return null; });
+    }
+    function _applyAdaptiveNativeZoom() {
+        if (typeof L === 'undefined') return;
+        var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
+        if (!map) return;
+        var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
+        _computeMaxCachedZoom().then(function(maxCached) {
+            map.eachLayer(function(l) {
+                if (!(l instanceof L.TileLayer)) return;
+                if (offline && maxCached) {
+                    // Hors-ligne : cap au zoom cache -> upscale CSS au-dela
+                    if (l.options.maxNativeZoom !== maxCached) {
+                        l.options.maxNativeZoom = maxCached;
+                        if (l._map) try { l.redraw(); } catch(_e) {}
+                    }
+                } else {
+                    // En ligne : maxNativeZoom haut (le SW gere le > max serveur)
+                    if (l.options.maxNativeZoom !== 21) {
+                        l.options.maxNativeZoom = 21;
+                        if (l._map) try { l.redraw(); } catch(_e) {}
+                    }
+                }
+            });
+        });
+    }
+
     // ===== Mode test hors-ligne simule =====
     // Permet de declencher le comportement offline (queue, marker orange, etc.)
     // sans avoir a couper la 4G. Stocke dans sessionStorage pour survivre aux
@@ -85,6 +132,8 @@
                 type: 'SET_FORCE_OFFLINE', value: !!v
             });
         }
+        // Re-caler maxNativeZoom (test offline = comme hors-ligne reel)
+        try { if (typeof _applyAdaptiveNativeZoom === 'function') _applyAdaptiveNativeZoom(); } catch(_e) {}
     }
     // Etat composite : online seulement si navigator.onLine ET pas forced
     function isAppOffline() {
@@ -1853,6 +1902,10 @@
                     });
                 } catch(_e) { console.warn('[PWA] Enregistrement batch echoue :', _e); }
                 try { showPrecachedZoneOnMap(true); } catch(_e) {}
+                // Nouveau zoom max cache -> re-caler le maxNativeZoom adaptatif
+                setTimeout(function() {
+                    try { _applyAdaptiveNativeZoom(); } catch(_e) {}
+                }, 800);
                 setTimeout(function() {
                     if (modal && modal.parentNode) modal.remove();
                     showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
@@ -2897,6 +2950,8 @@
             } catch(_e) {}
             // 0. Patcher les TileLayers deja en place (maxNativeZoom etc.)
             _patchExistingTileLayers();
+            // 0ter. maxNativeZoom adaptatif selon ce qui est reellement cache
+            setTimeout(_applyAdaptiveNativeZoom, 400);
             // 0bis. Afficher la zone hors-ligne par defaut si une zone est storee
             //       (l'utilisateur peut la masquer via le menu si besoin)
             try {
@@ -2922,8 +2977,12 @@
     window.addEventListener('online', function() {
         updateStatusBadge();
         setTimeout(autoReplay, 500);
+        _applyAdaptiveNativeZoom();  // en ligne : detail reseau complet
     });
-    window.addEventListener('offline', updateStatusBadge);
+    window.addEventListener('offline', function() {
+        updateStatusBadge();
+        _applyAdaptiveNativeZoom();  // hors-ligne : cap au zoom cache (upscale)
+    });
     window.addEventListener('focus', autoReplay);
     document.addEventListener('visibilitychange', function() {
         if (document.visibilityState === 'visible') autoReplay();
