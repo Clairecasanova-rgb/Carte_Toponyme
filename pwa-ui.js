@@ -691,6 +691,10 @@
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             '<button id="pwaPosTrk" style="' + btnPrimary + '">Enregistrer / consulter mes parcours</button>' +
             '</div>' +
+            '<div style="' + sectionTitle + '">Analyse</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;">' +
+            '<button id="pwaPosVS" style="' + btnSecondary + '">Champ de visibilite (MNT)</button>' +
+            '</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
             L.DomEvent.disableClickPropagation(m);
@@ -703,7 +707,156 @@
         m.querySelector('#pwaPosB').onclick = function() { close(); _shareMyPositionLink(); };
         m.querySelector('#pwaPosC').onclick = function() { close(); _liveToggle(); };
         m.querySelector('#pwaPosTrk').onclick = function() { close(); openTracksFeature(); };
+        m.querySelector('#pwaPosVS').onclick = function() { close(); _vsStart(); };
     }
+
+    // ============================================================
+    //  Champ de visibilite (viewshed) depuis un point, via le MNT
+    //  IGN (RGE ALTI / LiDAR HD). Calcul cote navigateur : on echantillonne
+    //  des rayons, on recupere les altitudes par lots (API altimetrie IGN),
+    //  puis ligne de vue. Necessite le reseau.
+    // ============================================================
+    var _vsLayer = null;
+    var VS_ALTI = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json';
+
+    // Decalage approx (equirectangulaire, OK <= 5 km) : distance m + cap (deg, 0=N)
+    function _vsDest(lat, lon, distM, bearingDeg) {
+        var br = bearingDeg * Math.PI / 180;
+        var dLat = (distM * Math.cos(br)) / 111320;
+        var dLon = (distM * Math.sin(br)) / (111320 * Math.cos(lat * Math.PI / 180));
+        return [lat + dLat, lon + dLon];
+    }
+    // Recupere les altitudes (lots de 180 pts). pts = [[lat,lon],...].
+    function _vsFetchElev(pts, onProgress) {
+        var CH = 180, out = [], i = 0;
+        function next() {
+            if (i >= pts.length) return Promise.resolve(out);
+            var slice = pts.slice(i, i + CH);
+            var lons = slice.map(function(p) { return p[1].toFixed(6); }).join('|');
+            var lats = slice.map(function(p) { return p[0].toFixed(6); }).join('|');
+            var url = VS_ALTI + '?lon=' + lons + '&lat=' + lats
+                + '&resource=ign_rge_alti_wld&delimiter=|&zonly=true';
+            return fetch(url).then(function(r) { return r.json(); }).then(function(j) {
+                var ev = (j && j.elevations) || [];
+                ev.forEach(function(z) {
+                    // -99999 = no-data (mer) -> 0 m
+                    out.push((typeof z === 'number' && z > -1000) ? z : 0);
+                });
+                i += CH;
+                if (onProgress) onProgress(Math.min(i, pts.length), pts.length);
+                return next();
+            });
+        }
+        return next();
+    }
+
+    function _vsStart() {
+        if ((typeof isAppOffline === 'function') && isAppOffline()) {
+            showToast('Champ de visibilite : connexion requise (altimetrie IGN).', 5000);
+            return;
+        }
+        var map = findLeafletMap();
+        if (!map) { showToast('Carte non detectee.', 4000); return; }
+        showToast('Toucher un point sur la carte pour le champ de visibilite.', 5000);
+        map.once('click', function(e) {
+            _vsParamsModal(e.latlng.lat, e.latlng.lng);
+        });
+    }
+
+    function _vsParamsModal(lat, lon) {
+        var m = document.createElement('div');
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100065;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:10px;max-width:360px;width:100%;padding:18px 20px;">' +
+            '<h2 style="margin:0 0 12px;font-size:16px;color:#5a3a1a;">Champ de visibilite</h2>' +
+            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
+            'Rayon : <span id="pwaVSrv">2.0</span> km<br>' +
+            '<input type="range" id="pwaVSr" min="0.5" max="5" step="0.5" value="2" style="width:100%;"></label>' +
+            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:14px;">' +
+            'Hauteur observateur (m)<br>' +
+            '<input type="number" id="pwaVSh" value="1.7" min="0" max="50" step="0.1" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;"></label>' +
+            '<div style="font-size:11px;color:#999;margin-bottom:12px;">Calcul depuis le MNT IGN (RGE ALTI/LiDAR HD). Quelques secondes selon le rayon.</div>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
+            '<button id="pwaVSgo" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
+            '</div></div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        var rg = m.querySelector('#pwaVSr');
+        rg.oninput = function() { m.querySelector('#pwaVSrv').textContent = parseFloat(rg.value).toFixed(1); };
+        m.querySelector('#pwaVSx').onclick = function() { m.remove(); };
+        m.onclick = function(e) { if (e.target === m) m.remove(); };
+        m.querySelector('#pwaVSgo').onclick = function() {
+            var rkm = parseFloat(rg.value) || 2;
+            var oh = parseFloat(m.querySelector('#pwaVSh').value) || 1.7;
+            m.remove();
+            _vsCompute(lat, lon, rkm * 1000, oh);
+        };
+    }
+
+    function _vsCompute(lat, lon, radiusM, obsH) {
+        var RAYS = 120;                                  // 1 rayon / 3 deg
+        var step = Math.min(60, Math.max(20, radiusM / 40));
+        var N = Math.max(8, Math.round(radiusM / step)); // echantillons / rayon
+        // Liste de points : [observateur] + N*RAYS samples
+        var pts = [[lat, lon]];
+        var b, k;
+        for (b = 0; b < RAYS; b++) {
+            var ang = (360 / RAYS) * b;
+            for (k = 1; k <= N; k++) {
+                pts.push(_vsDest(lat, lon, step * k, ang));
+            }
+        }
+        showToast('Champ de visibilite : altimetrie 0/' + pts.length + '...', 3000);
+        _vsFetchElev(pts, function(done, tot) {
+            if (done < tot) showToast('Altimetrie ' + done + '/' + tot + '...', 1500);
+        }).then(function(elev) {
+            var obsTot = elev[0] + obsH;
+            var boundary = [];                            // 1 sommet / rayon
+            var idx = 1;
+            for (b = 0; b < RAYS; b++) {
+                var ang2 = (360 / RAYS) * b;
+                var maxSlope = -Infinity, lastVisD = 0;
+                for (k = 1; k <= N; k++) {
+                    var d = step * k;
+                    var z = elev[idx++];
+                    var slope = (z - obsTot) / d;
+                    if (slope >= maxSlope) { lastVisD = d; }
+                    if (slope > maxSlope) maxSlope = slope;
+                }
+                boundary.push(_vsDest(lat, lon, lastVisD || step, ang2));
+            }
+            var map = findLeafletMap();
+            if (!map) return;
+            if (_vsLayer) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
+            _vsLayer = L.layerGroup().addTo(map);
+            L.polygon(boundary, {
+                color: '#1e8449', weight: 2, fillColor: '#2ecc71',
+                fillOpacity: 0.28, interactive: false
+            }).addTo(_vsLayer);
+            L.circleMarker([lat, lon], {
+                radius: 6, color: '#fff', weight: 2,
+                fillColor: '#1e8449', fillOpacity: 1
+            }).bindPopup('Point d\'observation<br>alt. sol ~' + Math.round(elev[0])
+                + ' m (+ ' + obsH + ' m)').addTo(_vsLayer);
+            try { map.fitBounds(L.polygon(boundary).getBounds(), { padding: [30, 30] }); } catch(_e) {}
+            showToast('Champ de visibilite calcule (rayon ' + (radiusM / 1000) + ' km).', 5000);
+        }).catch(function(err) {
+            showToast('Echec du calcul : ' + (err && err.message ? err.message : 'erreur reseau'), 6000);
+        });
+    }
+    function _vsClear() {
+        var map = findLeafletMap();
+        if (_vsLayer && map) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
+        _vsLayer = null;
+    }
+    window._pwaViewshed = _vsStart;
+    window._pwaViewshedClear = _vsClear;
 
     // Refresh badge si on entre/sort du fullscreen (re-parenter au bon contexte)
     document.addEventListener('fullscreenchange', function() {
