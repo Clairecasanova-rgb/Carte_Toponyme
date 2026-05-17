@@ -2002,6 +2002,67 @@
         catch(_e) { return { key: key, name: '' }; }
     }
 
+    // Applique le nom personnalise du raccourci AUX 3 CANAUX, depuis pwa-ui.js
+    // (donc valable pour TOUTES les cartes, meme anciennes non regenerees) :
+    //  - manifest.name/short_name (Chrome WebAPK) : on remplace le <link manifest>
+    //  - document.title (fallback raccourci Chrome + onglet)
+    //  - <meta apple-mobile-web-app-title> (iOS Safari ignore le manifest)
+    // Doit s'executer TOT (avant que l'utilisateur declenche l'install) : OK
+    // car pwa-ui.js est en defer -> s'execute apres le parse du <head>.
+    function _applyCustomShortcutName() {
+        var fn = (location.pathname.split('/').pop()) || 'carte.html';
+        var customName = '';
+        try { customName = (localStorage.getItem('pwaCustomName_' + fn) || '').trim(); }
+        catch(_e) {}
+        if (!customName) return;  // pas de nom perso : ne rien forcer
+        try { document.title = customName; } catch(_e) {}
+        try {
+            var am = document.getElementById('pwaAppleTitle')
+                || document.querySelector('meta[name="apple-mobile-web-app-title"]');
+            if (!am) {
+                am = document.createElement('meta');
+                am.setAttribute('name', 'apple-mobile-web-app-title');
+                document.head.appendChild(am);
+            }
+            am.setAttribute('content', customName.slice(0, 30));
+        } catch(_e) {}
+        try {
+            // Remplacer le manifest (genere par le script inline avec l'ancien nom)
+            var manifest = {
+                name: customName.slice(0, 60),
+                short_name: customName.length > 12 ? customName.slice(0, 12) : customName,
+                description: 'Carte des toponymes cadastraux corses',
+                start_url: fn,
+                scope: './',
+                display: 'standalone',
+                orientation: 'any',
+                background_color: '#18191a',
+                theme_color: '#8b4513',
+                lang: 'fr',
+                icons: [
+                    { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+                    { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+                    { src: 'icon-192-maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' }
+                ]
+            };
+            var blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
+            var url = URL.createObjectURL(blob);
+            // Retirer les anciens <link rel="manifest">
+            document.querySelectorAll('link[rel="manifest"]').forEach(function(l) {
+                try { l.parentNode.removeChild(l); } catch(_e) {}
+            });
+            var link = document.createElement('link');
+            link.rel = 'manifest';
+            link.href = url;
+            document.head.appendChild(link);
+            console.log('[PWA] Nom raccourci applique via pwa-ui.js : ' + customName);
+        } catch(_e) {
+            console.warn('[PWA] _applyCustomShortcutName echoue :', _e);
+        }
+    }
+    // Execution immediate (pas dans un listener load) pour devancer l'install.
+    _applyCustomShortcutName();
+
     function openRenameShortcutModal(onSave) {
         var existing = document.getElementById('pwaRenameModal');
         if (existing) { existing.remove(); return; }
@@ -2060,12 +2121,11 @@
             if (!v) { alert('Saisis un nom non vide.'); return; }
             try { localStorage.setItem(cur.key, v); } catch(_e) { alert('Echec sauvegarde locale.'); return; }
             m.remove();
+            // Appliquer tout de suite (manifest + title + meta iOS) sans reload
+            try { _applyCustomShortcutName(); } catch(_e) {}
             if (onSave) onSave(v);
             else {
-                // Renommage simple : pas de reload obligatoire, juste sauvegarde.
-                // Le nouveau nom sera applique au prochain chargement de page
-                // (manifest regenere au load).
-                showToast('Nom enregistre. Sera applique a la prochaine installation du raccourci.', 5000);
+                showToast('Nom enregistre et applique. (Si la carte est deja installee, desinstalle/reinstalle pour renommer l\'icone.)', 6000);
             }
         };
     }
