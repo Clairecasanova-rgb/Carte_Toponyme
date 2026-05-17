@@ -1064,9 +1064,9 @@
         var isCustom = !!customBounds;
         var curZoom = map.getZoom();
         // Defaults : si une zone existe deja, repartir de ses zooms ; sinon
-        // couvrir une plage genereuse pour eviter le flou au zoom.
-        var minZ = existingZone ? existingZone.zmin : Math.max(curZoom - 2, 10);
-        var maxZ = existingZone ? existingZone.zmax : Math.min(curZoom + 4, 18);
+        // valeurs par defaut min 14 / max 18.
+        var minZ = existingZone ? existingZone.zmin : 14;
+        var maxZ = existingZone ? existingZone.zmax : 18;
         // Afficher la zone existante sur la carte en arriere-plan pendant qu'on
         // ajuste, pour faciliter l'ajustement visuel.
         if (existingZone && !customBounds) showPrecachedZoneOnMap(true);
@@ -1129,10 +1129,6 @@
                 bounds.getNorth().toFixed(3) + ',' + bounds.getEast().toFixed(3) + '</div>' : '') +
             '</div>' +
 
-            '<div style="font-size:11px;color:#666;background:#fff8e1;border:1px solid #f0d090;border-radius:4px;padding:6px 8px;margin-bottom:8px;line-height:1.4;">' +
-            '<strong>Astuce :</strong> le <em>zoom max</em> determine la nettete offline. Zoom 14 = vue commune, zoom 16-17 = rues, zoom 18 = batiments. Au-dela du zoom max precache, l\'image devient floue.' +
-            '</div>' +
-
             '<div style="display:flex;gap:10px;margin-bottom:14px;">' +
             '<label style="flex:1;font-size:12px;color:#5a3a1a;">Zoom min<br><input type="number" id="pwaZmin" min="6" max="20" value="' + minZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
             '<label style="flex:1;font-size:12px;color:#5a3a1a;">Zoom max<br><input type="number" id="pwaZmax" min="6" max="20" value="' + maxZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
@@ -1152,15 +1148,18 @@
 
             (corseLvl
                 ? '<div style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#16a085;margin-bottom:12px;background:#eafaf6;border:1px solid #b8e6da;border-radius:4px;padding:8px 10px;">' +
-                  '<input type="checkbox" id="pwaIncludeCorse" style="display:none;">' +
+                  '<select id="pwaCorseCtx" style="display:none;"><option value="" selected></option></select>' +
                   '<span>Contexte Corse deja telecharge a l\'installation (' +
                   (corseLvl === 'full' ? 'fond complet zooms 8-14' : 'zooms 8-10') +
                   '). Inutile de le re-telecharger.</span>' +
                   '</div>'
-                : '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:#5a3a1a;margin-bottom:12px;cursor:pointer;">' +
-                  '<input type="checkbox" id="pwaIncludeCorse" style="margin-top:2px;">' +
-                  '<span>Inclure le contexte Corse complet aux zooms 8-10 (~80 tuiles, ~3 Mo). Utile pour dezoomer voir l\'ile entiere hors-ligne.</span>' +
-                  '</label>') +
+                : '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+                  'Contexte Corse (vue ile entiere hors-ligne)<br>' +
+                  '<select id="pwaCorseCtx" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-top:3px;">' +
+                  '<option value="" selected>Aucun</option>' +
+                  '<option value="10">Leger — zooms 8-10 (~3 Mo)</option>' +
+                  '<option value="13">Detaille — zooms 8-13 (~40 Mo)</option>' +
+                  '</select></label>') +
 
             (_pendingCommunePolys
                 ? ''  // selection commune : le nom est auto-derive des communes
@@ -1214,8 +1213,15 @@
                 totalT += (Math.abs(xmax - xmin) + 1) * (Math.abs(ymax - ymin) + 1);
             }
             var nLayers = getCheckedLayers().length;
-            var includeCorse = document.getElementById('pwaIncludeCorse').checked;
-            var corseTiles = includeCorse ? 80 * nLayers : 0;
+            var _ctxSel = document.getElementById('pwaCorseCtx');
+            var corseCtxZmax = _ctxSel ? (parseInt(_ctxSel.value, 10) || 0) : 0;
+            var includeCorse = corseCtxZmax > 0;
+            // Estimation tuiles contexte Corse selon le zmax (par couche) :
+            // 8-10 ~80, 8-13 ~1300 (croissance x4 par niveau).
+            var corseTilesPerLayer = !includeCorse ? 0
+                : (corseCtxZmax >= 13 ? 1300 : corseCtxZmax >= 12 ? 350
+                   : corseCtxZmax >= 11 ? 90 : 25);
+            var corseTiles = corseTilesPerLayer * nLayers;
             var totalTiles = totalT * nLayers + corseTiles;
             var nProjects = getCheckedProjects().length;
             var estMo = (totalTiles * 0.04).toFixed(1);
@@ -1246,13 +1252,15 @@
             document.getElementById('pwaPEstim').innerHTML = summary;
             m._cache = {
                 zmin: zmin, zmax: zmax, totalAll: totalTiles, includeCorse: includeCorse,
+                corseCtxZmax: corseCtxZmax,
                 layerUrls: getCheckedLayers(), projectIds: getCheckedProjects()
             };
         }
 
         document.getElementById('pwaZmin').oninput = updateEstim;
         document.getElementById('pwaZmax').oninput = updateEstim;
-        document.getElementById('pwaIncludeCorse').onchange = updateEstim;
+        var _ctxSelEl = document.getElementById('pwaCorseCtx');
+        if (_ctxSelEl) _ctxSelEl.onchange = updateEstim;
         m.querySelectorAll('input.pwaLayerCb').forEach(function(cb) { cb.onchange = updateEstim; });
         m.querySelectorAll('input.pwaProjectCb').forEach(function(cb) { cb.onchange = updateEstim; });
         function closeModal() {
@@ -1302,7 +1310,8 @@
             _checkQuotaBeforeDownload(_estBytes).then(function(ok) {
                 if (!ok) return;
                 _requestPersistentStorage(false);
-                startPrecache(map, bounds, c.zmin, c.zmax, c.includeCorse,
+                startPrecache(map, bounds, c.zmin, c.zmax,
+                    (c.corseCtxZmax || (c.includeCorse ? 10 : 0)),
                     c.layerUrls, c.projectIds, null, _label);
             });
         };
@@ -1619,6 +1628,14 @@
                 key: 'cadastre-ign'
             },
             {
+                // Plan Terrier Corse XVIIIe (WMTS : STYLE=nolegend, TMS=PM_6_18,
+                // zooms 6-18 uniquement). La carte l'affiche en WMS -> non
+                // cacheable ; le proposer ici en XYZ permet de le pre-cacher.
+                name: 'Plan Terrier (XVIIIe)',
+                url: 'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.TERRIER_V2&STYLE=nolegend&TILEMATRIXSET=PM_6_18&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png',
+                key: 'terrier'
+            },
+            {
                 name: 'OpenStreetMap',
                 url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
                 key: 'osm'
@@ -1634,6 +1651,7 @@
                 if (fb.key === 'orthophotos-1950') return o.url.indexOf('1950-1965') >= 0;
                 if (fb.key === 'orthophotos-1965') return o.url.indexOf('1965-1980') >= 0;
                 if (fb.key === 'cadastre-ign') return o.url.indexOf('CADASTRALPARCELS') >= 0;
+                if (fb.key === 'terrier') return o.url.indexOf('TERRIER_V2') >= 0;
                 if (fb.key === 'osm') return o.url.indexOf('openstreetmap.org') >= 0;
                 return false;
             });
@@ -1894,9 +1912,12 @@
             _effZmax = deepLayerSpec.zmax;
         }
 
-        // 2. Contexte Corse optionnel (zooms 8-10)
+        // 2. Contexte Corse optionnel. includeCorse = zmax du contexte
+        //    (nombre) ; true historique => 10. Zooms 8..ctxZmax sur la Corse.
         if (includeCorse) {
-            for (var cz = 8; cz <= 10; cz++) {
+            var ctxZmax = (typeof includeCorse === 'number' && includeCorse >= 8)
+                ? includeCorse : 10;
+            for (var cz = 8; cz <= ctxZmax; cz++) {
                 if (cz >= zmin && cz <= zmax) continue;
                 addTilesForBounds(cz, CORSE_BOUNDS.north, CORSE_BOUNDS.south, CORSE_BOUNDS.west, CORSE_BOUNDS.east);
             }
