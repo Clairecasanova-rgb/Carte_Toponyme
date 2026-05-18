@@ -767,8 +767,31 @@
     }
     function _vsCurv(d) { return (1 - VS_K) * d * d / (2 * VS_R); }  // chute (m)
 
+    function _vsDelay(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+    // Altimetrie IGN par lots. Robuste au throttling : l'API renvoie 429
+    // (Too Many Requests) quand les requetes s'enchainent trop vite -> on
+    // respecte Retry-After / backoff exponentiel + petit espacement entre
+    // lots, sinon le calcul echouait silencieusement (rien ne s'affichait).
     function _vsFetchElev(pts, onProgress) {
-        var CH = 180, out = [], i = 0;
+        var CH = 180, out = [], i = 0, MAXTRY = 6;
+        function fetchBatch(url, attempt) {
+            return fetch(url).then(function(r) {
+                if (r.ok) return r.json();
+                if ((r.status === 429 || r.status >= 500) && attempt < MAXTRY) {
+                    var ra = parseInt(r.headers.get('Retry-After'), 10);
+                    var wait = (ra > 0 ? ra * 1000 : Math.min(12000, 700 * Math.pow(2, attempt)));
+                    return _vsDelay(wait).then(function() { return fetchBatch(url, attempt + 1); });
+                }
+                throw new Error('Altimetrie IGN HTTP ' + r.status
+                    + (r.status === 429 ? ' (trop de requetes — reessayer dans un instant ou reduire le rayon)' : ''));
+            }).catch(function(e) {
+                if (attempt < MAXTRY && /NetworkError|Failed to fetch|load failed/i.test(String(e && e.message))) {
+                    return _vsDelay(Math.min(12000, 700 * Math.pow(2, attempt)))
+                        .then(function() { return fetchBatch(url, attempt + 1); });
+                }
+                throw e;
+            });
+        }
         function next() {
             if (i >= pts.length) return Promise.resolve(out);
             var slice = pts.slice(i, i + CH);
@@ -776,14 +799,15 @@
             var lats = slice.map(function(p) { return p[0].toFixed(6); }).join('|');
             var url = VS_ALTI + '?lon=' + lons + '&lat=' + lats
                 + '&resource=ign_rge_alti_wld&delimiter=|&zonly=true';
-            return fetch(url).then(function(r) { return r.json(); }).then(function(j) {
+            return fetchBatch(url, 0).then(function(j) {
                 var ev = (j && j.elevations) || [];
                 ev.forEach(function(z) {
                     out.push((typeof z === 'number' && z > -1000) ? z : 0);
                 });
                 i += CH;
                 if (onProgress) onProgress(Math.min(i, pts.length), pts.length);
-                return next();
+                // Petit espacement anti-throttling entre 2 lots.
+                return (i < pts.length) ? _vsDelay(120).then(next) : out;
             });
         }
         return next();
