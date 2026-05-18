@@ -918,6 +918,7 @@
                     .then(function(pe) {
                         var obsTot = res.obsElev + res.obsH;
                         var nR = res.nRays, N = res.N, st = res.stepM;
+                        var gate = Math.max(res.rayStep || 2, 1.5);
                         var out = cand.map(function(p, i) {
                             var pz = pe[i] - _vsCurv(p.dist);
                             var pang = Math.atan2(pz - obsTot, p.dist) * 180 / Math.PI;
@@ -932,7 +933,7 @@
                             return { name: p.name, lat: p.lat, lon: p.lon, dist: p.dist,
                                      nature: p.nature, bearing: pbear, ang: pang,
                                      elev: Math.round(pe[i]),
-                                     visible: (bd <= 6) && (pang >= blk - 0.05) };
+                                     visible: (bd <= gate) && (pang >= blk + 0.05) };
                         });
                         fin(out);
                     }).catch(function() { fin([]); });
@@ -1099,7 +1100,10 @@
                 }
                 var ki = Math.min(N - 1, Math.max(0, Math.round(tt.dist / stepM) - 1));
                 var blockAng = (best && best.maxAng[ki] != null) ? best.maxAng[ki] : -90;
-                var vis = (bd <= 6) && (tang >= blockAng - 0.05);
+                // STRICT : rayon vraiment proche (<= 1 pas angulaire) ET cible
+                // qui depasse nettement le relief bloquant (marge +0.05 deg,
+                // plus de tolerance negative qui laissait passer du masque).
+                var vis = (bd <= Math.max(rayStep, 1.5)) && (tang >= blockAng + 0.05);
                 tgt.push({ name: tt.name, lat: tt.lat, lon: tt.lon, dist: tt.dist,
                            bearing: tbear, ang: tang, visible: vis });
             }
@@ -1109,7 +1113,7 @@
                     + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
                 lat: lat, lon: lon, obsH: obsH, obsElev: Math.round(elev[0]),
                 radiusM: radiusM, azC: P.azC, azW: P.azW, full: full,
-                stepM: stepM, N: N, nRays: nRays,
+                stepM: stepM, N: N, nRays: nRays, rayStep: rayStep,
                 date: Date.now(), visPts: visPts, rayProf: rayProf, targets: tgt
             };
             _vsRenderPlani(res);
@@ -1224,8 +1228,8 @@
         var H = 320;
         var minA = 90, maxA = -90;
         rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
-        res.targets.forEach(function(t) { if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
-        (res.peaks || []).forEach(function(p) { if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
+        res.targets.forEach(function(t) { if (!t.visible) return; if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
+        (res.peaks || []).forEach(function(p) { if (!p.visible) return; if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
         var topA = Math.min(75, Math.ceil(maxA + 4));
         var botA = Math.max(-35, Math.floor(Math.min(-4, minA - 3)));
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -1287,8 +1291,10 @@
             ctx.fillStyle = '#34495e';
             ctx.fillText(mk[1], Math.min(W - 26, xx + 3), 12);
         });
-        // Cibles projetees + amorce verticale
+        // Cibles projetees : UNIQUEMENT celles strictement visibles depuis le
+        // point de vue (les masquees ne sont pas positionnees sur la vue).
         res.targets.forEach(function(t) {
+            if (!t.visible) return;
             if (!res.full) {
                 var dd = Math.abs(((t.bearing - res.azC + 540) % 360) - 180);
                 if (dd > res.azW / 2) return;
@@ -1309,8 +1315,9 @@
                 ctx.fillStyle = '#1b2631'; ctx.fillText(lbl, lx, ly);
             }
         });
-        // Sommets / cols nommes IGN BD TOPO (glyphe montagne + nom)
+        // Sommets nommes (OSM) : UNIQUEMENT ceux strictement visibles.
         (res.peaks || []).forEach(function(p) {
+            if (!p.visible) return;
             if (!res.full) {
                 var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
                 if (dp > res.azW / 2) return;
@@ -1707,7 +1714,9 @@
         var col = _vsViewColor(v.id);
         var g = L.layerGroup().addTo(map);
         if (v.planiURL && v.bounds) {
-            L.imageOverlay(v.planiURL, v.bounds, { opacity: 0.6, interactive: false }).addTo(g);
+            // Meme opacite que le rendu d'origine (_vsRenderPlani = 0.85) pour
+            // qu'une vue revue soit representee exactement comme a sa creation.
+            L.imageOverlay(v.planiURL, v.bounds, { opacity: 0.85, interactive: false }).addTo(g);
         }
         L.circleMarker([v.lat, v.lon], {
             radius: 6, color: '#fff', weight: 2, fillColor: col, fillOpacity: 1
