@@ -728,7 +728,8 @@
     var _vsLayer = null, _vsLast = null;
     var _vsShownLayers = {};  // id -> L.layerGroup (vues affichees simultanement)
     var VS_ALTI = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json';
-    var VS_WFS = 'https://data.geopf.fr/wfs/ows';
+    var VS_OVERPASS = ['https://overpass-api.de/api/interpreter',
+                       'https://overpass.kumi.systems/api/interpreter'];
     var VS_R = 6371000, VS_K = 0.13;  // rayon terre + coeff refraction
 
     function _vsDest(lat, lon, distM, bearingDeg) {
@@ -848,45 +849,50 @@
         return t.slice(0, 80);
     }
 
-    // Sommets / cols / cretes nommes IGN BD TOPO dans le rayon, projetes sur
-    // la vue tangentielle. Reseau requis (deja le cas pour l'altimetrie).
-    // Echec silencieux : si le WFS ne repond pas, aucun sommet n'est ajoute.
-    var VS_PEAK_SKIP = /plage|for[eê]t|lande\b|source|fontaine|mare\b|[eé]tang|^bois|prairie|jardin|hameau|quartier|lieu[- ]dit|carri[eè]re|cimeti|ruine|chapelle|pont\b|barrage|moulin|stade|terrain/i;
+    // Noms de montagnes/sommets dans le rayon, projetes sur la vue tangentielle.
+    // Source : OpenStreetMap (natural=peak / volcano) via l'API Overpass —
+    // base de reference des sommets nommes, sans cle, bien couverte sur la Corse.
+    // Reseau requis (deja le cas pour l'altimetrie). Echec silencieux.
     function _vsFetchPeaks(res, done) {
         function fin(arr) { res.peaks = arr || []; if (done) done(res.peaks); }
         var b = res.bounds, rp = res.rayProf;
         if (!b || !rp) { fin([]); return; }
         var s = b[0][0], w = b[0][1], n = b[1][0], e = b[1][1];
-        var url = VS_WFS + '?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature'
-            + '&TYPENAMES=BDTOPO_V3:lieu_dit_non_habite'
-            + '&SRSNAME=urn:ogc:def:crs:OGC:1.3:CRS84'
-            + '&OUTPUTFORMAT=application/json&COUNT=1000'
-            + '&BBOX=' + w.toFixed(5) + ',' + s.toFixed(5) + ','
-            + e.toFixed(5) + ',' + n.toFixed(5) + ',urn:ogc:def:crs:OGC:1.3:CRS84';
-        var ac = (typeof AbortController === 'function') ? new AbortController() : null;
-        var to = setTimeout(function() { try { ac && ac.abort(); } catch(_e) {} }, 15000);
-        fetch(url, ac ? { signal: ac.signal } : undefined)
-            .then(function(r) { return r.ok ? r.json() : null; })
-            .then(function(j) {
-                clearTimeout(to);
-                var feats = (j && j.features) || [];
-                var cand = [];
-                feats.forEach(function(f) {
-                    var pr = f.properties || {}, g = f.geometry;
-                    if (!g || g.type !== 'Point' || !g.coordinates) return;
-                    var lo = g.coordinates[0], la = g.coordinates[1];
-                    var nm = pr.toponyme || pr.nom || pr.nom_usuel || '';
-                    if (!nm) return;
-                    var nat = ((pr.nature || pr.categorie || '') + '');
-                    if (VS_PEAK_SKIP.test(nat) || VS_PEAK_SKIP.test(nm)) return;
-                    var d = _vsDist(res.lat, res.lon, la, lo);
-                    if (d < 25 || d > res.radiusM) return;
-                    cand.push({ name: String(nm), lat: la, lon: lo, dist: d,
-                                nature: nat });
-                });
-                cand.sort(function(a, c) { return a.dist - c.dist; });
-                cand = cand.slice(0, 60);
-                if (!cand.length) { fin([]); return; }
+        var bbox = s.toFixed(5) + ',' + w.toFixed(5) + ','
+            + n.toFixed(5) + ',' + e.toFixed(5);
+        var q = '[out:json][timeout:25];('
+            + 'node["natural"="peak"]["name"](' + bbox + ');'
+            + 'node["natural"="volcano"]["name"](' + bbox + ');'
+            + ');out body;';
+        function tryHost(idx) {
+            if (idx >= VS_OVERPASS.length) { fin([]); return; }
+            var ac = (typeof AbortController === 'function') ? new AbortController() : null;
+            var to = setTimeout(function() { try { ac && ac.abort(); } catch(_e) {} }, 20000);
+            fetch(VS_OVERPASS[idx] + '?data=' + encodeURIComponent(q),
+                  ac ? { signal: ac.signal } : undefined)
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(j) {
+                    clearTimeout(to);
+                    if (!j) { tryHost(idx + 1); return; }
+                    var els = (j && j.elements) || [];
+                    var cand = [];
+                    els.forEach(function(el) {
+                        if (el.type !== 'node' || el.lat == null) return;
+                        var tg = el.tags || {};
+                        var nm = tg.name;
+                        if (!nm) return;
+                        var d = _vsDist(res.lat, res.lon, el.lat, el.lon);
+                        if (d < 25 || d > res.radiusM) return;
+                        cand.push({ name: String(nm), lat: el.lat, lon: el.lon,
+                                    dist: d, nature: tg.natural || 'peak' });
+                    });
+                    cand.sort(function(a, c) { return a.dist - c.dist; });
+                    cand = cand.slice(0, 60);
+                    if (!cand.length) { fin([]); return; }
+                    onCand(cand);
+                }).catch(function() { clearTimeout(to); tryHost(idx + 1); });
+        }
+        function onCand(cand) {
                 _vsFetchElev(cand.map(function(p) { return [p.lat, p.lon]; }))
                     .then(function(pe) {
                         var obsTot = res.obsElev + res.obsH;
@@ -909,7 +915,8 @@
                         });
                         fin(out);
                     }).catch(function() { fin([]); });
-            }).catch(function() { clearTimeout(to); fin([]); });
+        }
+        tryHost(0);
     }
 
     function _vsStart() {
@@ -1140,8 +1147,11 @@
             return 'rgba(' + Math.round(46 + 70 * f) + ',' + Math.round(174 - 96 * f)
                 + ',' + Math.round(80 + 150 * f) + ',' + a + ')';
         }
-        // Surface remplie : quads entre rayons adjacents la ou les 2 sont
-        // visibles -> aire lisse avec trous (vallees masquees), degrade distance.
+        // Surface remplie : quads entre rayons adjacents. Une cellule est
+        // peinte si son bord exterieur est visible sur AU MOINS un des deux
+        // rayons (les rayons ne sont qu'un echantillonnage angulaire : exiger
+        // les deux laissait des trous = aspect pointille). L'occlusion radiale
+        // (vallees masquees le long d'un rayon) reste respectee -> vrais trous.
         var rp = res.rayProf, nR = res.nRays, N = res.N, st = res.stepM;
         var oc = px(res.lat, res.lon);
         function ptRC(ri, ki) {  // ki=0 => observateur
@@ -1155,19 +1165,19 @@
             var ri2 = (ri + 1) % nR;
             var va = rp[ri].vis, vb = rp[ri2].vis;
             for (ki = 0; ki < N; ki++) {
-                // cellule entre rayons ri,ri2 et anneaux ki,ki+1
-                var inner = (ki === 0) ? true : (va[ki - 1] && vb[ki - 1]);
-                var outer = va[ki] && vb[ki];
-                if (!outer && !inner) continue;
-                if (!outer) continue;  // cellule visible seulement si bord ext. visible
+                var outer = va[ki] || vb[ki];
+                if (!outer) continue;  // cellule visible si bord ext. visible
                 var f = Math.min(1, (st * (ki + 1)) / R);
                 var A = ptRC(ri, ki), B = ptRC(ri2, ki);
                 var C = ptRC(ri2, ki + 1), D = ptRC(ri, ki + 1);
-                ctx.fillStyle = distCol(f, 0.5);
+                // remplissage + liseré de meme couleur : soude les cellules
+                // adjacentes (supprime les coutures d'anti-aliasing pointillees)
+                var col = distCol(f, 0.55);
+                ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = 1.2;
                 ctx.beginPath();
                 ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]);
                 ctx.lineTo(C[0], C[1]); ctx.lineTo(D[0], D[1]);
-                ctx.closePath(); ctx.fill();
+                ctx.closePath(); ctx.fill(); ctx.stroke();
             }
         }
         var url = cv.toDataURL('image/png');
