@@ -29,10 +29,17 @@
     function _patchTileLayerOptions(layer) {
         if (!layer || !layer.options) return;
         var o = layer.options;
-        // maxNativeZoom haut : Leaflet demande les tuiles profondes ; si elles
-        // ne sont pas cachees, le SW renvoie la tuile parente recadree
-        // (_ancestorTile) -> pas de trou au ZOOM.
-        if (o.maxNativeZoom == null) o.maxNativeZoom = (o.maxZoom != null ? o.maxZoom : 19);
+        // Zoom natif REEL du serveur de cette couche (au-dela, le serveur n'a
+        // pas de tuile : certains -- OpenTopoMap -- renvoient un PNG "max zoom"
+        // au lieu d'une erreur, donc ne JAMAIS demander au-dela). Capture une
+        // seule fois, avant tout bump.
+        if (o._pwaServerMax == null) {
+            o._pwaServerMax = (o.maxNativeZoom != null) ? o.maxNativeZoom
+                : (o.maxZoom != null ? o.maxZoom : 19);
+        }
+        // maxNativeZoom = max serveur reel : Leaflet AGRANDIT lui-meme au-dela
+        // (flou mais propre, sans tuile placeholder serveur).
+        o.maxNativeZoom = o._pwaServerMax;
         // minNativeZoom = 8 (zoom min du contexte Corse pre-cache) : au DEZOOM
         // sous 8, Leaflet REDUIT les tuiles z8 au lieu de demander z6/z7 non
         // caches -> pas de trou au dezoom non plus.
@@ -138,11 +145,15 @@
             if (!offline) return;
             var ceil = _maxCachedHint || 21;
             map.eachLayer(function(l) {
-                if (l instanceof L.TileLayer && l.options.maxNativeZoom !== ceil) {
+                if (!(l instanceof L.TileLayer)) return;
+                // Ne jamais depasser le max serveur reel de la couche.
+                var sMax = (l.options._pwaServerMax != null) ? l.options._pwaServerMax : 21;
+                var c = Math.min(ceil, sMax);
+                if (l.options.maxNativeZoom !== c) {
                     // Pas de redraw : le move/zoom en cours va re-demander les
                     // tuiles avec cette nouvelle valeur. 'tileerror' rabaissera
                     // uniquement la ou le cache est moins profond.
-                    l.options.maxNativeZoom = ceil;
+                    l.options.maxNativeZoom = c;
                 }
             });
         }
@@ -159,10 +170,13 @@
             _maxCachedHint = maxCached || null;  // memorise pour le re-armement
             map.eachLayer(function(l) {
                 if (!(l instanceof L.TileLayer)) return;
+                var sMax = (l.options._pwaServerMax != null) ? l.options._pwaServerMax : 21;
                 if (offline && maxCached) {
-                    // Hors-ligne avec indice : cap au zoom cache -> upscale CSS
-                    if (l.options.maxNativeZoom !== maxCached) {
-                        l.options.maxNativeZoom = maxCached;
+                    // Hors-ligne avec indice : cap au zoom cache (sans depasser
+                    // le max serveur) -> upscale CSS
+                    var capO = Math.min(maxCached, sMax);
+                    if (l.options.maxNativeZoom !== capO) {
+                        l.options.maxNativeZoom = capO;
                         if (l._map) try { l.redraw(); } catch(_e) {}
                     }
                 } else if (offline) {
@@ -170,9 +184,11 @@
                     // (ferait clignoter des trous). Le hook 'tileerror'
                     // (_attachTileErrorFallback) baissera tout seul au besoin.
                 } else {
-                    // En ligne : maxNativeZoom haut (le SW gere le > max serveur)
-                    if (l.options.maxNativeZoom !== 21) {
-                        l.options.maxNativeZoom = 21;
+                    // En ligne : cap au max serveur reel de la couche. Au-dela,
+                    // Leaflet agrandit la derniere tuile nette (flou mais propre)
+                    // -> pas de tuile placeholder "max zoom" du serveur.
+                    if (l.options.maxNativeZoom !== sMax) {
+                        l.options.maxNativeZoom = sMax;
                         if (l._map) try { l.redraw(); } catch(_e) {}
                     }
                 }
