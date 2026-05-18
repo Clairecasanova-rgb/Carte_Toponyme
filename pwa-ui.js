@@ -898,7 +898,12 @@
                         var nm = tg.name;
                         if (!nm) return;
                         var d = _vsDist(res.lat, res.lon, el.lat, el.lon);
-                        if (d < 25 || d > res.radiusM) return;
+                        if (d < 25 || d > res.radiusM) return;  // hors rayon
+                        if (!res.full) {                        // hors secteur
+                            var pb = _vsBearing(res.lat, res.lon, el.lat, el.lon);
+                            var dd = Math.abs(((pb - res.azC + 540) % 360) - 180);
+                            if (dd > res.azW / 2) return;
+                        }
                         cand.push({ name: String(nm), lat: el.lat, lon: el.lon,
                                     dist: d, nature: tg.natural || 'peak' });
                     });
@@ -1163,10 +1168,11 @@
             return 'rgba(' + Math.round(46 + 70 * f) + ',' + Math.round(174 - 96 * f)
                 + ',' + Math.round(80 + 150 * f) + ',' + a + ')';
         }
-        // Surface remplie : quads entre rayons adjacents la ou les 2 sont
-        // visibles -> aire fidele avec trous (vallees masquees), degrade
-        // distance. Condition stricte (ET) : ne montre QUE le reellement vu,
-        // sans gonfler la surface.
+        // Surface remplie : quads entre rayons adjacents. Cellule peinte si son
+        // bord exterieur est visible sur AU MOINS un des deux rayons (les
+        // rayons ne sont qu'un echantillonnage angulaire). + liseré de meme
+        // couleur : soude les cellules adjacentes -> surface continue et lisse
+        // a l'affichage (l'occlusion radiale reste respectee -> vrais trous).
         var rp = res.rayProf, nR = res.nRays, N = res.N, st = res.stepM;
         var oc = px(res.lat, res.lon);
         function ptRC(ri, ki) {  // ki=0 => observateur
@@ -1180,16 +1186,17 @@
             var ri2 = (ri + 1) % nR;
             var va = rp[ri].vis, vb = rp[ri2].vis;
             for (ki = 0; ki < N; ki++) {
-                var outer = va[ki] && vb[ki];
-                if (!outer) continue;  // cellule visible seulement si bord ext. visible
+                var outer = va[ki] || vb[ki];
+                if (!outer) continue;  // cellule visible si bord ext. visible
                 var f = Math.min(1, (st * (ki + 1)) / R);
                 var A = ptRC(ri, ki), B = ptRC(ri2, ki);
                 var C = ptRC(ri2, ki + 1), D = ptRC(ri, ki + 1);
-                ctx.fillStyle = distCol(f, 0.5);
+                var col = distCol(f, 0.55);
+                ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = 1.2;
                 ctx.beginPath();
                 ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]);
                 ctx.lineTo(C[0], C[1]); ctx.lineTo(D[0], D[1]);
-                ctx.closePath(); ctx.fill();
+                ctx.closePath(); ctx.fill(); ctx.stroke();
             }
         }
         var url = cv.toDataURL('image/png');
@@ -1449,6 +1456,8 @@
             '</div>' +
             '<div id="pwaVSread" style="font-size:12px;color:#5a3a1a;margin-top:8px;min-height:16px;">Survoler une vue pour se reperer sur l\'autre.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">' +
+            '<button id="pwaVSbig" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Agrandir</button>' +
+            '<button id="pwaVSdl" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Telecharger</button>' +
             (canMap ? '<button id="pwaVSmap" style="background:#1e8449;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer sur la carte</button>' : '') +
             '<button id="pwaVSsave" style="background:#8b4513;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
             '<button id="pwaVSclose" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>' +
@@ -1481,6 +1490,65 @@
                              bearing: p.bearing, ang: p.ang, visible: p.visible };
                 })
             }).then(function() { showToast('Vue enregistree : ' + res.name, 4000); });
+        };
+        // Agrandir : panorama plein ecran, defilement horizontal (lecture fine)
+        m.querySelector('#pwaVSbig').onclick = function() {
+            var ov = document.createElement('div');
+            ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);'
+                + 'z-index:100075;display:flex;flex-direction:column;';
+            var bar = document.createElement('div');
+            bar.style.cssText = 'flex:0 0 auto;display:flex;justify-content:space-between;'
+                + 'align-items:center;padding:8px 12px;color:#fff;font:600 13px Segoe UI;';
+            bar.innerHTML = '<span>' + escapeHtml(res.name || 'Vue tangentielle') + '</span>';
+            var xb = document.createElement('button');
+            xb.textContent = 'Fermer';
+            xb.style.cssText = 'background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;'
+                + 'border-radius:6px;cursor:pointer;font:600 12px Segoe UI;';
+            bar.appendChild(xb);
+            var scr = document.createElement('div');
+            scr.style.cssText = 'flex:1 1 auto;overflow:auto;display:flex;'
+                + 'align-items:center;padding:8px;';
+            var im = document.createElement('img');
+            im.src = res.panoramaURL;
+            im.style.cssText = 'image-rendering:auto;max-width:none;height:auto;'
+                + 'min-width:100%;display:block;';
+            scr.appendChild(im);
+            ov.appendChild(bar); ov.appendChild(scr);
+            var fe = document.fullscreenElement || document.webkitFullscreenElement;
+            (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
+            if (typeof L !== 'undefined' && L.DomEvent) {
+                L.DomEvent.disableClickPropagation(ov);
+                L.DomEvent.disableScrollPropagation(ov);
+            }
+            function cl() { ov.remove(); }
+            xb.onclick = cl;
+            ov.onclick = function(e) { if (e.target === ov || e.target === scr) cl(); };
+        };
+        // Telecharger en local : PNG du panorama + JSON des donnees de la vue
+        m.querySelector('#pwaVSdl').onclick = function() {
+            var safe = (res.name || 'vue-tangentielle')
+                .replace(/[^\w\- ]+/g, '_').slice(0, 60);
+            function dl(href, fname, revoke) {
+                var a = document.createElement('a');
+                a.href = href; a.download = fname;
+                document.body.appendChild(a); a.click();
+                setTimeout(function() {
+                    if (revoke) URL.revokeObjectURL(href);
+                    if (a.parentNode) a.parentNode.removeChild(a);
+                }, 1500);
+            }
+            if (res.panoramaURL) dl(res.panoramaURL, safe + '-tangentielle.png', false);
+            var data = {
+                name: res.name, date: res.date, lat: res.lat, lon: res.lon,
+                obsH: res.obsH, obsElev: res.obsElev, radiusM: res.radiusM,
+                azC: res.azC, azW: res.azW, full: res.full,
+                targets: res.targets || [], peaks: res.peaks || []
+            };
+            var blob = new Blob([JSON.stringify(data, null, 2)],
+                                { type: 'application/json' });
+            var ju = URL.createObjectURL(blob);
+            setTimeout(function() { dl(ju, safe + '.json', true); }, 300);
+            showToast('Telechargement : panorama PNG + donnees JSON.', 4000);
         };
 
         // ---- Curseur synchronise panorama <-> mini-carte planimetrique ----
