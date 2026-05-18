@@ -1119,13 +1119,15 @@
             _vsRenderPlani(res);
             _vsLast = res;
             res.panoramaURL = _vsBuildPanorama(res);  // dataURL
+            res.perspectiveURL = _vsBuildPanoramaPerspective(res);  // dataURL
             showToast('Champ de visibilite calcule.', 4000);
             _vsResultModal(res);
             // Sommets nommes IGN (asynchrone) : enrichit la vue une fois prets
             _vsFetchPeaks(res, function(pk) {
                 if (!pk || !pk.length) return;
                 res.panoramaURL = _vsBuildPanorama(res);
-                if (typeof res._setPano === 'function') res._setPano(res.panoramaURL);
+                res.perspectiveURL = _vsBuildPanoramaPerspective(res);
+                if (typeof res._setPano === 'function') res._setPano();
                 if (_vsLayer) {
                     var map = findLeafletMap();
                     pk.forEach(function(p) {
@@ -1353,6 +1355,160 @@
         return cv.toDataURL('image/png');
     }
 
+    // 2e vue tangentielle : PROJECTION RECTILIGNE (pinhole / "appareil photo").
+    // Perspective reelle : droites conservees, ecartement naturel. Centree sur
+    // l'axe du secteur (ou la direction du relief le plus haut en 360),
+    // champ de vision limite. Uniquement les elements strictement visibles.
+    function _vsBuildPanoramaPerspective(res) {
+        var rp = res.rayProf;
+        if (!rp || !rp.length) return null;
+        var R = res.radiusM, D2R = Math.PI / 180;
+        // Centre + champ de vision
+        var cAz, hfov;
+        if (res.full) {
+            var top = rp[0];
+            rp.forEach(function(p) { if (p.sky.ang > top.sky.ang) top = p; });
+            cAz = top.bearing; hfov = 90;
+        } else {
+            cAz = res.azC; hfov = Math.min(Math.max(res.azW, 20), 110);
+        }
+        function azp(bearing) { return ((bearing - cAz + 540) % 360) - 180; }  // deg
+        function inFov(a) { return Math.abs(a) <= hfov / 2 + 0.5; }
+        var W = 1100, cx = W / 2;
+        var f = (W / 2) / Math.tan((hfov / 2) * D2R);
+        // Extremes verticaux (visibles, dans le champ)
+        var eMax = -90, eMin = 90;
+        rp.forEach(function(p) {
+            if (!inFov(azp(p.bearing))) return;
+            if (p.sky.ang > eMax) eMax = p.sky.ang;
+            if (p.sky.ang < eMin) eMin = p.sky.ang;
+        });
+        (res.targets || []).concat(res.peaks || []).forEach(function(t) {
+            if (!t.visible || !inFov(azp(t.bearing))) return;
+            if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
+        });
+        if (eMax < -89) { eMax = 10; eMin = -5; }
+        eMax = Math.min(80, eMax + 3); eMin = Math.max(-30, Math.min(-3, eMin - 2));
+        var eMid = (eMax + eMin) / 2;
+        var halfV = (eMax - eMin) / 2 + 5;          // demi-champ vertical (+marge)
+        var H = Math.round(Math.max(300, Math.min(1000,
+            2 * f * Math.tan(halfV * D2R))));
+        var cy = H / 2 + f * Math.tan(eMid * D2R);  // horizon (e=0) -> y=cy
+        var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        var ctx = cv.getContext('2d'); ctx.lineJoin = 'round';
+        function dCol(fr) {
+            return 'rgb(' + Math.round(46 + 70 * fr) + ',' + Math.round(168 - 96 * fr)
+                + ',' + Math.round(84 + 150 * fr) + ')';
+        }
+        // Projection pinhole : x = cx + f*tan(a) ; y = cy - f*tan(e)/cos(a)
+        function projX(a) { return cx + f * Math.tan(a * D2R); }
+        function projY(a, e) { return cy - f * Math.tan(e * D2R) / Math.cos(a * D2R); }
+        var horizonY = cy;  // e=0 -> y=cy (droite)
+        // Ciel
+        var sky = ctx.createLinearGradient(0, 0, 0, horizonY);
+        sky.addColorStop(0, '#cfe0ee'); sky.addColorStop(1, '#eaf2f8');
+        ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+        // Rayons dans le champ, tries par azimut affiche
+        var ord = rp.filter(function(p) { return inFov(azp(p.bearing)); })
+            .sort(function(a, b) { return azp(a.bearing) - azp(b.bearing); });
+        if (ord.length >= 2) {
+            var grd = ctx.createLinearGradient(0, Math.max(0, projY(0, eMax)), 0, H);
+            grd.addColorStop(0, '#6b8e4e'); grd.addColorStop(1, '#3d5230');
+            ctx.fillStyle = grd; ctx.beginPath();
+            ctx.moveTo(projX(azp(ord[0].bearing)), H);
+            ord.forEach(function(p) {
+                var a = azp(p.bearing); ctx.lineTo(projX(a), projY(a, p.sky.ang));
+            });
+            ctx.lineTo(projX(azp(ord[ord.length - 1].bearing)), H);
+            ctx.closePath(); ctx.fill();
+            ctx.lineWidth = 3;
+            for (var i = 0; i < ord.length - 1; i++) {
+                var a1 = azp(ord[i].bearing), a2 = azp(ord[i + 1].bearing);
+                ctx.strokeStyle = dCol(Math.min(1, ord[i].sky.d / R));
+                ctx.beginPath();
+                ctx.moveTo(projX(a1), projY(a1, ord[i].sky.ang));
+                ctx.lineTo(projX(a2), projY(a2, ord[i + 1].sky.ang));
+                ctx.stroke();
+            }
+        }
+        // Horizon (droite) + grille d'angles verticaux (courbes echantillonnees)
+        ctx.strokeStyle = 'rgba(0,0,0,0.40)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, horizonY); ctx.lineTo(W, horizonY); ctx.stroke();
+        ctx.font = '10px Segoe UI';
+        for (var ev = Math.ceil(eMin / 10) * 10; ev <= eMax; ev += 10) {
+            if (ev === 0) continue;
+            ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.beginPath();
+            for (var aa = -hfov / 2, first = true; aa <= hfov / 2; aa += 3) {
+                var yy = projY(aa, ev);
+                if (first) { ctx.moveTo(projX(aa), yy); first = false; }
+                else ctx.lineTo(projX(aa), yy);
+            }
+            ctx.stroke();
+            ctx.fillStyle = '#5a3a1a';
+            ctx.fillText((ev > 0 ? '+' : '') + ev + '°', cx + 3,
+                Math.min(H - 2, Math.max(9, projY(0, ev) - 2)));
+        }
+        // Reperes azimut (lignes verticales) : cardinaux ou bornes du secteur
+        ctx.font = 'bold 11px Segoe UI';
+        var allMarks = res.full
+            ? [[0, 'N'], [45, 'NE'], [90, 'E'], [135, 'SE'], [180, 'S'],
+               [225, 'SO'], [270, 'O'], [315, 'NO']]
+            : [[(res.azC - res.azW / 2 + 360) % 360, ''], [res.azC, 'axe'],
+               [(res.azC + res.azW / 2) % 360, '']];
+        allMarks.forEach(function(mk) {
+            var a = azp(mk[0]); if (!inFov(a)) return;
+            var xx = projX(a);
+            ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, H); ctx.stroke();
+            ctx.fillStyle = '#34495e';
+            ctx.fillText(mk[1] || (Math.round(mk[0]) + '°'),
+                Math.min(W - 28, xx + 3), 12);
+        });
+        // Cibles + sommets : uniquement strictement visibles, dans le champ
+        function drawPin(o, isPeak) {
+            var a = azp(o.bearing); if (!o.visible || !inFov(a)) return;
+            var x = projX(a), y = projY(a, o.ang);
+            ctx.strokeStyle = isPeak ? 'rgba(138,90,43,0.55)' : 'rgba(39,174,96,0.7)';
+            if (isPeak) ctx.setLineDash([3, 3]);
+            ctx.lineWidth = 1; ctx.beginPath();
+            ctx.moveTo(x, y); ctx.lineTo(x, horizonY); ctx.stroke();
+            ctx.setLineDash([]);
+            if (isPeak) {
+                ctx.beginPath(); ctx.moveTo(x, y - 7);
+                ctx.lineTo(x - 6, y + 4); ctx.lineTo(x + 6, y + 4);
+                ctx.closePath(); ctx.fillStyle = '#8a5a2b'; ctx.fill();
+            } else {
+                ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = '#27ae60'; ctx.fill();
+            }
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4; ctx.stroke();
+            if (o.name) {
+                var lbl = o.name + (isPeak && o.elev ? ' ' + o.elev + ' m' : '');
+                ctx.font = (isPeak ? 'italic ' : '') + '10px Segoe UI';
+                var tw = ctx.measureText(lbl).width;
+                var lx = Math.min(W - tw - 4, x + 8), ly = Math.max(20, y - 7);
+                ctx.fillStyle = 'rgba(255,255,255,0.82)';
+                ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
+                ctx.fillStyle = isPeak ? '#5a3a1a' : '#1b2631';
+                ctx.fillText(lbl, lx, ly);
+            }
+        }
+        (res.targets || []).forEach(function(t) { drawPin(t, false); });
+        (res.peaks || []).forEach(function(p) { drawPin(p, true); });
+        // Legende
+        ctx.fillStyle = 'rgba(255,255,255,0.78)'; ctx.fillRect(6, H - 30, 250, 24);
+        ctx.fillStyle = '#1b2631'; ctx.font = '10px Segoe UI';
+        ctx.fillText('Perspective · axe ' + Math.round(cAz) + '° · champ '
+            + Math.round(hfov) + '°', 10, H - 14);
+        var lgX = 10, lgY = H - 10, lgW = 110;
+        var lg = ctx.createLinearGradient(lgX, 0, lgX + lgW, 0);
+        lg.addColorStop(0, dCol(0)); lg.addColorStop(1, dCol(1));
+        ctx.fillStyle = lg; ctx.fillRect(lgX + 130, lgY - 6, lgW, 6);
+        res.perspMeta = { mode: 'persp', W: W, H: H, cx: cx, cy: cy, f: f,
+                          cAz: cAz, hfov: hfov };
+        return cv.toDataURL('image/png');
+    }
+
     // Enregistre la vue SUR LA CARTE collaborative : polygone du champ
     // visible (contour exterieur approx) + point d'observation, via
     // custom_features (compatible file hors-ligne, partage avec tous).
@@ -1442,6 +1598,11 @@
         var nVis = (res.targets || []).filter(function(t) { return t.visible; }).length;
         var canMap = !!(res.rayProf && res.stepM && res.N);
         var hasMini = !!(res.bounds && res.planiURL);
+        var _vsMode = 'cyl';  // 'cyl' (panoramique) | 'persp' (rectiligne)
+        function _curPanoURL() {
+            return (_vsMode === 'persp' && res.perspectiveURL)
+                ? res.perspectiveURL : res.panoramaURL;
+        }
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;">' +
@@ -1451,6 +1612,10 @@
             '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance. '
             + (res.targets ? res.targets.length : 0) + ' point(s) proche(s) · ' + nVis + ' visible(s)'
             + ((res.peaks && res.peaks.length) ? ' · ' + res.peaks.length + ' sommet(s) nomme(s)' : '') + '.</div>' +
+            (res.perspectiveURL ? '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
+            '<button id="pwaVSmCyl" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#8b4513;color:#fff;">Panoramique</button>' +
+            '<button id="pwaVSmPersp" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#f0ebe3;color:#5a3a1a;">Perspective</button>' +
+            '</div>' : '') +
             '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">' +
             '<div style="flex:1 1 520px;min-width:280px;">' +
             '<canvas id="pwaVSpano" style="display:block;width:100%;border:1px solid #ddd;border-radius:6px;cursor:crosshair;touch-action:none;"></canvas>' +
@@ -1484,6 +1649,7 @@
                 azC: res.azC, azW: res.azW, full: res.full, date: res.date,
                 projet_id: (window.DRAWING_PROJET_ID || window.PROJET_ID || null),
                 panoramaURL: res.panoramaURL, planiURL: res.planiURL,
+                perspectiveURL: res.perspectiveURL, perspMeta: res.perspMeta,
                 bounds: res.bounds, panoMeta: res.panoMeta,
                 targets: (res.targets || []).map(function(t) {
                     return { name: t.name, lat: t.lat, lon: t.lon,
@@ -1514,7 +1680,7 @@
             scr.style.cssText = 'flex:1 1 auto;overflow:auto;display:flex;'
                 + 'align-items:center;padding:8px;';
             var im = document.createElement('img');
-            im.src = res.panoramaURL;
+            im.src = _curPanoURL();
             im.style.cssText = 'image-rendering:auto;max-width:none;height:auto;'
                 + 'min-width:100%;display:block;';
             scr.appendChild(im);
@@ -1542,7 +1708,8 @@
                     if (a.parentNode) a.parentNode.removeChild(a);
                 }, 1500);
             }
-            if (res.panoramaURL) dl(res.panoramaURL, safe + '-tangentielle.png', false);
+            var _pu = _curPanoURL();
+            if (_pu) dl(_pu, safe + (_vsMode === 'persp' ? '-perspective' : '-tangentielle') + '.png', false);
             var data = {
                 name: res.name, date: res.date, lat: res.lat, lon: res.lon,
                 obsH: res.obsH, obsElev: res.obsElev, radiusM: res.radiusM,
@@ -1585,10 +1752,20 @@
             var g = pano.getContext('2d');
             g.clearRect(0, 0, w, h); g.drawImage(pImg, 0, 0, w, h);
             if (az == null) return;
+            var x;
+            if (_vsMode === 'persp' && res.perspMeta) {
+                var P = res.perspMeta;
+                var a = ((az - P.cAz + 540) % 360) - 180;
+                a = Math.max(-P.hfov / 2, Math.min(P.hfov / 2, a));
+                x = (P.cx + P.f * Math.tan(a * Math.PI / 180)) / P.W * w;
+                g.strokeStyle = 'rgba(192,57,43,0.9)'; g.lineWidth = 1.5;
+                g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+                return;
+            }
             var W0 = pm.W || pImg.naturalWidth || w;
             var PADd = (pm.PAD || 34) / W0 * w;
             var PWd = w - PADd;
-            var x = PADd + ((az - pm.azStart + 360) % 360) / pm.azSpan * PWd;
+            x = PADd + ((az - pm.azStart + 360) % 360) / pm.azSpan * PWd;
             g.strokeStyle = 'rgba(192,57,43,0.9)'; g.lineWidth = 1.5;
             g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
             if (vAng != null && pm.topA != null && pm.botA != null) {
@@ -1643,12 +1820,22 @@
             if (!pReady) return;
             if (ev.cancelable) ev.preventDefault();
             var f = evtXY(pano, ev), fx = Math.max(0, Math.min(1, f[0])), fy = Math.max(0, Math.min(1, f[1]));
+            if (_vsMode === 'persp' && res.perspMeta) {
+                var P = res.perspMeta, R2D = 180 / Math.PI;
+                var u = (fx * P.W - P.cx) / P.f;
+                var aDeg = Math.atan(u) * R2D;             // azimut relatif
+                var az = (P.cAz + aDeg + 360) % 360;
+                var sy = fy * P.H;
+                var vAng = Math.atan(((P.cy - sy) / P.f) * Math.cos(aDeg / R2D)) * R2D;
+                syncFromAz(az, null, vAng);
+                return;
+            }
             var W0 = pm.W || pImg.naturalWidth || 1;
             var PADf = (pm.PAD || 34) / W0;
-            var az = pm.azStart + (Math.max(0, fx - PADf) / Math.max(0.01, 1 - PADf)) * pm.azSpan;
-            az = (az + 360) % 360;
-            var vAng = (pm.topA != null && pm.botA != null) ? (pm.topA - fy * (pm.topA - pm.botA)) : null;
-            syncFromAz(az, null, vAng);
+            var az2 = pm.azStart + (Math.max(0, fx - PADf) / Math.max(0.01, 1 - PADf)) * pm.azSpan;
+            az2 = (az2 + 360) % 360;
+            var vAng2 = (pm.topA != null && pm.botA != null) ? (pm.topA - fy * (pm.topA - pm.botA)) : null;
+            syncFromAz(az2, null, vAng2);
         }
         function onMini(ev) {
             if (!mReady || !b) return;
@@ -1666,7 +1853,7 @@
             pano.height = Math.round(cw * pImg.naturalHeight / pImg.naturalWidth);
             drawPano(null);
         };
-        pImg.src = res.panoramaURL;
+        pImg.src = _curPanoURL();
         if (hasMini) {
             mImg.onload = function() {
                 mReady = true;
@@ -1685,16 +1872,33 @@
         pano.addEventListener('mousemove', onPano);
         pano.addEventListener('touchmove', onPano, { passive: false });
         pano.addEventListener('touchstart', onPano, { passive: false });
-        // Hook : rafraichir le panorama quand les sommets arrivent (asynchrone)
-        res._setPano = function(url) {
+        // (Re)charge l'image du mode courant (panoramique ou perspective)
+        function reloadPano() {
             pReady = false; pImg.onload = function() {
                 pReady = true;
                 var cw = Math.min(pano.parentElement.clientWidth || 760, pImg.naturalWidth);
                 pano.width = Math.round(cw);
                 pano.height = Math.round(cw * pImg.naturalHeight / pImg.naturalWidth);
                 drawPano(null);
-            }; pImg.src = url;
-        };
+            }; pImg.src = _curPanoURL();
+        }
+        // Hook : rafraichir quand les sommets arrivent (asynchrone)
+        res._setPano = function() { reloadPano(); };
+        // Bascule Panoramique <-> Perspective
+        var bCyl = m.querySelector('#pwaVSmCyl');
+        var bPersp = m.querySelector('#pwaVSmPersp');
+        function setMode(md) {
+            if (md === 'persp' && !res.perspectiveURL) return;
+            _vsMode = md;
+            if (bCyl && bPersp) {
+                var on = 'background:#8b4513;color:#fff;', off = 'background:#f0ebe3;color:#5a3a1a;';
+                bCyl.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'cyl' ? on : off);
+                bPersp.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'persp' ? on : off);
+            }
+            reloadPano();
+        }
+        if (bCyl) bCyl.onclick = function() { setMode('cyl'); };
+        if (bPersp) bPersp.onclick = function() { setMode('persp'); };
     }
 
     // Couleur stable par vue (plusieurs vues distinguables sur la carte)
