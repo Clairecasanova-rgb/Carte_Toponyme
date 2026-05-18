@@ -1012,7 +1012,15 @@
             '<input type="checkbox" id="pwaVStpPerso"> Points perso</label>' +
             '<label style="display:inline-flex;align-items:center;gap:5px;margin-top:5px;cursor:pointer;">' +
             '<input type="checkbox" id="pwaVStpTopo"> Toponymes</label></div>' +
-            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Au-dela d\'une dizaine de km, l\'echantillonnage s\'espace (relief lointain approximatif) et le calcul est plus long.</div>' +
+            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
+            'Grain du rendu (taille des mailles)<br>' +
+            '<select id="pwaVSgrain" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;">' +
+            '<option value="25">Fin (~25 m)</option>' +
+            '<option value="40">Moyen (~40 m)</option>' +
+            '<option value="70">Gros (~70 m)</option>' +
+            '<option value="110">Tres gros (~110 m)</option>' +
+            '</select></label>' +
+            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Mailles plus grosses = effet "onde/pointille" plus marque, calcul plus rapide, moins precis. Au-dela d\'une dizaine de km le pas s\'espace de toute facon.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
             '<button id="pwaVSgo" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
@@ -1029,10 +1037,12 @@
         var az = m.querySelector('#pwaVSaz');
         az.oninput = function() { m.querySelector('#pwaVSazv').textContent = az.value; };
         var ckP = m.querySelector('#pwaVStpPerso'), ckT = m.querySelector('#pwaVStpTopo');
+        var grSel = m.querySelector('#pwaVSgrain');
         try {
             ckP.checked = (localStorage.getItem('pwaVSshowPerso') !== '0');  // defaut : actif
             ckT.checked = (localStorage.getItem('pwaVSshowTopo') === '1');   // defaut : inactif
-        } catch(_e) { ckP.checked = true; ckT.checked = false; }
+            grSel.value = localStorage.getItem('pwaVSgrain') || '40';        // defaut : Moyen (vue 14:01)
+        } catch(_e) { ckP.checked = true; ckT.checked = false; grSel.value = '40'; }
         m.querySelector('#pwaVSx').onclick = function() { m.remove(); };
         m.onclick = function(e) { if (e.target === m) m.remove(); };
         m.querySelector('#pwaVSgo').onclick = function() {
@@ -1041,13 +1051,16 @@
             var aw = parseInt(wsel.value, 10) || 360;
             var ac = parseInt(az.value, 10) || 0;
             var sP = !!ckP.checked, sT = !!ckT.checked;
+            var grainM = parseInt(grSel.value, 10) || 40;
             try {
                 localStorage.setItem('pwaVSshowPerso', sP ? '1' : '0');
                 localStorage.setItem('pwaVSshowTopo', sT ? '1' : '0');
+                localStorage.setItem('pwaVSgrain', String(grainM));
             } catch(_e) {}
             m.remove();
             _vsCompute({ lat: lat, lon: lon, radiusM: rkm * 1000, obsH: oh,
-                         azC: ac, azW: aw, showPerso: sP, showTopo: sT });
+                         azC: ac, azW: aw, showPerso: sP, showTopo: sT,
+                         grainM: grainM });
         };
     }
 
@@ -1057,7 +1070,10 @@
         var rayStep = full ? 2 : (P.azW <= 60 ? 0.5 : P.azW <= 120 ? 1 : 1.5);
         var az0 = full ? 0 : (P.azC - P.azW / 2);
         var nRays = full ? Math.round(360 / rayStep) : (Math.round(P.azW / rayStep) + 1);
-        var stepM = Math.min(30, Math.max(10, radiusM / 150));
+        // Grain choisi par l'utilisateur (taille de maille en m) -> intensite
+        // de l'effet "onde/pointille". Defaut ~40 m (= rendu de la vue 14:01).
+        var stepM = (P.grainM ? Math.max(8, P.grainM)
+                              : Math.min(30, Math.max(10, radiusM / 150)));
         var N = Math.max(8, Math.round(radiusM / stepM));
         // Budget : limiter le total d'echantillons (~9000). Cette granularite
         // (a 2 km/360deg : stepM ~40 m) donne le rendu "pointille/onde" voulu
