@@ -1168,11 +1168,10 @@
             return 'rgba(' + Math.round(46 + 70 * f) + ',' + Math.round(174 - 96 * f)
                 + ',' + Math.round(80 + 150 * f) + ',' + a + ')';
         }
-        // Surface remplie : quads entre rayons adjacents. Cellule peinte si son
-        // bord exterieur est visible sur AU MOINS un des deux rayons (les
-        // rayons ne sont qu'un echantillonnage angulaire). + liseré de meme
-        // couleur : soude les cellules adjacentes -> surface continue et lisse
-        // a l'affichage (l'occlusion radiale reste respectee -> vrais trous).
+        // Surface remplie : quads entre rayons adjacents la ou les 2 sont
+        // visibles -> aire fidele avec trous (vallees masquees), degrade
+        // distance. Condition stricte (ET), sans liseré : rendu fin (le
+        // "pointille" garde son detail, ne montre QUE le reellement vu).
         var rp = res.rayProf, nR = res.nRays, N = res.N, st = res.stepM;
         var oc = px(res.lat, res.lon);
         function ptRC(ri, ki) {  // ki=0 => observateur
@@ -1186,17 +1185,16 @@
             var ri2 = (ri + 1) % nR;
             var va = rp[ri].vis, vb = rp[ri2].vis;
             for (ki = 0; ki < N; ki++) {
-                var outer = va[ki] || vb[ki];
-                if (!outer) continue;  // cellule visible si bord ext. visible
+                var outer = va[ki] && vb[ki];
+                if (!outer) continue;  // cellule visible seulement si bord ext. visible
                 var f = Math.min(1, (st * (ki + 1)) / R);
                 var A = ptRC(ri, ki), B = ptRC(ri2, ki);
                 var C = ptRC(ri2, ki + 1), D = ptRC(ri, ki + 1);
-                var col = distCol(f, 0.55);
-                ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+                ctx.fillStyle = distCol(f, 0.5);
                 ctx.beginPath();
                 ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]);
                 ctx.lineTo(C[0], C[1]); ctx.lineTo(D[0], D[1]);
-                ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.closePath(); ctx.fill();
             }
         }
         var url = cv.toDataURL('image/png');
