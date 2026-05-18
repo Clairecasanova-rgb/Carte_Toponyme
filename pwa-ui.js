@@ -14,10 +14,11 @@
     window._pwaUiLoaded = true;
 
     var DB_NAME = 'topo-sync';
-    var DB_VERSION = 3;
+    var DB_VERSION = 4;
     var STORE = 'queue';
     var BATCH_STORE = 'precacheBatches';  // 1 entree par pre-cache lance par l'utilisateur
     var TRACK_STORE = 'tracks';           // 1 entree par parcours de marche enregistre
+    var VS_STORE = 'viewsheds';           // 1 entree par champ de visibilite sauvegarde
 
     // ===== Patch Leaflet : zoom au-dela du max n'efface plus le calque =====
     // Par defaut, quand on zoome au-dela du maxZoom d'une couche, Leaflet la
@@ -220,6 +221,9 @@
                 }
                 if (!db.objectStoreNames.contains(TRACK_STORE)) {
                     db.createObjectStore(TRACK_STORE, { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains(VS_STORE)) {
+                    db.createObjectStore(VS_STORE, { keyPath: 'id' });
                 }
             };
             req.onsuccess = function() { resolve(req.result); };
@@ -707,26 +711,43 @@
         m.querySelector('#pwaPosB').onclick = function() { close(); _shareMyPositionLink(); };
         m.querySelector('#pwaPosC').onclick = function() { close(); _liveToggle(); };
         m.querySelector('#pwaPosTrk').onclick = function() { close(); openTracksFeature(); };
-        m.querySelector('#pwaPosVS').onclick = function() { close(); _vsStart(); };
+        m.querySelector('#pwaPosVS').onclick = function() { close(); _vsManager(); };
     }
 
     // ============================================================
-    //  Champ de visibilite (viewshed) depuis un point, via le MNT
-    //  IGN (RGE ALTI / LiDAR HD). Calcul cote navigateur : on echantillonne
-    //  des rayons, on recupere les altitudes par lots (API altimetrie IGN),
-    //  puis ligne de vue. Necessite le reseau.
+    //  Champ de visibilite (viewshed) "Pixscape-like" depuis un point :
+    //  - planimetrique precis (par-echantillon + courbure terrestre)
+    //  - secteur directionnel (azimut + ouverture)
+    //  - vue tangentielle (panorama azimut x angle vertical, colore distance)
+    //  - inter-visibilite : points proches projetes sur le panorama
+    //  - sauvegarde de la vue liee au point
+    //  Calcul cote navigateur via l'API altimetrie IGN (reseau requis).
+    //  Approche web => approximation (resolution bornee par le budget API),
+    //  pas un viewshed raster pixel-exact.
     // ============================================================
-    var _vsLayer = null;
+    var _vsLayer = null, _vsLast = null;
     var VS_ALTI = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json';
+    var VS_R = 6371000, VS_K = 0.13;  // rayon terre + coeff refraction
 
-    // Decalage approx (equirectangulaire, OK <= 5 km) : distance m + cap (deg, 0=N)
     function _vsDest(lat, lon, distM, bearingDeg) {
         var br = bearingDeg * Math.PI / 180;
         var dLat = (distM * Math.cos(br)) / 111320;
         var dLon = (distM * Math.sin(br)) / (111320 * Math.cos(lat * Math.PI / 180));
         return [lat + dLat, lon + dLon];
     }
-    // Recupere les altitudes (lots de 180 pts). pts = [[lat,lon],...].
+    function _vsBearing(lat, lon, lat2, lon2) {
+        var dy = (lat2 - lat) * 111320;
+        var dx = (lon2 - lon) * 111320 * Math.cos(lat * Math.PI / 180);
+        var a = Math.atan2(dx, dy) * 180 / Math.PI;
+        return (a + 360) % 360;
+    }
+    function _vsDist(lat, lon, lat2, lon2) {
+        var dy = (lat2 - lat) * 111320;
+        var dx = (lon2 - lon) * 111320 * Math.cos(lat * Math.PI / 180);
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+    function _vsCurv(d) { return (1 - VS_K) * d * d / (2 * VS_R); }  // chute (m)
+
     function _vsFetchElev(pts, onProgress) {
         var CH = 180, out = [], i = 0;
         function next() {
@@ -739,7 +760,6 @@
             return fetch(url).then(function(r) { return r.json(); }).then(function(j) {
                 var ev = (j && j.elevations) || [];
                 ev.forEach(function(z) {
-                    // -99999 = no-data (mer) -> 0 m
                     out.push((typeof z === 'number' && z > -1000) ? z : 0);
                 });
                 i += CH;
@@ -748,6 +768,74 @@
             });
         }
         return next();
+    }
+
+    // IndexedDB : vues sauvegardees
+    function _vsDbPut(v) {
+        return openDb().then(function(db) {
+            return new Promise(function(res, rej) {
+                var tx = db.transaction(VS_STORE, 'readwrite');
+                var rq = tx.objectStore(VS_STORE).put(v);
+                rq.onsuccess = function() { res(); }; rq.onerror = function() { rej(rq.error); };
+            });
+        });
+    }
+    function _vsDbAll() {
+        return openDb().then(function(db) {
+            return new Promise(function(res) {
+                var tx = db.transaction(VS_STORE, 'readonly');
+                var rq = tx.objectStore(VS_STORE).getAll();
+                rq.onsuccess = function() { res(rq.result || []); };
+                rq.onerror = function() { res([]); };
+            });
+        }).catch(function() { return []; });
+    }
+    function _vsDbGet(id) {
+        return openDb().then(function(db) {
+            return new Promise(function(res) {
+                var tx = db.transaction(VS_STORE, 'readonly');
+                var rq = tx.objectStore(VS_STORE).get(id);
+                rq.onsuccess = function() { res(rq.result || null); };
+                rq.onerror = function() { res(null); };
+            });
+        }).catch(function() { return null; });
+    }
+    function _vsDbDel(id) {
+        return openDb().then(function(db) {
+            return new Promise(function(res, rej) {
+                var tx = db.transaction(VS_STORE, 'readwrite');
+                var rq = tx.objectStore(VS_STORE).delete(id);
+                rq.onsuccess = function() { res(); }; rq.onerror = function() { rej(rq.error); };
+            });
+        });
+    }
+
+    function _vsLayerName(l) {
+        try {
+            if (l.options && l.options.title) return String(l.options.title);
+            var c = (l.getTooltip && l.getTooltip() && l.getTooltip().getContent())
+                || (l.getPopup && l.getPopup() && l.getPopup().getContent()) || '';
+            if (typeof c !== 'string' && c && c.innerText) c = c.innerText;
+            c = String(c).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            return c.slice(0, 40);
+        } catch(_e) { return ''; }
+    }
+    // Points proches (marqueurs Leaflet) dans le rayon, hors couche viewshed
+    function _vsCollectTargets(map, lat, lon, radiusM) {
+        var t = [];
+        map.eachLayer(function(l) {
+            try {
+                if (!l || !l.getLatLng) return;
+                if (_vsLayer && _vsLayer.hasLayer && _vsLayer.hasLayer(l)) return;
+                var ll = l.getLatLng();
+                if (!ll) return;
+                var d = _vsDist(lat, lon, ll.lat, ll.lng);
+                if (d < 25 || d > radiusM) return;  // exclut l'observateur lui-meme
+                t.push({ lat: ll.lat, lon: ll.lng, dist: d, name: _vsLayerName(l) });
+            } catch(_e) {}
+        });
+        t.sort(function(a, b) { return a.dist - b.dist; });
+        return t.slice(0, 80);
     }
 
     function _vsStart() {
@@ -770,15 +858,28 @@
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
         m.innerHTML =
-            '<div style="background:#fff;border-radius:10px;max-width:360px;width:100%;padding:18px 20px;">' +
+            '<div style="background:#fff;border-radius:10px;max-width:380px;width:100%;padding:18px 20px;">' +
             '<h2 style="margin:0 0 12px;font-size:16px;color:#5a3a1a;">Champ de visibilite</h2>' +
             '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
             'Rayon : <span id="pwaVSrv">2.0</span> km<br>' +
-            '<input type="range" id="pwaVSr" min="0.5" max="5" step="0.5" value="2" style="width:100%;"></label>' +
-            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:14px;">' +
+            '<input type="range" id="pwaVSr" min="0.5" max="8" step="0.5" value="2" style="width:100%;"></label>' +
+            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
             'Hauteur observateur (m)<br>' +
-            '<input type="number" id="pwaVSh" value="1.7" min="0" max="50" step="0.1" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;"></label>' +
-            '<div style="font-size:11px;color:#999;margin-bottom:12px;">Calcul depuis le MNT IGN (RGE ALTI/LiDAR HD). Quelques secondes selon le rayon.</div>' +
+            '<input type="number" id="pwaVSh" value="1.7" min="0" max="80" step="0.1" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;"></label>' +
+            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:8px;">' +
+            'Ouverture<br>' +
+            '<select id="pwaVSw" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;">' +
+            '<option value="360" selected>Tout autour (360 deg)</option>' +
+            '<option value="180">Secteur 180 deg</option>' +
+            '<option value="120">Secteur 120 deg</option>' +
+            '<option value="90">Secteur 90 deg</option>' +
+            '<option value="60">Secteur 60 deg</option>' +
+            '<option value="45">Secteur 45 deg</option>' +
+            '</select></label>' +
+            '<label id="pwaVSazL" style="display:none;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+            'Azimut central (deg, 0=N, 90=E) : <span id="pwaVSazv">0</span><br>' +
+            '<input type="range" id="pwaVSaz" min="0" max="350" step="10" value="0" style="width:100%;"></label>' +
+            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Quelques secondes selon rayon/ouverture.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
             '<button id="pwaVSgo" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
@@ -789,73 +890,360 @@
         }
         var rg = m.querySelector('#pwaVSr');
         rg.oninput = function() { m.querySelector('#pwaVSrv').textContent = parseFloat(rg.value).toFixed(1); };
+        var wsel = m.querySelector('#pwaVSw');
+        var azL = m.querySelector('#pwaVSazL');
+        wsel.onchange = function() { azL.style.display = (wsel.value === '360') ? 'none' : 'block'; };
+        var az = m.querySelector('#pwaVSaz');
+        az.oninput = function() { m.querySelector('#pwaVSazv').textContent = az.value; };
         m.querySelector('#pwaVSx').onclick = function() { m.remove(); };
         m.onclick = function(e) { if (e.target === m) m.remove(); };
         m.querySelector('#pwaVSgo').onclick = function() {
             var rkm = parseFloat(rg.value) || 2;
             var oh = parseFloat(m.querySelector('#pwaVSh').value) || 1.7;
+            var aw = parseInt(wsel.value, 10) || 360;
+            var ac = parseInt(az.value, 10) || 0;
             m.remove();
-            _vsCompute(lat, lon, rkm * 1000, oh);
+            _vsCompute({ lat: lat, lon: lon, radiusM: rkm * 1000, obsH: oh, azC: ac, azW: aw });
         };
     }
 
-    function _vsCompute(lat, lon, radiusM, obsH) {
-        var RAYS = 120;                                  // 1 rayon / 3 deg
-        var step = Math.min(60, Math.max(20, radiusM / 40));
-        var N = Math.max(8, Math.round(radiusM / step)); // echantillons / rayon
-        // Liste de points : [observateur] + N*RAYS samples
+    function _vsCompute(P) {
+        var lat = P.lat, lon = P.lon, radiusM = P.radiusM, obsH = P.obsH;
+        var full = (P.azW >= 360);
+        var rayStep = full ? 2 : (P.azW <= 60 ? 0.5 : P.azW <= 120 ? 1 : 1.5);
+        var az0 = full ? 0 : (P.azC - P.azW / 2);
+        var nRays = full ? Math.round(360 / rayStep) : (Math.round(P.azW / rayStep) + 1);
+        var stepM = Math.min(30, Math.max(10, radiusM / 150));
+        var N = Math.max(8, Math.round(radiusM / stepM));
+        // Budget : limiter le total d'echantillons (~9000)
+        if (nRays * N > 9000) { N = Math.max(8, Math.floor(9000 / nRays)); stepM = radiusM / N; }
+        var map = findLeafletMap();
+        if (!map) return;
+        var targets = _vsCollectTargets(map, lat, lon, radiusM);
+
+        // pts : [observateur] + targets + samples (ray-major)
         var pts = [[lat, lon]];
-        var b, k;
-        for (b = 0; b < RAYS; b++) {
-            var ang = (360 / RAYS) * b;
-            for (k = 1; k <= N; k++) {
-                pts.push(_vsDest(lat, lon, step * k, ang));
-            }
+        targets.forEach(function(t) { pts.push([t.lat, t.lon]); });
+        var bearings = [];
+        var r, k;
+        for (r = 0; r < nRays; r++) {
+            var ang = (az0 + r * rayStep + 360) % 360;
+            bearings.push(ang);
+            for (k = 1; k <= N; k++) pts.push(_vsDest(lat, lon, stepM * k, ang));
         }
         showToast('Champ de visibilite : altimetrie 0/' + pts.length + '...', 3000);
         _vsFetchElev(pts, function(done, tot) {
             if (done < tot) showToast('Altimetrie ' + done + '/' + tot + '...', 1500);
         }).then(function(elev) {
             var obsTot = elev[0] + obsH;
-            var boundary = [];                            // 1 sommet / rayon
-            var idx = 1;
-            for (b = 0; b < RAYS; b++) {
-                var ang2 = (360 / RAYS) * b;
-                var maxSlope = -Infinity, lastVisD = 0;
+            var T = targets.length;
+            var sBase = 1 + T;
+            // Visibilite par echantillon + skyline par rayon (pour panorama)
+            var visPts = [];                 // {lat,lon,d} visibles (planimetrique)
+            var rayProf = [];                // par rayon : {bearing, sky:{ang,d}, maxAng[]}
+            var idx = sBase;
+            for (r = 0; r < nRays; r++) {
+                var maxSlope = -Infinity, sky = { ang: -90, d: 0 };
+                var maxAngAt = [];           // angle visible cumule (pour cible)
                 for (k = 1; k <= N; k++) {
-                    var d = step * k;
-                    var z = elev[idx++];
+                    var d = stepM * k;
+                    var z = elev[idx++] - _vsCurv(d);
                     var slope = (z - obsTot) / d;
-                    if (slope >= maxSlope) { lastVisD = d; }
+                    if (slope >= maxSlope) {
+                        var pos = _vsDest(lat, lon, d, bearings[r]);
+                        visPts.push({ lat: pos[0], lon: pos[1], d: d });
+                        var ang = Math.atan2(z - obsTot, d) * 180 / Math.PI;
+                        if (ang > sky.ang) sky = { ang: ang, d: d };
+                    }
                     if (slope > maxSlope) maxSlope = slope;
+                    maxAngAt.push(Math.atan(maxSlope) * 180 / Math.PI);
                 }
-                boundary.push(_vsDest(lat, lon, lastVisD || step, ang2));
+                rayProf.push({ bearing: bearings[r], sky: sky, maxAng: maxAngAt });
             }
-            var map = findLeafletMap();
-            if (!map) return;
-            if (_vsLayer) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
-            _vsLayer = L.layerGroup().addTo(map);
-            L.polygon(boundary, {
-                color: '#1e8449', weight: 2, fillColor: '#2ecc71',
-                fillOpacity: 0.28, interactive: false
-            }).addTo(_vsLayer);
-            L.circleMarker([lat, lon], {
-                radius: 6, color: '#fff', weight: 2,
-                fillColor: '#1e8449', fillOpacity: 1
-            }).bindPopup('Point d\'observation<br>alt. sol ~' + Math.round(elev[0])
-                + ' m (+ ' + obsH + ' m)').addTo(_vsLayer);
-            try { map.fitBounds(L.polygon(boundary).getBounds(), { padding: [30, 30] }); } catch(_e) {}
-            showToast('Champ de visibilite calcule (rayon ' + (radiusM / 1000) + ' km).', 5000);
+            // Cibles : bearing/dist/elev + visible ? (via le rayon le plus proche)
+            var tgt = [];
+            for (var ti = 0; ti < T; ti++) {
+                var tt = targets[ti];
+                var tz = elev[1 + ti] - _vsCurv(tt.dist);
+                var tang = Math.atan2(tz - obsTot, tt.dist) * 180 / Math.PI;
+                var tbear = _vsBearing(lat, lon, tt.lat, tt.lon);
+                // rayon le plus proche en azimut
+                var best = null, bd = 999;
+                for (r = 0; r < nRays; r++) {
+                    var diff = Math.abs(((bearings[r] - tbear + 540) % 360) - 180);
+                    if (diff < bd) { bd = diff; best = rayProf[r]; }
+                }
+                var ki = Math.min(N - 1, Math.max(0, Math.round(tt.dist / stepM) - 1));
+                var blockAng = (best && best.maxAng[ki] != null) ? best.maxAng[ki] : -90;
+                var vis = (bd <= 6) && (tang >= blockAng - 0.05);
+                tgt.push({ name: tt.name, lat: tt.lat, lon: tt.lon, dist: tt.dist,
+                           bearing: tbear, ang: tang, visible: vis });
+            }
+            var res = {
+                id: 'vs-' + Date.now(),
+                name: 'Vue ' + new Date().toLocaleDateString('fr-FR') + ' '
+                    + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+                lat: lat, lon: lon, obsH: obsH, obsElev: Math.round(elev[0]),
+                radiusM: radiusM, azC: P.azC, azW: P.azW, full: full,
+                date: Date.now(), visPts: visPts, rayProf: rayProf, targets: tgt
+            };
+            _vsRenderPlani(res);
+            _vsLast = res;
+            res.panoramaURL = _vsBuildPanorama(res);  // dataURL
+            showToast('Champ de visibilite calcule.', 4000);
+            _vsResultModal(res);
         }).catch(function(err) {
             showToast('Echec du calcul : ' + (err && err.message ? err.message : 'erreur reseau'), 6000);
         });
     }
+
+    // Rendu planimetrique : raster canvas (style Pixscape) en imageOverlay
+    function _vsRenderPlani(res) {
+        var map = findLeafletMap();
+        if (!map) return;
+        if (_vsLayer) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
+        _vsLayer = L.layerGroup().addTo(map);
+        var R = res.radiusM;
+        var c0 = _vsDest(res.lat, res.lon, R, 0)[0];      // nord lat
+        var c180 = _vsDest(res.lat, res.lon, R, 180)[0];  // sud lat
+        var cE = _vsDest(res.lat, res.lon, R, 90)[1];     // est lon
+        var cW = _vsDest(res.lat, res.lon, R, 270)[1];    // ouest lon
+        var north = Math.max(c0, c180), south = Math.min(c0, c180);
+        var east = Math.max(cE, cW), west = Math.min(cE, cW);
+        var W = 700, H = Math.round(W * (north - south) / (east - west) || W);
+        var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        var ctx = cv.getContext('2d');
+        function px(la, lo) {
+            return [(lo - west) / (east - west) * W, (north - la) / (north - south) * H];
+        }
+        var cell = Math.max(3, Math.round(W / 140));
+        res.visPts.forEach(function(p) {
+            var q = px(p.lat, p.lon);
+            var f = Math.min(1, p.d / R);                 // proche=0 -> loin=1
+            // proche = vert chaud, loin = bleu
+            var col = 'rgba(' + Math.round(40 + 60 * f) + ',' + Math.round(180 - 90 * f)
+                + ',' + Math.round(70 + 150 * f) + ',0.45)';
+            ctx.fillStyle = col;
+            ctx.fillRect(q[0] - cell / 2, q[1] - cell / 2, cell, cell);
+        });
+        var url = cv.toDataURL('image/png');
+        res.planiURL = url; res.bounds = [[south, west], [north, east]];
+        L.imageOverlay(url, res.bounds, { opacity: 0.85, interactive: false }).addTo(_vsLayer);
+        L.circleMarker([res.lat, res.lon], {
+            radius: 6, color: '#fff', weight: 2, fillColor: '#1e8449', fillOpacity: 1
+        }).bindPopup('Observation<br>sol ~' + res.obsElev + ' m (+' + res.obsH + ' m)').addTo(_vsLayer);
+        res.targets.forEach(function(t) {
+            L.circleMarker([t.lat, t.lon], {
+                radius: 5, weight: 2, color: '#fff',
+                fillColor: t.visible ? '#1e8449' : '#7f8c8d', fillOpacity: 1
+            }).bindPopup((t.name || 'Point') + '<br>' + (t.visible ? 'VISIBLE' : 'masque')
+                + ' · ' + Math.round(t.dist) + ' m').addTo(_vsLayer);
+        });
+        try { map.fitBounds(res.bounds, { padding: [20, 20] }); } catch(_e) {}
+    }
+
+    // Vue tangentielle : panorama (X=azimut, Y=angle vertical), colore distance,
+    // + cibles proches projetees (visible/masque). Renvoie un dataURL.
+    function _vsBuildPanorama(res) {
+        var rp = res.rayProf;
+        var azStart = res.full ? 0 : (res.azC - res.azW / 2);
+        var azSpan = res.full ? 360 : res.azW;
+        var W = Math.min(1600, Math.max(720, Math.round(azSpan * 4)));
+        var H = 280;
+        // bornes verticales
+        var minA = 90, maxA = -90;
+        rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
+        res.targets.forEach(function(t) { if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
+        var topA = Math.min(60, Math.ceil(maxA + 3));
+        var botA = Math.max(-30, Math.floor(Math.min(-3, minA - 2)));
+        var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        var ctx = cv.getContext('2d');
+        ctx.fillStyle = '#dfeaf2'; ctx.fillRect(0, 0, W, H);           // ciel
+        function X(az) { return ((az - azStart + 360) % 360) / azSpan * W; }
+        function Y(a) { return H - (a - botA) / (topA - botA) * H; }
+        var R = res.radiusM;
+        var colW = Math.max(1, Math.round(W / rp.length) + 1);
+        rp.forEach(function(p) {
+            var x = X(p.bearing);
+            var f = Math.min(1, p.sky.d / R);
+            ctx.fillStyle = 'rgb(' + Math.round(60 + 80 * f) + ',' + Math.round(150 - 60 * f)
+                + ',' + Math.round(70 + 120 * f) + ')';
+            var ys = Y(p.sky.ang);
+            ctx.fillRect(x, ys, colW, H - ys);                        // relief jusqu'au sol
+        });
+        // ligne horizon 0 deg
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(W, Y(0)); ctx.stroke();
+        // reperes azimut
+        ctx.fillStyle = '#34495e'; ctx.font = '11px Segoe UI';
+        var marks = res.full ? [[0,'N'],[90,'E'],[180,'S'],[270,'O']]
+            : [[azStart,Math.round(azStart)+'°'],[res.azC,'centre'],[(azStart+azSpan),Math.round((azStart+azSpan)%360)+'°']];
+        marks.forEach(function(mk) {
+            var xx = X(mk[0]); ctx.fillRect(xx, 0, 1, H);
+            ctx.fillText(mk[1], Math.min(W - 24, xx + 3), 13);
+        });
+        // cibles projetees
+        res.targets.forEach(function(t) {
+            if (!res.full) {
+                var dd = Math.abs(((t.bearing - res.azC + 540) % 360) - 180);
+                if (dd > res.azW / 2) return;
+            }
+            var x = X(t.bearing), y = Y(t.ang);
+            ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = t.visible ? '#27ae60' : '#7f8c8d';
+            ctx.globalAlpha = t.visible ? 1 : 0.7; ctx.fill(); ctx.globalAlpha = 1;
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+            if (t.name) {
+                ctx.fillStyle = '#1b2631'; ctx.font = '10px Segoe UI';
+                ctx.fillText(t.name + (t.visible ? '' : ' (masque)'),
+                    Math.min(W - 60, x + 7), Math.max(10, y - 6));
+            }
+        });
+        return cv.toDataURL('image/png');
+    }
+
+    function _vsResultModal(res) {
+        var m = document.createElement('div');
+        m.id = 'pwaVSres';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:100070;' +
+            'display:flex;align-items:center;justify-content:center;padding:14px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        var nVis = res.targets.filter(function(t) { return t.visible; }).length;
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;">' +
+            '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Vue tangentielle</h2>' +
+            '<button id="pwaVSc" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance (clair=proche, fonce=loin). '
+            + res.targets.length + ' point(s) proche(s) · ' + nVis + ' visible(s).</div>' +
+            '<img src="' + res.panoramaURL + '" style="display:block;max-width:100%;border:1px solid #ddd;border-radius:6px;">' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">' +
+            '<button id="pwaVSsave" style="background:#8b4513;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
+            '<button id="pwaVSclose" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>' +
+            '</div></div>';
+        if (typeof L !== 'undefined' && L.DomEvent) { L.DomEvent.disableClickPropagation(m); L.DomEvent.disableScrollPropagation(m); }
+        function close() { m.remove(); }
+        m.querySelector('#pwaVSc').onclick = close;
+        m.querySelector('#pwaVSclose').onclick = close;
+        m.onclick = function(e) { if (e.target === m) close(); };
+        m.querySelector('#pwaVSsave').onclick = function() {
+            var nm = prompt('Nom de la vue :', res.name);
+            if (nm == null) return;
+            res.name = (nm || res.name).trim();
+            // On stocke le strict necessaire (images dataURL + meta + cibles)
+            _vsDbPut({
+                id: res.id, name: res.name, lat: res.lat, lon: res.lon,
+                obsH: res.obsH, obsElev: res.obsElev, radiusM: res.radiusM,
+                azC: res.azC, azW: res.azW, full: res.full, date: res.date,
+                panoramaURL: res.panoramaURL, planiURL: res.planiURL,
+                bounds: res.bounds,
+                targets: res.targets.map(function(t) {
+                    return { name: t.name, lat: t.lat, lon: t.lon,
+                             dist: Math.round(t.dist), visible: t.visible };
+                })
+            }).then(function() {
+                showToast('Vue enregistree : ' + res.name, 4000);
+            });
+        };
+    }
+
+    // Re-affiche une vue sauvegardee (overlay + marqueurs + panorama)
+    function _vsShowSaved(v) {
+        var map = findLeafletMap();
+        if (!map) return;
+        if (_vsLayer) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
+        _vsLayer = L.layerGroup().addTo(map);
+        if (v.planiURL && v.bounds) {
+            L.imageOverlay(v.planiURL, v.bounds, { opacity: 0.85, interactive: false }).addTo(_vsLayer);
+        }
+        L.circleMarker([v.lat, v.lon], {
+            radius: 6, color: '#fff', weight: 2, fillColor: '#1e8449', fillOpacity: 1
+        }).bindPopup('Observation<br>sol ~' + v.obsElev + ' m (+' + v.obsH + ' m)').addTo(_vsLayer);
+        (v.targets || []).forEach(function(t) {
+            L.circleMarker([t.lat, t.lon], {
+                radius: 5, weight: 2, color: '#fff',
+                fillColor: t.visible ? '#1e8449' : '#7f8c8d', fillOpacity: 1
+            }).bindPopup((t.name || 'Point') + '<br>' + (t.visible ? 'VISIBLE' : 'masque')
+                + ' · ' + t.dist + ' m').addTo(_vsLayer);
+        });
+        if (v.bounds) try { map.fitBounds(v.bounds, { padding: [20, 20] }); } catch(_e) {}
+        if (v.panoramaURL) _vsResultModal(v);
+    }
+
+    function _vsManager() {
+        var m = document.createElement('div');
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100065;' +
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        m.innerHTML =
+            '<div style="background:#fff;border-radius:12px;max-width:460px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:18px 20px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+            '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Vues enregistrees</h2>' +
+            '<button id="pwaVMx" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '</div>' +
+            '<button id="pwaVMnew" style="background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;margin-bottom:10px;">Nouveau champ de visibilite</button>' +
+            '<div id="pwaVMlist" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:100px;max-height:55vh;font-size:13px;">Chargement...</div>' +
+            '</div>';
+        if (typeof L !== 'undefined' && L.DomEvent) { L.DomEvent.disableClickPropagation(m); L.DomEvent.disableScrollPropagation(m); }
+        function close() { m.remove(); }
+        m.querySelector('#pwaVMx').onclick = close;
+        m.onclick = function(e) { if (e.target === m) close(); };
+        m.querySelector('#pwaVMnew').onclick = function() { close(); _vsStart(); };
+        var listEl = m.querySelector('#pwaVMlist');
+        function refresh() {
+            _vsDbAll().then(function(vs) {
+                vs.sort(function(a, b) { return (b.date || 0) - (a.date || 0); });
+                if (!vs.length) {
+                    listEl.innerHTML = '<div style="color:#999;font-style:italic;padding:10px;text-align:center;">Aucune vue enregistree.</div>';
+                    return;
+                }
+                listEl.innerHTML = vs.map(function(v) {
+                    var nv = (v.targets || []).filter(function(t) { return t.visible; }).length;
+                    return '<div style="border-bottom:1px solid #f4efe7;padding:8px 6px;">' +
+                        '<div style="font-weight:600;color:#5a3a1a;">' + escapeHtml(v.name || v.id) + '</div>' +
+                        '<div style="color:#999;font-size:11px;margin:2px 0 6px;">rayon ' + (v.radiusM / 1000)
+                        + ' km · ' + (v.full ? '360 deg' : ('secteur ' + v.azW + ' deg')) + ' · '
+                        + (v.targets ? v.targets.length : 0) + ' pts (' + nv + ' vis.) · '
+                        + new Date(v.date).toLocaleDateString('fr-FR') + '</div>' +
+                        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                        '<button class="pwaVMshow" data-id="' + v.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Revoir</button>' +
+                        '<button class="pwaVMren" data-id="' + v.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
+                        '<button class="pwaVMdel" data-id="' + v.id + '" style="background:#fff;color:#c0392b;border:1px solid #e8c8c4;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Supprimer</button>' +
+                        '</div></div>';
+                }).join('');
+                listEl.querySelectorAll('.pwaVMshow').forEach(function(b) {
+                    b.onclick = function() { _vsDbGet(b.dataset.id).then(function(v) { if (v) { close(); _vsShowSaved(v); } }); };
+                });
+                listEl.querySelectorAll('.pwaVMren').forEach(function(b) {
+                    b.onclick = function() {
+                        _vsDbGet(b.dataset.id).then(function(v) {
+                            if (!v) return;
+                            var nn = prompt('Nom :', v.name);
+                            if (nn && nn.trim()) { v.name = nn.trim(); _vsDbPut(v).then(refresh); }
+                        });
+                    };
+                });
+                listEl.querySelectorAll('.pwaVMdel').forEach(function(b) {
+                    b.onclick = function() {
+                        if (!confirm('Supprimer cette vue ?')) return;
+                        _vsDbDel(b.dataset.id).then(refresh);
+                    };
+                });
+            });
+        }
+        refresh();
+    }
+
     function _vsClear() {
         var map = findLeafletMap();
         if (_vsLayer && map) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
         _vsLayer = null;
     }
     window._pwaViewshed = _vsStart;
+    window._pwaViewshedSaved = _vsManager;
     window._pwaViewshedClear = _vsClear;
 
     // Refresh badge si on entre/sort du fullscreen (re-parenter au bon contexte)
