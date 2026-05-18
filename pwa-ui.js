@@ -726,7 +726,9 @@
     //  pas un viewshed raster pixel-exact.
     // ============================================================
     var _vsLayer = null, _vsLast = null;
+    var _vsShownLayers = {};  // id -> L.layerGroup (vues affichees simultanement)
     var VS_ALTI = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json';
+    var VS_WFS = 'https://data.geopf.fr/wfs/ows';
     var VS_R = 6371000, VS_K = 0.13;  // rayon terre + coeff refraction
 
     function _vsDest(lat, lon, distM, bearingDeg) {
@@ -846,6 +848,70 @@
         return t.slice(0, 80);
     }
 
+    // Sommets / cols / cretes nommes IGN BD TOPO dans le rayon, projetes sur
+    // la vue tangentielle. Reseau requis (deja le cas pour l'altimetrie).
+    // Echec silencieux : si le WFS ne repond pas, aucun sommet n'est ajoute.
+    var VS_PEAK_SKIP = /plage|for[eê]t|lande\b|source|fontaine|mare\b|[eé]tang|^bois|prairie|jardin|hameau|quartier|lieu[- ]dit|carri[eè]re|cimeti|ruine|chapelle|pont\b|barrage|moulin|stade|terrain/i;
+    function _vsFetchPeaks(res, done) {
+        function fin(arr) { res.peaks = arr || []; if (done) done(res.peaks); }
+        var b = res.bounds, rp = res.rayProf;
+        if (!b || !rp) { fin([]); return; }
+        var s = b[0][0], w = b[0][1], n = b[1][0], e = b[1][1];
+        var url = VS_WFS + '?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature'
+            + '&TYPENAMES=BDTOPO_V3:lieu_dit_non_habite'
+            + '&SRSNAME=urn:ogc:def:crs:OGC:1.3:CRS84'
+            + '&OUTPUTFORMAT=application/json&COUNT=1000'
+            + '&BBOX=' + w.toFixed(5) + ',' + s.toFixed(5) + ','
+            + e.toFixed(5) + ',' + n.toFixed(5) + ',urn:ogc:def:crs:OGC:1.3:CRS84';
+        var ac = (typeof AbortController === 'function') ? new AbortController() : null;
+        var to = setTimeout(function() { try { ac && ac.abort(); } catch(_e) {} }, 15000);
+        fetch(url, ac ? { signal: ac.signal } : undefined)
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(j) {
+                clearTimeout(to);
+                var feats = (j && j.features) || [];
+                var cand = [];
+                feats.forEach(function(f) {
+                    var pr = f.properties || {}, g = f.geometry;
+                    if (!g || g.type !== 'Point' || !g.coordinates) return;
+                    var lo = g.coordinates[0], la = g.coordinates[1];
+                    var nm = pr.toponyme || pr.nom || pr.nom_usuel || '';
+                    if (!nm) return;
+                    var nat = ((pr.nature || pr.categorie || '') + '');
+                    if (VS_PEAK_SKIP.test(nat) || VS_PEAK_SKIP.test(nm)) return;
+                    var d = _vsDist(res.lat, res.lon, la, lo);
+                    if (d < 25 || d > res.radiusM) return;
+                    cand.push({ name: String(nm), lat: la, lon: lo, dist: d,
+                                nature: nat });
+                });
+                cand.sort(function(a, c) { return a.dist - c.dist; });
+                cand = cand.slice(0, 60);
+                if (!cand.length) { fin([]); return; }
+                _vsFetchElev(cand.map(function(p) { return [p.lat, p.lon]; }))
+                    .then(function(pe) {
+                        var obsTot = res.obsElev + res.obsH;
+                        var nR = res.nRays, N = res.N, st = res.stepM;
+                        var out = cand.map(function(p, i) {
+                            var pz = pe[i] - _vsCurv(p.dist);
+                            var pang = Math.atan2(pz - obsTot, p.dist) * 180 / Math.PI;
+                            var pbear = _vsBearing(res.lat, res.lon, p.lat, p.lon);
+                            var best = null, bd = 999, r;
+                            for (r = 0; r < nR; r++) {
+                                var diff = Math.abs(((rp[r].bearing - pbear + 540) % 360) - 180);
+                                if (diff < bd) { bd = diff; best = rp[r]; }
+                            }
+                            var ki = Math.min(N - 1, Math.max(0, Math.round(p.dist / st) - 1));
+                            var blk = (best && best.maxAng[ki] != null) ? best.maxAng[ki] : -90;
+                            return { name: p.name, lat: p.lat, lon: p.lon, dist: p.dist,
+                                     nature: p.nature, bearing: pbear, ang: pang,
+                                     elev: Math.round(pe[i]),
+                                     visible: (bd <= 6) && (pang >= blk - 0.05) };
+                        });
+                        fin(out);
+                    }).catch(function() { fin([]); });
+            }).catch(function() { clearTimeout(to); fin([]); });
+    }
+
     function _vsStart() {
         if ((typeof isAppOffline === 'function') && isAppOffline()) {
             showToast('Champ de visibilite : connexion requise (altimetrie IGN).', 5000);
@@ -870,7 +936,7 @@
             '<h2 style="margin:0 0 12px;font-size:16px;color:#5a3a1a;">Champ de visibilite</h2>' +
             '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
             'Rayon : <span id="pwaVSrv">2.0</span> km<br>' +
-            '<input type="range" id="pwaVSr" min="0.5" max="8" step="0.5" value="2" style="width:100%;"></label>' +
+            '<input type="range" id="pwaVSr" min="0.5" max="60" step="0.5" value="2" style="width:100%;"></label>' +
             '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
             'Hauteur observateur (m)<br>' +
             '<input type="number" id="pwaVSh" value="1.7" min="0" max="80" step="0.1" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;"></label>' +
@@ -893,7 +959,7 @@
             '<input type="checkbox" id="pwaVStpPerso"> Points perso</label>' +
             '<label style="display:inline-flex;align-items:center;gap:5px;margin-top:5px;cursor:pointer;">' +
             '<input type="checkbox" id="pwaVStpTopo"> Toponymes</label></div>' +
-            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Quelques secondes selon rayon/ouverture.</div>' +
+            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Au-dela d\'une dizaine de km, l\'echantillonnage s\'espace (relief lointain approximatif) et le calcul est plus long.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
             '<button id="pwaVSgo" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
@@ -940,8 +1006,9 @@
         var nRays = full ? Math.round(360 / rayStep) : (Math.round(P.azW / rayStep) + 1);
         var stepM = Math.min(30, Math.max(10, radiusM / 150));
         var N = Math.max(8, Math.round(radiusM / stepM));
-        // Budget : limiter le total d'echantillons (~9000)
-        if (nRays * N > 9000) { N = Math.max(8, Math.floor(9000 / nRays)); stepM = radiusM / N; }
+        // Budget : limiter le total d'echantillons (~12000). Au-dela, le pas
+        // s'espace automatiquement (suffisant pour la ligne de crete lointaine).
+        if (nRays * N > 12000) { N = Math.max(8, Math.floor(12000 / nRays)); stepM = radiusM / N; }
         var map = findLeafletMap();
         if (!map) return;
         var targets = _vsCollectTargets(map, lat, lon, radiusM,
@@ -1022,6 +1089,27 @@
             res.panoramaURL = _vsBuildPanorama(res);  // dataURL
             showToast('Champ de visibilite calcule.', 4000);
             _vsResultModal(res);
+            // Sommets nommes IGN (asynchrone) : enrichit la vue une fois prets
+            _vsFetchPeaks(res, function(pk) {
+                if (!pk || !pk.length) return;
+                res.panoramaURL = _vsBuildPanorama(res);
+                if (typeof res._setPano === 'function') res._setPano(res.panoramaURL);
+                if (_vsLayer) {
+                    var map = findLeafletMap();
+                    pk.forEach(function(p) {
+                        L.circleMarker([p.lat, p.lon], {
+                            radius: 4, weight: 2, color: '#fff',
+                            fillColor: p.visible ? '#8a5a2b' : '#9aa3a3', fillOpacity: 1
+                        }).bindPopup('▲ ' + escapeHtml(p.name)
+                            + (p.elev ? '<br>' + p.elev + ' m' : '')
+                            + '<br>' + (p.visible ? 'VISIBLE' : 'masque')
+                            + ' · ' + Math.round(p.dist) + ' m').addTo(_vsLayer);
+                    });
+                    if (map) { /* deja sur la carte via _vsLayer */ }
+                }
+                var nv = pk.filter(function(p) { return p.visible; }).length;
+                showToast(pk.length + ' sommet(s) nomme(s) · ' + nv + ' visible(s).', 4500);
+            });
         }).catch(function(err) {
             showToast('Echec du calcul : ' + (err && err.message ? err.message : 'erreur reseau'), 6000);
         });
@@ -1110,13 +1198,17 @@
         var minA = 90, maxA = -90;
         rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
         res.targets.forEach(function(t) { if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
-        var topA = Math.min(70, Math.ceil(maxA + 4));
+        (res.peaks || []).forEach(function(p) { if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
+        var topA = Math.min(75, Math.ceil(maxA + 4));
         var botA = Math.max(-35, Math.floor(Math.min(-4, minA - 3)));
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
         var ctx = cv.getContext('2d'); ctx.lineJoin = 'round';
         var PW = W - PAD;                                     // largeur panorama
         function X(az) { return PAD + ((az - azStart + 360) % 360) / azSpan * PW; }
         function Y(a) { return (topA - a) / (topA - botA) * H; }
+        // Meta : mapping curseur <-> azimut/angle (sync vue planimetrique)
+        res.panoMeta = { W: W, H: H, PAD: PAD, azStart: azStart, azSpan: azSpan,
+                         PW: PW, topA: topA, botA: botA };
         var R = res.radiusM;
         function dCol(f) {
             return 'rgb(' + Math.round(46 + 70 * f) + ',' + Math.round(168 - 96 * f)
@@ -1189,6 +1281,32 @@
                 ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
                 ctx.fillStyle = '#1b2631'; ctx.fillText(lbl, lx, ly);
             }
+        });
+        // Sommets / cols nommes IGN BD TOPO (glyphe montagne + nom)
+        (res.peaks || []).forEach(function(p) {
+            if (!res.full) {
+                var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
+                if (dp > res.azW / 2) return;
+            }
+            var x = X(p.bearing), y = Y(p.ang);
+            var col = p.visible ? '#8a5a2b' : '#9aa3a3';
+            ctx.strokeStyle = p.visible ? 'rgba(138,90,43,0.55)' : 'rgba(154,163,163,0.5)';
+            ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath();                                  // triangle (mont)
+            ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 4); ctx.lineTo(x + 6, y + 4);
+            ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
+            var lbl = p.name + (p.elev ? ' ' + p.elev + ' m' : '')
+                + (p.visible ? '' : ' (masque)');
+            ctx.font = 'italic 10px Segoe UI';
+            var tw = ctx.measureText(lbl).width;
+            var lx = Math.min(W - tw - 4, x + 8), ly = Math.max(22, y - 8);
+            ctx.fillStyle = 'rgba(255,255,255,0.82)';
+            ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
+            ctx.fillStyle = p.visible ? '#5a3a1a' : '#6b7373';
+            ctx.fillText(lbl, lx, ly);
         });
         // Legende distance
         var lgX = PAD + 8, lgY = H - 14, lgW = 120;
@@ -1273,18 +1391,28 @@
             'display:flex;align-items:center;justify-content:center;padding:14px;font-family:Segoe UI,sans-serif;';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
-        var nVis = res.targets.filter(function(t) { return t.visible; }).length;
+        var nVis = (res.targets || []).filter(function(t) { return t.visible; }).length;
         var canMap = !!(res.rayProf && res.stepM && res.N);
+        var hasMini = !!(res.bounds && res.planiURL);
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;">' +
             '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Vue tangentielle</h2>' +
             '<button id="pwaVSc" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
-            '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance (clair=proche, fonce=loin). '
-            + res.targets.length + ' point(s) proche(s) · ' + nVis + ' visible(s).</div>' +
-            '<img src="' + res.panoramaURL + '" style="display:block;max-width:100%;border:1px solid #ddd;border-radius:6px;">' +
-            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap;">' +
+            '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance. '
+            + (res.targets ? res.targets.length : 0) + ' point(s) proche(s) · ' + nVis + ' visible(s)'
+            + ((res.peaks && res.peaks.length) ? ' · ' + res.peaks.length + ' sommet(s) nomme(s)' : '') + '.</div>' +
+            '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">' +
+            '<div style="flex:1 1 520px;min-width:280px;">' +
+            '<canvas id="pwaVSpano" style="display:block;width:100%;border:1px solid #ddd;border-radius:6px;cursor:crosshair;touch-action:none;"></canvas>' +
+            '</div>' +
+            (hasMini ? '<div style="flex:0 0 auto;text-align:center;">' +
+            '<canvas id="pwaVSmini" style="display:block;border:1px solid #ddd;border-radius:6px;cursor:crosshair;touch-action:none;background:#eef3f6;"></canvas>' +
+            '<div style="font-size:10px;color:#999;margin-top:3px;">Vue planimetrique</div></div>' : '') +
+            '</div>' +
+            '<div id="pwaVSread" style="font-size:12px;color:#5a3a1a;margin-top:8px;min-height:16px;">Survoler une vue pour se reperer sur l\'autre.</div>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">' +
             (canMap ? '<button id="pwaVSmap" style="background:#1e8449;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer sur la carte</button>' : '') +
             '<button id="pwaVSsave" style="background:#8b4513;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
             '<button id="pwaVSclose" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>' +
@@ -1300,43 +1428,215 @@
             var nm = prompt('Nom de la vue :', res.name);
             if (nm == null) return;
             res.name = (nm || res.name).trim();
-            // On stocke le strict necessaire (images dataURL + meta + cibles)
             _vsDbPut({
                 id: res.id, name: res.name, lat: res.lat, lon: res.lon,
                 obsH: res.obsH, obsElev: res.obsElev, radiusM: res.radiusM,
                 azC: res.azC, azW: res.azW, full: res.full, date: res.date,
+                projet_id: (window.DRAWING_PROJET_ID || window.PROJET_ID || null),
                 panoramaURL: res.panoramaURL, planiURL: res.planiURL,
-                bounds: res.bounds,
-                targets: res.targets.map(function(t) {
+                bounds: res.bounds, panoMeta: res.panoMeta,
+                targets: (res.targets || []).map(function(t) {
                     return { name: t.name, lat: t.lat, lon: t.lon,
                              dist: Math.round(t.dist), visible: t.visible };
+                }),
+                peaks: (res.peaks || []).map(function(p) {
+                    return { name: p.name, lat: p.lat, lon: p.lon,
+                             dist: Math.round(p.dist), elev: p.elev,
+                             bearing: p.bearing, ang: p.ang, visible: p.visible };
                 })
-            }).then(function() {
-                showToast('Vue enregistree : ' + res.name, 4000);
+            }).then(function() { showToast('Vue enregistree : ' + res.name, 4000); });
+        };
+
+        // ---- Curseur synchronise panorama <-> mini-carte planimetrique ----
+        var pano = m.querySelector('#pwaVSpano');
+        var mini = m.querySelector('#pwaVSmini');
+        var readEl = m.querySelector('#pwaVSread');
+        var pImg = new Image(), mImg = new Image();
+        var pReady = false, mReady = false;
+        // panoMeta : defaut si vue ancienne sans meta
+        var pm = res.panoMeta || {
+            PAD: 34, azStart: res.full ? 0 : (res.azC - res.azW / 2),
+            azSpan: res.full ? 360 : res.azW, topA: null, botA: null
+        };
+        var b = res.bounds;
+        var south, west, north, east;
+        if (b) { south = b[0][0]; west = b[0][1]; north = b[1][0]; east = b[1][1]; }
+        function crestD(az) {
+            if (!res.rayProf) return null;
+            var best = null, bd = 999;
+            res.rayProf.forEach(function(p) {
+                var df = Math.abs(((p.bearing - az + 540) % 360) - 180);
+                if (df < bd) { bd = df; best = p; }
             });
+            return best ? best.sky.d : null;
+        }
+        function drawPano(az, vAng) {
+            if (!pReady) return;
+            var w = pano.width, h = pano.height;
+            var g = pano.getContext('2d');
+            g.clearRect(0, 0, w, h); g.drawImage(pImg, 0, 0, w, h);
+            if (az == null) return;
+            var W0 = pm.W || pImg.naturalWidth || w;
+            var PADd = (pm.PAD || 34) / W0 * w;
+            var PWd = w - PADd;
+            var x = PADd + ((az - pm.azStart + 360) % 360) / pm.azSpan * PWd;
+            g.strokeStyle = 'rgba(192,57,43,0.9)'; g.lineWidth = 1.5;
+            g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+            if (vAng != null && pm.topA != null && pm.botA != null) {
+                var y = (pm.topA - vAng) / (pm.topA - pm.botA) * h;
+                g.strokeStyle = 'rgba(192,57,43,0.45)';
+                g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+            }
+        }
+        function drawMini(az, dist) {
+            if (!mReady || !b) return;
+            var w = mini.width, h = mini.height;
+            var g = mini.getContext('2d');
+            g.clearRect(0, 0, w, h); g.drawImage(mImg, 0, 0, w, h);
+            function px(la, lo) {
+                return [(lo - west) / (east - west) * w, (north - la) / (north - south) * h];
+            }
+            var o = px(res.lat, res.lon);
+            if (az != null) {
+                var ep = _vsDest(res.lat, res.lon, res.radiusM, az);
+                var e2 = px(ep[0], ep[1]);
+                g.strokeStyle = 'rgba(192,57,43,0.9)'; g.lineWidth = 1.5;
+                g.beginPath(); g.moveTo(o[0], o[1]); g.lineTo(e2[0], e2[1]); g.stroke();
+                var dd = (dist != null) ? dist : crestD(az);
+                if (dd != null) {
+                    var dp = _vsDest(res.lat, res.lon, Math.min(dd, res.radiusM), az);
+                    var d2 = px(dp[0], dp[1]);
+                    g.beginPath(); g.arc(d2[0], d2[1], 4, 0, 2 * Math.PI);
+                    g.fillStyle = '#c0392b'; g.fill();
+                    g.strokeStyle = '#fff'; g.lineWidth = 1.4; g.stroke();
+                }
+            }
+            g.beginPath(); g.arc(o[0], o[1], 4, 0, 2 * Math.PI);
+            g.fillStyle = '#1e8449'; g.fill();
+            g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke();
+        }
+        function readout(az, dist, vAng) {
+            if (az == null) { readEl.textContent = 'Survoler une vue pour se reperer sur l\'autre.'; return; }
+            var card = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(((az % 360) / 45)) % 8];
+            var s = 'Azimut ' + Math.round((az + 360) % 360) + '° (' + card + ')';
+            var dd = (dist != null) ? dist : crestD(az);
+            if (dd != null) s += ' · ' + (dd >= 1000 ? (dd / 1000).toFixed(1) + ' km' : Math.round(dd) + ' m');
+            if (vAng != null) s += ' · ' + (vAng > 0 ? '+' : '') + vAng.toFixed(1) + '°';
+            readEl.textContent = s;
+        }
+        function syncFromAz(az, dist, vAng) { drawPano(az, vAng); drawMini(az, dist); readout(az, dist, vAng); }
+        function evtXY(el, ev) {
+            var r = el.getBoundingClientRect();
+            var t = (ev.touches && ev.touches[0]) || ev;
+            return [(t.clientX - r.left) / r.width, (t.clientY - r.top) / r.height];
+        }
+        function onPano(ev) {
+            if (!pReady) return;
+            if (ev.cancelable) ev.preventDefault();
+            var f = evtXY(pano, ev), fx = Math.max(0, Math.min(1, f[0])), fy = Math.max(0, Math.min(1, f[1]));
+            var W0 = pm.W || pImg.naturalWidth || 1;
+            var PADf = (pm.PAD || 34) / W0;
+            var az = pm.azStart + (Math.max(0, fx - PADf) / Math.max(0.01, 1 - PADf)) * pm.azSpan;
+            az = (az + 360) % 360;
+            var vAng = (pm.topA != null && pm.botA != null) ? (pm.topA - fy * (pm.topA - pm.botA)) : null;
+            syncFromAz(az, null, vAng);
+        }
+        function onMini(ev) {
+            if (!mReady || !b) return;
+            if (ev.cancelable) ev.preventDefault();
+            var f = evtXY(mini, ev), fx = Math.max(0, Math.min(1, f[0])), fy = Math.max(0, Math.min(1, f[1]));
+            var lo = west + fx * (east - west), la = north - fy * (north - south);
+            var az = _vsBearing(res.lat, res.lon, la, lo);
+            var dist = _vsDist(res.lat, res.lon, la, lo);
+            syncFromAz(az, dist, null);
+        }
+        pImg.onload = function() {
+            pReady = true;
+            var cw = Math.min(pano.parentElement.clientWidth || 760, pImg.naturalWidth);
+            pano.width = Math.round(cw);
+            pano.height = Math.round(cw * pImg.naturalHeight / pImg.naturalWidth);
+            drawPano(null);
+        };
+        pImg.src = res.panoramaURL;
+        if (hasMini) {
+            mImg.onload = function() {
+                mReady = true;
+                var maxD = 300, ar = (east - west) / (north - south);
+                var mw = ar >= 1 ? maxD : Math.round(maxD * ar);
+                var mh = ar >= 1 ? Math.round(maxD / ar) : maxD;
+                mini.width = mw; mini.height = mh;
+                mini.style.width = mw + 'px'; mini.style.height = mh + 'px';
+                drawMini(null);
+            };
+            mImg.src = res.planiURL;
+            mini.addEventListener('mousemove', onMini);
+            mini.addEventListener('touchmove', onMini, { passive: false });
+            mini.addEventListener('touchstart', onMini, { passive: false });
+        }
+        pano.addEventListener('mousemove', onPano);
+        pano.addEventListener('touchmove', onPano, { passive: false });
+        pano.addEventListener('touchstart', onPano, { passive: false });
+        // Hook : rafraichir le panorama quand les sommets arrivent (asynchrone)
+        res._setPano = function(url) {
+            pReady = false; pImg.onload = function() {
+                pReady = true;
+                var cw = Math.min(pano.parentElement.clientWidth || 760, pImg.naturalWidth);
+                pano.width = Math.round(cw);
+                pano.height = Math.round(cw * pImg.naturalHeight / pImg.naturalWidth);
+                drawPano(null);
+            }; pImg.src = url;
         };
     }
 
-    // Re-affiche une vue sauvegardee (overlay + marqueurs + panorama)
-    function _vsShowSaved(v) {
+    // Couleur stable par vue (plusieurs vues distinguables sur la carte)
+    function _vsViewColor(id) {
+        var h = 0, s = String(id || '');
+        for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+        return 'hsl(' + h + ',62%,42%)';
+    }
+    // Ajoute une vue sur la carte SANS retirer les autres (affichage multiple)
+    function _vsAddToMap(v, focus) {
         var map = findLeafletMap();
         if (!map) return;
-        if (_vsLayer) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
-        _vsLayer = L.layerGroup().addTo(map);
+        if (_vsShownLayers[v.id]) {
+            if (focus && v.bounds) { try { map.fitBounds(v.bounds, { padding: [20, 20] }); } catch(_e) {} }
+            return;
+        }
+        var col = _vsViewColor(v.id);
+        var g = L.layerGroup().addTo(map);
         if (v.planiURL && v.bounds) {
-            L.imageOverlay(v.planiURL, v.bounds, { opacity: 0.85, interactive: false }).addTo(_vsLayer);
+            L.imageOverlay(v.planiURL, v.bounds, { opacity: 0.6, interactive: false }).addTo(g);
         }
         L.circleMarker([v.lat, v.lon], {
-            radius: 6, color: '#fff', weight: 2, fillColor: '#1e8449', fillOpacity: 1
-        }).bindPopup('Observation<br>sol ~' + v.obsElev + ' m (+' + v.obsH + ' m)').addTo(_vsLayer);
+            radius: 6, color: '#fff', weight: 2, fillColor: col, fillOpacity: 1
+        }).bindPopup('<b>' + escapeHtml(v.name || 'Vue') + '</b><br>Observation sol ~'
+            + v.obsElev + ' m (+' + v.obsH + ' m)').addTo(g);
         (v.targets || []).forEach(function(t) {
             L.circleMarker([t.lat, t.lon], {
                 radius: 5, weight: 2, color: '#fff',
                 fillColor: t.visible ? '#1e8449' : '#7f8c8d', fillOpacity: 1
             }).bindPopup((t.name || 'Point') + '<br>' + (t.visible ? 'VISIBLE' : 'masque')
-                + ' · ' + t.dist + ' m').addTo(_vsLayer);
+                + ' · ' + t.dist + ' m').addTo(g);
         });
-        if (v.bounds) try { map.fitBounds(v.bounds, { padding: [20, 20] }); } catch(_e) {}
+        (v.peaks || []).forEach(function(p) {
+            L.circleMarker([p.lat, p.lon], {
+                radius: 4, weight: 2, color: '#fff',
+                fillColor: p.visible ? '#8a5a2b' : '#9aa3a3', fillOpacity: 1
+            }).bindPopup('▲ ' + escapeHtml(p.name) + (p.elev ? '<br>' + p.elev + ' m' : '')
+                + '<br>' + (p.visible ? 'VISIBLE' : 'masque') + ' · '
+                + Math.round(p.dist) + ' m').addTo(g);
+        });
+        _vsShownLayers[v.id] = g;
+        if (focus && v.bounds) { try { map.fitBounds(v.bounds, { padding: [20, 20] }); } catch(_e) {} }
+    }
+    function _vsRemoveFromMap(id) {
+        var map = findLeafletMap(), g = _vsShownLayers[id];
+        if (g && map) { try { map.removeLayer(g); } catch(_e) {} }
+        delete _vsShownLayers[id];
+    }
+    // Re-affiche une vue : l'ajoute sur la carte (sans masquer les autres) + panorama
+    function _vsShowSaved(v) {
+        _vsAddToMap(v, true);
         if (v.panoramaURL) _vsResultModal(v);
     }
 
@@ -1347,13 +1647,18 @@
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
         m.innerHTML =
-            '<div style="background:#fff;border-radius:12px;max-width:460px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:18px 20px;">' +
+            '<div style="background:#fff;border-radius:12px;max-width:480px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:18px 20px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
             '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Vues enregistrees</h2>' +
             '<button id="pwaVMx" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
             '</div>' +
-            '<button id="pwaVMnew" style="background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;margin-bottom:10px;">Nouveau champ de visibilite</button>' +
-            '<div id="pwaVMlist" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:100px;max-height:55vh;font-size:13px;">Chargement...</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">' +
+            '<button id="pwaVMnew" style="background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Nouveau champ de visibilite</button>' +
+            '<button id="pwaVMall" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Tout afficher</button>' +
+            '<button id="pwaVMnone" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Tout masquer</button>' +
+            '</div>' +
+            '<div style="font-size:11px;color:#999;margin-bottom:8px;">Cocher « Sur la carte » pour superposer plusieurs vues simultanement.</div>' +
+            '<div id="pwaVMlist" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:100px;max-height:52vh;font-size:13px;">Chargement...</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) { L.DomEvent.disableClickPropagation(m); L.DomEvent.disableScrollPropagation(m); }
         function close() { m.remove(); }
@@ -1361,6 +1666,7 @@
         m.onclick = function(e) { if (e.target === m) close(); };
         m.querySelector('#pwaVMnew').onclick = function() { close(); _vsStart(); };
         var listEl = m.querySelector('#pwaVMlist');
+        var curPid = (window.DRAWING_PROJET_ID || window.PROJET_ID || null);
         function refresh() {
             _vsDbAll().then(function(vs) {
                 vs.sort(function(a, b) { return (b.date || 0) - (a.date || 0); });
@@ -1370,18 +1676,37 @@
                 }
                 listEl.innerHTML = vs.map(function(v) {
                     var nv = (v.targets || []).filter(function(t) { return t.visible; }).length;
+                    var on = !!_vsShownLayers[v.id];
+                    var col = _vsViewColor(v.id);
+                    var otherProj = (v.projet_id != null && curPid != null
+                        && String(v.projet_id) !== String(curPid));
                     return '<div style="border-bottom:1px solid #f4efe7;padding:8px 6px;">' +
-                        '<div style="font-weight:600;color:#5a3a1a;">' + escapeHtml(v.name || v.id) + '</div>' +
+                        '<div style="display:flex;align-items:center;gap:6px;">' +
+                        '<span style="width:10px;height:10px;border-radius:50%;background:' + col + ';flex:0 0 auto;"></span>' +
+                        '<span style="font-weight:600;color:#5a3a1a;">' + escapeHtml(v.name || v.id) + '</span>' +
+                        (otherProj ? '<span style="font-size:10px;color:#b06a2b;border:1px solid #e6cdb4;border-radius:4px;padding:0 4px;">autre projet</span>' : '') +
+                        '</div>' +
                         '<div style="color:#999;font-size:11px;margin:2px 0 6px;">rayon ' + (v.radiusM / 1000)
                         + ' km · ' + (v.full ? '360 deg' : ('secteur ' + v.azW + ' deg')) + ' · '
-                        + (v.targets ? v.targets.length : 0) + ' pts (' + nv + ' vis.) · '
-                        + new Date(v.date).toLocaleDateString('fr-FR') + '</div>' +
-                        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                        + (v.targets ? v.targets.length : 0) + ' pts (' + nv + ' vis.)'
+                        + ((v.peaks && v.peaks.length) ? ' · ' + v.peaks.length + ' sommets' : '')
+                        + ' · ' + new Date(v.date).toLocaleDateString('fr-FR') + '</div>' +
+                        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' +
+                        '<label style="display:inline-flex;align-items:center;gap:4px;font:600 11px Segoe UI;color:#5a3a1a;cursor:pointer;">' +
+                        '<input type="checkbox" class="pwaVMon" data-id="' + v.id + '"' + (on ? ' checked' : '') + '> Sur la carte</label>' +
                         '<button class="pwaVMshow" data-id="' + v.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Revoir</button>' +
                         '<button class="pwaVMren" data-id="' + v.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
                         '<button class="pwaVMdel" data-id="' + v.id + '" style="background:#fff;color:#c0392b;border:1px solid #e8c8c4;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Supprimer</button>' +
                         '</div></div>';
                 }).join('');
+                listEl.querySelectorAll('.pwaVMon').forEach(function(c) {
+                    c.onchange = function() {
+                        _vsDbGet(c.dataset.id).then(function(v) {
+                            if (!v) return;
+                            if (c.checked) _vsAddToMap(v, false); else _vsRemoveFromMap(v.id);
+                        });
+                    };
+                });
                 listEl.querySelectorAll('.pwaVMshow').forEach(function(b) {
                     b.onclick = function() { _vsDbGet(b.dataset.id).then(function(v) { if (v) { close(); _vsShowSaved(v); } }); };
                 });
@@ -1397,11 +1722,18 @@
                 listEl.querySelectorAll('.pwaVMdel').forEach(function(b) {
                     b.onclick = function() {
                         if (!confirm('Supprimer cette vue ?')) return;
+                        _vsRemoveFromMap(b.dataset.id);
                         _vsDbDel(b.dataset.id).then(refresh);
                     };
                 });
             });
         }
+        m.querySelector('#pwaVMall').onclick = function() {
+            _vsDbAll().then(function(vs) { vs.forEach(function(v) { _vsAddToMap(v, false); }); refresh(); });
+        };
+        m.querySelector('#pwaVMnone').onclick = function() {
+            Object.keys(_vsShownLayers).forEach(_vsRemoveFromMap); refresh();
+        };
         refresh();
     }
 
@@ -1409,6 +1741,7 @@
         var map = findLeafletMap();
         if (_vsLayer && map) { try { map.removeLayer(_vsLayer); } catch(_e) {} }
         _vsLayer = null;
+        Object.keys(_vsShownLayers).forEach(_vsRemoveFromMap);
     }
     window._pwaViewshed = _vsStart;
     window._pwaViewshedSaved = _vsManager;
