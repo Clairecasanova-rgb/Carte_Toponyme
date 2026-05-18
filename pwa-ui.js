@@ -820,18 +820,26 @@
             return c.slice(0, 40);
         } catch(_e) { return ''; }
     }
-    // Points proches (marqueurs Leaflet) dans le rayon, hors couche viewshed
-    function _vsCollectTargets(map, lat, lon, radiusM) {
+    // Points proches (marqueurs Leaflet) dans le rayon, hors couche viewshed.
+    // Un marqueur de feature collaborative ("point perso") porte _customCategory ;
+    // les autres marqueurs sont des toponymes. La projection sur la vue depend
+    // des choix utilisateur (showPerso / showTopo).
+    function _vsCollectTargets(map, lat, lon, radiusM, showPerso, showTopo) {
+        if (!showPerso && !showTopo) return [];
         var t = [];
         map.eachLayer(function(l) {
             try {
                 if (!l || !l.getLatLng) return;
+                if (typeof l.getChildCount === 'function') return;  // amas de cluster
                 if (_vsLayer && _vsLayer.hasLayer && _vsLayer.hasLayer(l)) return;
+                var isPerso = (l._customCategory != null);
+                if (isPerso ? !showPerso : !showTopo) return;
                 var ll = l.getLatLng();
                 if (!ll) return;
                 var d = _vsDist(lat, lon, ll.lat, ll.lng);
                 if (d < 25 || d > radiusM) return;  // exclut l'observateur lui-meme
-                t.push({ lat: ll.lat, lon: ll.lng, dist: d, name: _vsLayerName(l) });
+                t.push({ lat: ll.lat, lon: ll.lng, dist: d, name: _vsLayerName(l),
+                         perso: isPerso });
             } catch(_e) {}
         });
         t.sort(function(a, b) { return a.dist - b.dist; });
@@ -879,6 +887,12 @@
             '<label id="pwaVSazL" style="display:none;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
             'Azimut central (deg, 0=N, 90=E) : <span id="pwaVSazv">0</span><br>' +
             '<input type="range" id="pwaVSaz" min="0" max="350" step="10" value="0" style="width:100%;"></label>' +
+            '<div style="font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+            'Points a projeter sur la vue<br>' +
+            '<label style="display:inline-flex;align-items:center;gap:5px;margin:5px 14px 0 0;cursor:pointer;">' +
+            '<input type="checkbox" id="pwaVStpPerso"> Points perso</label>' +
+            '<label style="display:inline-flex;align-items:center;gap:5px;margin-top:5px;cursor:pointer;">' +
+            '<input type="checkbox" id="pwaVStpTopo"> Toponymes</label></div>' +
             '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Quelques secondes selon rayon/ouverture.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
@@ -895,6 +909,11 @@
         wsel.onchange = function() { azL.style.display = (wsel.value === '360') ? 'none' : 'block'; };
         var az = m.querySelector('#pwaVSaz');
         az.oninput = function() { m.querySelector('#pwaVSazv').textContent = az.value; };
+        var ckP = m.querySelector('#pwaVStpPerso'), ckT = m.querySelector('#pwaVStpTopo');
+        try {
+            ckP.checked = (localStorage.getItem('pwaVSshowPerso') !== '0');  // defaut : actif
+            ckT.checked = (localStorage.getItem('pwaVSshowTopo') === '1');   // defaut : inactif
+        } catch(_e) { ckP.checked = true; ckT.checked = false; }
         m.querySelector('#pwaVSx').onclick = function() { m.remove(); };
         m.onclick = function(e) { if (e.target === m) m.remove(); };
         m.querySelector('#pwaVSgo').onclick = function() {
@@ -902,8 +921,14 @@
             var oh = parseFloat(m.querySelector('#pwaVSh').value) || 1.7;
             var aw = parseInt(wsel.value, 10) || 360;
             var ac = parseInt(az.value, 10) || 0;
+            var sP = !!ckP.checked, sT = !!ckT.checked;
+            try {
+                localStorage.setItem('pwaVSshowPerso', sP ? '1' : '0');
+                localStorage.setItem('pwaVSshowTopo', sT ? '1' : '0');
+            } catch(_e) {}
             m.remove();
-            _vsCompute({ lat: lat, lon: lon, radiusM: rkm * 1000, obsH: oh, azC: ac, azW: aw });
+            _vsCompute({ lat: lat, lon: lon, radiusM: rkm * 1000, obsH: oh,
+                         azC: ac, azW: aw, showPerso: sP, showTopo: sT });
         };
     }
 
@@ -919,7 +944,8 @@
         if (nRays * N > 9000) { N = Math.max(8, Math.floor(9000 / nRays)); stepM = radiusM / N; }
         var map = findLeafletMap();
         if (!map) return;
-        var targets = _vsCollectTargets(map, lat, lon, radiusM);
+        var targets = _vsCollectTargets(map, lat, lon, radiusM,
+            P.showPerso !== false, P.showTopo === true);
 
         // pts : [observateur] + targets + samples (ray-major)
         var pts = [[lat, lon]];
