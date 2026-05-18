@@ -256,7 +256,12 @@ async function cacheFirst(request, cacheName, opts = {}) {
         // Fetch direct, sans wrapping. Le browser a son propre timeout.
         // Cache async en BG : ne bloque pas la response.
         const resp = await fetch(request, opts);
-        if (resp) cache.put(request, resp.clone()).catch(() => null);
+        // Ne cacher QUE les reponses valides (ok ou opaque no-cors). Sans ce
+        // garde-fou, un 403/404 transitoire empoisonnait le cache photo et
+        // l'image restait cassee meme apres retour a la normale.
+        if (resp && (resp.ok || resp.type === 'opaque')) {
+            cache.put(request, resp.clone()).catch(() => null);
+        }
         return resp;
     } catch (e) {
         return new Response('Offline tile', { status: 503 });
@@ -346,12 +351,12 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // 4. Photos Supabase Storage : immuables
+    // 4. Photos Supabase Storage : immuables (cache-first, sans eviction).
+    // NB : pas de .finally(trimCache) -> trimCache n'existe plus ; l'appeler
+    // faisait rejeter respondWith -> TOUTES les photos cassees sur TOUTES les
+    // cartes. Pas de bump de VERSION (preserve les zones hors-ligne en cache).
     if (isSupabasePhoto(url)) {
-        event.respondWith(
-            cacheFirst(req, PHOTO_CACHE)
-                .finally(() => trimCache(PHOTO_CACHE, MAX_PHOTOS))
-        );
+        event.respondWith(cacheFirst(req, PHOTO_CACHE));
         return;
     }
 
