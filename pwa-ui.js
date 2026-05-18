@@ -1163,11 +1163,10 @@
             return 'rgba(' + Math.round(46 + 70 * f) + ',' + Math.round(174 - 96 * f)
                 + ',' + Math.round(80 + 150 * f) + ',' + a + ')';
         }
-        // Surface remplie : quads entre rayons adjacents. Une cellule est
-        // peinte si son bord exterieur est visible sur AU MOINS un des deux
-        // rayons (les rayons ne sont qu'un echantillonnage angulaire : exiger
-        // les deux laissait des trous = aspect pointille). L'occlusion radiale
-        // (vallees masquees le long d'un rayon) reste respectee -> vrais trous.
+        // Surface remplie : quads entre rayons adjacents la ou les 2 sont
+        // visibles -> aire fidele avec trous (vallees masquees), degrade
+        // distance. Condition stricte (ET) : ne montre QUE le reellement vu,
+        // sans gonfler la surface.
         var rp = res.rayProf, nR = res.nRays, N = res.N, st = res.stepM;
         var oc = px(res.lat, res.lon);
         function ptRC(ri, ki) {  // ki=0 => observateur
@@ -1181,19 +1180,16 @@
             var ri2 = (ri + 1) % nR;
             var va = rp[ri].vis, vb = rp[ri2].vis;
             for (ki = 0; ki < N; ki++) {
-                var outer = va[ki] || vb[ki];
-                if (!outer) continue;  // cellule visible si bord ext. visible
+                var outer = va[ki] && vb[ki];
+                if (!outer) continue;  // cellule visible seulement si bord ext. visible
                 var f = Math.min(1, (st * (ki + 1)) / R);
                 var A = ptRC(ri, ki), B = ptRC(ri2, ki);
                 var C = ptRC(ri2, ki + 1), D = ptRC(ri, ki + 1);
-                // remplissage + liseré de meme couleur : soude les cellules
-                // adjacentes (supprime les coutures d'anti-aliasing pointillees)
-                var col = distCol(f, 0.55);
-                ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+                ctx.fillStyle = distCol(f, 0.5);
                 ctx.beginPath();
                 ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]);
                 ctx.lineTo(C[0], C[1]); ctx.lineTo(D[0], D[1]);
-                ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.closePath(); ctx.fill();
             }
         }
         var url = cv.toDataURL('image/png');
@@ -1353,16 +1349,30 @@
         if (!SU || !SK) { showToast('Partage indisponible (Supabase absent).', 5000); return; }
         if (!confirm('Enregistrer ce champ de visibilite sur la carte collaborative '
             + '(visible par tous) ?')) return;
-        // Contour exterieur : par rayon, distance du dernier echantillon visible
-        var ring = [];
-        var rp = res.rayProf, st = res.stepM, N = res.N;
-        rp.forEach(function(p) {
-            var last = 0;
-            for (var k = 0; k < N; k++) if (p.vis[k]) last = st * (k + 1);
-            var pos = _vsDest(res.lat, res.lon, last || st, p.bearing);
-            ring.push([+pos[1].toFixed(6), +pos[0].toFixed(6)]);  // [lon,lat]
-        });
-        if (ring.length >= 3) ring.push(ring[0]);
+        // Empreinte FIDELE : MultiPolygon des cellules reellement visibles
+        // (meme condition stricte que le rendu : les 2 rayons voisins voient
+        // le bord exterieur). Les vallees masquees restent en creux -> pas de
+        // contour englobant qui surestimerait la zone visible.
+        var rp = res.rayProf, st = res.stepM, N = res.N, nR = res.nRays;
+        function ll(ri, ki) {  // [lon,lat] arrondi
+            var pos = (ki === 0) ? [res.lat, res.lon]
+                : _vsDest(res.lat, res.lon, st * ki, rp[ri].bearing);
+            return [+pos[1].toFixed(6), +pos[0].toFixed(6)];
+        }
+        var multi = [];
+        for (var ri = 0; ri < nR - (res.full ? 0 : 1); ri++) {
+            var ri2 = (ri + 1) % nR;
+            var va = rp[ri].vis, vb = rp[ri2].vis, k = 0;
+            while (k < N) {
+                if (!(va[k] && vb[k])) { k++; continue; }
+                var k0 = k;
+                while (k < N && va[k] && vb[k]) k++;
+                var k1 = k - 1;  // run visible [k0..k1]
+                multi.push([[ ll(ri, k0), ll(ri, k1 + 1),
+                              ll(ri2, k1 + 1), ll(ri2, k0), ll(ri, k0) ]]);
+            }
+        }
+        if (!multi.length) { showToast('Aucune zone visible a enregistrer.', 5000); return; }
         var nVis = res.targets.filter(function(t) { return t.visible; }).length;
         var desc = 'Champ de visibilite · rayon ' + (res.radiusM / 1000) + ' km · '
             + (res.full ? '360 deg' : 'secteur ' + res.azW + ' deg (axe ' + res.azC + ')')
@@ -1383,7 +1393,7 @@
         showToast('Enregistrement sur la carte...', 3000);
         post({
             projet_id: pid, feature_type: 'polygon',
-            geometry: { type: 'Polygon', coordinates: [ring] },
+            geometry: { type: 'MultiPolygon', coordinates: multi },
             name: res.name, description: desc, category: 'Visibilite',
             color: '#1e8449', auteur: auteur
         }).then(function() {
