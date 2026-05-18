@@ -945,11 +945,14 @@
             for (r = 0; r < nRays; r++) {
                 var maxSlope = -Infinity, sky = { ang: -90, d: 0 };
                 var maxAngAt = [];           // angle visible cumule (pour cible)
+                var visArr = [];             // visibilite par echantillon (grille)
                 for (k = 1; k <= N; k++) {
                     var d = stepM * k;
                     var z = elev[idx++] - _vsCurv(d);
                     var slope = (z - obsTot) / d;
-                    if (slope >= maxSlope) {
+                    var isVis = (slope >= maxSlope);
+                    visArr.push(isVis);
+                    if (isVis) {
                         var pos = _vsDest(lat, lon, d, bearings[r]);
                         visPts.push({ lat: pos[0], lon: pos[1], d: d });
                         var ang = Math.atan2(z - obsTot, d) * 180 / Math.PI;
@@ -958,7 +961,7 @@
                     if (slope > maxSlope) maxSlope = slope;
                     maxAngAt.push(Math.atan(maxSlope) * 180 / Math.PI);
                 }
-                rayProf.push({ bearing: bearings[r], sky: sky, maxAng: maxAngAt });
+                rayProf.push({ bearing: bearings[r], sky: sky, maxAng: maxAngAt, vis: visArr });
             }
             // Cibles : bearing/dist/elev + visible ? (via le rayon le plus proche)
             var tgt = [];
@@ -985,6 +988,7 @@
                     + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
                 lat: lat, lon: lon, obsH: obsH, obsElev: Math.round(elev[0]),
                 radiusM: radiusM, azC: P.azC, azW: P.azW, full: full,
+                stepM: stepM, N: N, nRays: nRays,
                 date: Date.now(), visPts: visPts, rayProf: rayProf, targets: tgt
             };
             _vsRenderPlani(res);
@@ -1010,22 +1014,48 @@
         var cW = _vsDest(res.lat, res.lon, R, 270)[1];    // ouest lon
         var north = Math.max(c0, c180), south = Math.min(c0, c180);
         var east = Math.max(cE, cW), west = Math.min(cE, cW);
-        var W = 700, H = Math.round(W * (north - south) / (east - west) || W);
+        var W = 1100, H = Math.round(W * (north - south) / (east - west)) || W;
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
         var ctx = cv.getContext('2d');
+        ctx.lineJoin = 'round';
         function px(la, lo) {
             return [(lo - west) / (east - west) * W, (north - la) / (north - south) * H];
         }
-        var cell = Math.max(3, Math.round(W / 140));
-        res.visPts.forEach(function(p) {
-            var q = px(p.lat, p.lon);
-            var f = Math.min(1, p.d / R);                 // proche=0 -> loin=1
-            // proche = vert chaud, loin = bleu
-            var col = 'rgba(' + Math.round(40 + 60 * f) + ',' + Math.round(180 - 90 * f)
-                + ',' + Math.round(70 + 150 * f) + ',0.45)';
-            ctx.fillStyle = col;
-            ctx.fillRect(q[0] - cell / 2, q[1] - cell / 2, cell, cell);
-        });
+        function distCol(f, a) {
+            // proche = vert, loin = bleu (degrade Pixscape-like)
+            return 'rgba(' + Math.round(46 + 70 * f) + ',' + Math.round(174 - 96 * f)
+                + ',' + Math.round(80 + 150 * f) + ',' + a + ')';
+        }
+        // Surface remplie : quads entre rayons adjacents la ou les 2 sont
+        // visibles -> aire lisse avec trous (vallees masquees), degrade distance.
+        var rp = res.rayProf, nR = res.nRays, N = res.N, st = res.stepM;
+        var oc = px(res.lat, res.lon);
+        function ptRC(ri, ki) {  // ki=0 => observateur
+            var d = st * ki;
+            var pos = (ki === 0) ? [res.lat, res.lon]
+                : _vsDest(res.lat, res.lon, d, rp[ri].bearing);
+            return px(pos[0], pos[1]);
+        }
+        var ri, ki;
+        for (ri = 0; ri < nR - (res.full ? 0 : 1); ri++) {
+            var ri2 = (ri + 1) % nR;
+            var va = rp[ri].vis, vb = rp[ri2].vis;
+            for (ki = 0; ki < N; ki++) {
+                // cellule entre rayons ri,ri2 et anneaux ki,ki+1
+                var inner = (ki === 0) ? true : (va[ki - 1] && vb[ki - 1]);
+                var outer = va[ki] && vb[ki];
+                if (!outer && !inner) continue;
+                if (!outer) continue;  // cellule visible seulement si bord ext. visible
+                var f = Math.min(1, (st * (ki + 1)) / R);
+                var A = ptRC(ri, ki), B = ptRC(ri2, ki);
+                var C = ptRC(ri2, ki + 1), D = ptRC(ri, ki + 1);
+                ctx.fillStyle = distCol(f, 0.5);
+                ctx.beginPath();
+                ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]);
+                ctx.lineTo(C[0], C[1]); ctx.lineTo(D[0], D[1]);
+                ctx.closePath(); ctx.fill();
+            }
+        }
         var url = cv.toDataURL('image/png');
         res.planiURL = url; res.bounds = [[south, west], [north, east]];
         L.imageOverlay(url, res.bounds, { opacity: 0.85, interactive: false }).addTo(_vsLayer);
@@ -1048,58 +1078,166 @@
         var rp = res.rayProf;
         var azStart = res.full ? 0 : (res.azC - res.azW / 2);
         var azSpan = res.full ? 360 : res.azW;
-        var W = Math.min(1600, Math.max(720, Math.round(azSpan * 4)));
-        var H = 280;
-        // bornes verticales
+        var PAD = 34;                                         // marge axes
+        var W = Math.min(1800, Math.max(760, Math.round(azSpan * 4))) + PAD;
+        var H = 320;
         var minA = 90, maxA = -90;
         rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
         res.targets.forEach(function(t) { if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
-        var topA = Math.min(60, Math.ceil(maxA + 3));
-        var botA = Math.max(-30, Math.floor(Math.min(-3, minA - 2)));
+        var topA = Math.min(70, Math.ceil(maxA + 4));
+        var botA = Math.max(-35, Math.floor(Math.min(-4, minA - 3)));
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-        var ctx = cv.getContext('2d');
-        ctx.fillStyle = '#dfeaf2'; ctx.fillRect(0, 0, W, H);           // ciel
-        function X(az) { return ((az - azStart + 360) % 360) / azSpan * W; }
-        function Y(a) { return H - (a - botA) / (topA - botA) * H; }
+        var ctx = cv.getContext('2d'); ctx.lineJoin = 'round';
+        var PW = W - PAD;                                     // largeur panorama
+        function X(az) { return PAD + ((az - azStart + 360) % 360) / azSpan * PW; }
+        function Y(a) { return (topA - a) / (topA - botA) * H; }
         var R = res.radiusM;
-        var colW = Math.max(1, Math.round(W / rp.length) + 1);
-        rp.forEach(function(p) {
-            var x = X(p.bearing);
-            var f = Math.min(1, p.sky.d / R);
-            ctx.fillStyle = 'rgb(' + Math.round(60 + 80 * f) + ',' + Math.round(150 - 60 * f)
-                + ',' + Math.round(70 + 120 * f) + ')';
-            var ys = Y(p.sky.ang);
-            ctx.fillRect(x, ys, colW, H - ys);                        // relief jusqu'au sol
-        });
-        // ligne horizon 0 deg
-        ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(W, Y(0)); ctx.stroke();
-        // reperes azimut
-        ctx.fillStyle = '#34495e'; ctx.font = '11px Segoe UI';
-        var marks = res.full ? [[0,'N'],[90,'E'],[180,'S'],[270,'O']]
-            : [[azStart,Math.round(azStart)+'°'],[res.azC,'centre'],[(azStart+azSpan),Math.round((azStart+azSpan)%360)+'°']];
+        function dCol(f) {
+            return 'rgb(' + Math.round(46 + 70 * f) + ',' + Math.round(168 - 96 * f)
+                + ',' + Math.round(84 + 150 * f) + ')';
+        }
+        // Ciel : degrade
+        var sky = ctx.createLinearGradient(0, 0, 0, Y(0));
+        sky.addColorStop(0, '#cfe0ee'); sky.addColorStop(1, '#eaf2f8');
+        ctx.fillStyle = sky; ctx.fillRect(PAD, 0, PW, H);
+        // Rayons tries par X (ordre azimut affiche)
+        var ord = rp.slice().sort(function(a, b) { return X(a.bearing) - X(b.bearing); });
+        // Relief : polygone plein (gradient vertical)
+        var grd = ctx.createLinearGradient(0, Y(maxA), 0, H);
+        grd.addColorStop(0, '#6b8e4e'); grd.addColorStop(1, '#3d5230');
+        ctx.fillStyle = grd; ctx.beginPath();
+        ctx.moveTo(X(ord[0].bearing), H);
+        ord.forEach(function(p) { ctx.lineTo(X(p.bearing), Y(p.sky.ang)); });
+        ctx.lineTo(X(ord[ord.length - 1].bearing), H);
+        ctx.closePath(); ctx.fill();
+        // Liseré de crête colore par distance (lisibilite du relief lointain)
+        ctx.lineWidth = 3;
+        for (var i = 0; i < ord.length - 1; i++) {
+            ctx.strokeStyle = dCol(Math.min(1, ord[i].sky.d / R));
+            ctx.beginPath();
+            ctx.moveTo(X(ord[i].bearing), Y(ord[i].sky.ang));
+            ctx.lineTo(X(ord[i + 1].bearing), Y(ord[i + 1].sky.ang));
+            ctx.stroke();
+        }
+        // Grille angles verticaux + labels (axe gauche)
+        ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.fillStyle = '#5a3a1a';
+        ctx.font = '10px Segoe UI'; ctx.lineWidth = 1;
+        for (var av = Math.ceil(botA / 10) * 10; av <= topA; av += 10) {
+            var yy = Y(av);
+            ctx.strokeStyle = (av === 0) ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.10)';
+            ctx.beginPath(); ctx.moveTo(PAD, yy); ctx.lineTo(W, yy); ctx.stroke();
+            ctx.fillStyle = '#5a3a1a';
+            ctx.fillText((av > 0 ? '+' : '') + av + '°', 2, Math.min(H - 2, Math.max(9, yy + 3)));
+        }
+        // Reperes azimut
+        ctx.fillStyle = '#34495e'; ctx.font = 'bold 11px Segoe UI';
+        var marks = res.full ? [[0, 'N'], [45, 'NE'], [90, 'E'], [135, 'SE'],
+            [180, 'S'], [225, 'SO'], [270, 'O'], [315, 'NO']]
+            : [[azStart, Math.round(azStart) + '°'], [res.azC, 'axe ' + res.azC + '°'],
+               [(azStart + azSpan), Math.round((azStart + azSpan) % 360) + '°']];
         marks.forEach(function(mk) {
-            var xx = X(mk[0]); ctx.fillRect(xx, 0, 1, H);
-            ctx.fillText(mk[1], Math.min(W - 24, xx + 3), 13);
+            var xx = X(mk[0]);
+            ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+            ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, H); ctx.stroke();
+            ctx.fillStyle = '#34495e';
+            ctx.fillText(mk[1], Math.min(W - 26, xx + 3), 12);
         });
-        // cibles projetees
+        // Cibles projetees + amorce verticale
         res.targets.forEach(function(t) {
             if (!res.full) {
                 var dd = Math.abs(((t.bearing - res.azC + 540) % 360) - 180);
                 if (dd > res.azW / 2) return;
             }
             var x = X(t.bearing), y = Y(t.ang);
+            ctx.strokeStyle = t.visible ? 'rgba(39,174,96,0.7)' : 'rgba(127,140,141,0.6)';
+            ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
             ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI);
-            ctx.fillStyle = t.visible ? '#27ae60' : '#7f8c8d';
-            ctx.globalAlpha = t.visible ? 1 : 0.7; ctx.fill(); ctx.globalAlpha = 1;
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.fillStyle = t.visible ? '#27ae60' : '#95a5a6';
+            ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
             if (t.name) {
-                ctx.fillStyle = '#1b2631'; ctx.font = '10px Segoe UI';
-                ctx.fillText(t.name + (t.visible ? '' : ' (masque)'),
-                    Math.min(W - 60, x + 7), Math.max(10, y - 6));
+                var lbl = t.name + (t.visible ? '' : ' (masque)');
+                ctx.font = '10px Segoe UI';
+                var tw = ctx.measureText(lbl).width;
+                var lx = Math.min(W - tw - 4, x + 7), ly = Math.max(12, y - 6);
+                ctx.fillStyle = 'rgba(255,255,255,0.78)';
+                ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
+                ctx.fillStyle = '#1b2631'; ctx.fillText(lbl, lx, ly);
             }
         });
+        // Legende distance
+        var lgX = PAD + 8, lgY = H - 14, lgW = 120;
+        var lg = ctx.createLinearGradient(lgX, 0, lgX + lgW, 0);
+        lg.addColorStop(0, dCol(0)); lg.addColorStop(1, dCol(1));
+        ctx.fillStyle = lg; ctx.fillRect(lgX, lgY, lgW, 8);
+        ctx.fillStyle = '#1b2631'; ctx.font = '9px Segoe UI';
+        ctx.fillText('proche', lgX, lgY - 2);
+        ctx.fillText((R / 1000) + ' km', lgX + lgW - 26, lgY - 2);
         return cv.toDataURL('image/png');
+    }
+
+    // Enregistre la vue SUR LA CARTE collaborative : polygone du champ
+    // visible (contour exterieur approx) + point d'observation, via
+    // custom_features (compatible file hors-ligne, partage avec tous).
+    function _vsSaveToMap(res) {
+        var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
+        if (!SU || !SK) { showToast('Partage indisponible (Supabase absent).', 5000); return; }
+        if (!confirm('Enregistrer ce champ de visibilite sur la carte collaborative '
+            + '(visible par tous) ?')) return;
+        // Contour exterieur : par rayon, distance du dernier echantillon visible
+        var ring = [];
+        var rp = res.rayProf, st = res.stepM, N = res.N;
+        rp.forEach(function(p) {
+            var last = 0;
+            for (var k = 0; k < N; k++) if (p.vis[k]) last = st * (k + 1);
+            var pos = _vsDest(res.lat, res.lon, last || st, p.bearing);
+            ring.push([+pos[1].toFixed(6), +pos[0].toFixed(6)]);  // [lon,lat]
+        });
+        if (ring.length >= 3) ring.push(ring[0]);
+        var nVis = res.targets.filter(function(t) { return t.visible; }).length;
+        var desc = 'Champ de visibilite · rayon ' + (res.radiusM / 1000) + ' km · '
+            + (res.full ? '360 deg' : 'secteur ' + res.azW + ' deg (axe ' + res.azC + ')')
+            + ' · obs +' + res.obsH + ' m (sol ~' + res.obsElev + ' m) · '
+            + res.targets.length + ' pts proches, ' + nVis + ' visibles';
+        var pid = (window.DRAWING_PROJET_ID || window.PROJET_ID || null);
+        var auteur = (window.CONTRIBUTEUR || window.contributeurActuel || 'Viewshed');
+        function post(body) {
+            return fetch(SU + '/rest/v1/custom_features', {
+                method: 'POST',
+                headers: {
+                    'apikey': SK, 'Authorization': 'Bearer ' + SK,
+                    'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify(body)
+            });
+        }
+        showToast('Enregistrement sur la carte...', 3000);
+        post({
+            projet_id: pid, feature_type: 'polygon',
+            geometry: { type: 'Polygon', coordinates: [ring] },
+            name: res.name, description: desc, category: 'Visibilite',
+            color: '#1e8449', auteur: auteur
+        }).then(function() {
+            return post({
+                projet_id: pid, feature_type: 'point',
+                geometry: { type: 'Point', coordinates: [+res.lon.toFixed(6), +res.lat.toFixed(6)] },
+                name: 'Observation — ' + res.name,
+                description: 'Point d\'observation du champ de visibilite. ' + desc,
+                category: 'Visibilite', color: '#c0392b', auteur: auteur
+            });
+        }).then(function(r) {
+            if (r && (r.ok || r.status === 201 || r.status === 204)) {
+                showToast('Champ de visibilite enregistre sur la carte.', 5000);
+                if (typeof window.loadCustomFeatures === 'function') {
+                    setTimeout(function() { window.loadCustomFeatures(); }, 600);
+                }
+            } else if (r && r.status === 202) {
+                showToast('Hors-ligne : enregistrement en file, publie au retour reseau.', 6000);
+            } else {
+                showToast('Echec de l\'enregistrement (HTTP ' + (r ? r.status : '?') + ').', 6000);
+            }
+        }).catch(function(e) {
+            showToast('Echec : ' + (e && e.message ? e.message : 'erreur reseau'), 6000);
+        });
     }
 
     function _vsResultModal(res) {
@@ -1110,6 +1248,7 @@
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
         (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
         var nVis = res.targets.filter(function(t) { return t.visible; }).length;
+        var canMap = !!(res.rayProf && res.stepM && res.N);
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;">' +
@@ -1119,7 +1258,8 @@
             '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance (clair=proche, fonce=loin). '
             + res.targets.length + ' point(s) proche(s) · ' + nVis + ' visible(s).</div>' +
             '<img src="' + res.panoramaURL + '" style="display:block;max-width:100%;border:1px solid #ddd;border-radius:6px;">' +
-            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap;">' +
+            (canMap ? '<button id="pwaVSmap" style="background:#1e8449;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer sur la carte</button>' : '') +
             '<button id="pwaVSsave" style="background:#8b4513;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
             '<button id="pwaVSclose" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>' +
             '</div></div>';
@@ -1128,6 +1268,8 @@
         m.querySelector('#pwaVSc').onclick = close;
         m.querySelector('#pwaVSclose').onclick = close;
         m.onclick = function(e) { if (e.target === m) close(); };
+        var mapBtn = m.querySelector('#pwaVSmap');
+        if (mapBtn) mapBtn.onclick = function() { _vsSaveToMap(res); };
         m.querySelector('#pwaVSsave').onclick = function() {
             var nm = prompt('Nom de la vue :', res.name);
             if (nm == null) return;
