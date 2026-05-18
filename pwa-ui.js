@@ -1059,9 +1059,12 @@
         var nRays = full ? Math.round(360 / rayStep) : (Math.round(P.azW / rayStep) + 1);
         var stepM = Math.min(30, Math.max(10, radiusM / 150));
         var N = Math.max(8, Math.round(radiusM / stepM));
-        // Budget : limiter le total d'echantillons (~12000). Au-dela, le pas
-        // s'espace automatiquement (suffisant pour la ligne de crete lointaine).
-        if (nRays * N > 12000) { N = Math.max(8, Math.floor(12000 / nRays)); stepM = radiusM / N; }
+        // Budget : limiter le total d'echantillons (~9000). Cette granularite
+        // (a 2 km/360deg : stepM ~40 m) donne le rendu "pointille/onde" voulu
+        // (mailles plus grandes). Au-dela du rayon, le pas s'espace tout seul
+        // (suffisant pour la ligne de crete lointaine). Moins de requetes
+        // altimetrie aussi -> moins de throttling IGN (429).
+        if (nRays * N > 9000) { N = Math.max(8, Math.floor(9000 / nRays)); stepM = radiusM / N; }
         var map = findLeafletMap();
         if (!map) return;
         var targets = _vsCollectTargets(map, lat, lon, radiusM,
