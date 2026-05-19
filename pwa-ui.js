@@ -1424,6 +1424,7 @@
             };
             _vsRenderPlani(res);
             _vsLast = res;
+            try { window._vsLast = res; } catch(_e) {}  // inspection / diagnostic
             res.panoramaURL = _vsBuildPanorama(res);  // dataURL
             res.perspectiveURL = _vsBuildPanoramaPerspective(res);  // dataURL
             _vsProgHide();
