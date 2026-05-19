@@ -840,6 +840,18 @@
         var ex = document.getElementById('pwaVSprog');
         if (ex) { try { ex.remove(); } catch(_e) {} }
     }
+    // Rendu net (pas de lissage) de l'imageOverlay : le navigateur interpole
+    // l'image en bilineaire quand Leaflet l'agrandit -> mailles/trous floutes
+    // et "combles" visuellement. On force un rendu pixelise pour garder le
+    // grain et les vrais trous fideles a tout zoom.
+    function _vsInjectOverlayStyle() {
+        if (document.getElementById('pwaVSoverlayCss')) return;
+        var s = document.createElement('style');
+        s.id = 'pwaVSoverlayCss';
+        s.textContent = '.pwa-vs-overlay{image-rendering:pixelated;'
+            + 'image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;}';
+        (document.head || document.documentElement).appendChild(s);
+    }
 
     // IndexedDB : vues sauvegardees
     function _vsDbPut(v) {
@@ -1281,7 +1293,9 @@
         }
         var url = cv.toDataURL('image/png');
         res.planiURL = url; res.bounds = [[south, west], [north, east]];
-        L.imageOverlay(url, res.bounds, { opacity: 0.85, interactive: false }).addTo(_vsLayer);
+        _vsInjectOverlayStyle();
+        L.imageOverlay(url, res.bounds, { opacity: 0.85, interactive: false,
+            className: 'pwa-vs-overlay' }).addTo(_vsLayer);
         L.circleMarker([res.lat, res.lon], {
             radius: 6, color: '#fff', weight: 2, fillColor: '#1e8449', fillOpacity: 1
         }).bindPopup('Observation<br>sol ~' + res.obsElev + ' m (+' + res.obsH + ' m)').addTo(_vsLayer);
@@ -1994,9 +2008,11 @@
         var col = _vsViewColor(v.id);
         var g = L.layerGroup().addTo(map);
         if (v.planiURL && v.bounds) {
-            // Meme opacite que le rendu d'origine (_vsRenderPlani = 0.85) pour
+            // Meme opacite (0.85) ET rendu pixelise que _vsRenderPlani pour
             // qu'une vue revue soit representee exactement comme a sa creation.
-            L.imageOverlay(v.planiURL, v.bounds, { opacity: 0.85, interactive: false }).addTo(g);
+            _vsInjectOverlayStyle();
+            L.imageOverlay(v.planiURL, v.bounds, { opacity: 0.85, interactive: false,
+                className: 'pwa-vs-overlay' }).addTo(g);
         }
         L.circleMarker([v.lat, v.lon], {
             radius: 6, color: '#fff', weight: 2, fillColor: col, fillOpacity: 1
