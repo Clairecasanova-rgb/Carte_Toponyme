@@ -1816,10 +1816,73 @@
         }
         var map = findLeafletMap();
         if (!map) { showToast('Carte non detectee.', 4000); return; }
-        showToast('Toucher un point sur la carte pour le champ de visibilite.', 5000);
-        map.once('click', function(e) {
-            _vsParamsModal(e.latlng.lat, e.latlng.lng);
-        });
+        // Choix de l'origine : un point sur la carte OU la position GPS.
+        // C'est important pour l'AR caméra : si l'utilisateur compte aller
+        // sur le terrain, lancer depuis le GPS rend la projection AR exacte
+        // a l'endroit ou il se trouve (sinon parallaxe).
+        var m = document.createElement('div');
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100065;'
+            + 'display:flex;align-items:center;justify-content:center;padding:16px;'
+            + 'font-family:Segoe UI,sans-serif;';
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        m.innerHTML = '<div style="background:#fff;border-radius:10px;max-width:360px;'
+            + 'width:100%;padding:18px 20px;">'
+            + '<h2 style="margin:0 0 8px;font-size:16px;color:#5a3a1a;">Origine du champ '
+            + 'de visibilite</h2>'
+            + '<div style="font-size:12px;color:#7a5a3a;margin-bottom:14px;">'
+            + 'Tous les caps, distances et la vue AR sont calcules depuis ce point.</div>'
+            + '<button id="pwaVSorigMap" style="width:100%;background:#8b4513;color:#fff;'
+            + 'border:none;padding:11px 12px;border-radius:6px;cursor:pointer;font:600 13px '
+            + 'Segoe UI;margin-bottom:8px;text-align:left;">'
+            + '📍 Choisir un point sur la carte'
+            + '<div style="font-weight:400;font-size:11px;opacity:0.9;margin-top:2px;">'
+            + 'Pour analyser depuis un site precis (sommet, chapelle, ruine…)</div>'
+            + '</button>'
+            + '<button id="pwaVSorigGps" style="width:100%;background:#3a7d44;color:#fff;'
+            + 'border:none;padding:11px 12px;border-radius:6px;cursor:pointer;font:600 13px '
+            + 'Segoe UI;margin-bottom:8px;text-align:left;">'
+            + '⇢ Depuis ma position GPS'
+            + '<div style="font-weight:400;font-size:11px;opacity:0.9;margin-top:2px;">'
+            + 'Pour une vue AR exacte la ou tu te trouves sur le terrain</div>'
+            + '</button>'
+            + '<div style="display:flex;justify-content:flex-end;">'
+            + '<button id="pwaVSorigX" style="background:#f0ebe3;color:#5a3a1a;border:none;'
+            + 'padding:7px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">'
+            + 'Annuler</button></div></div>';
+        if (typeof L !== 'undefined' && L.DomEvent) {
+            L.DomEvent.disableClickPropagation(m);
+            L.DomEvent.disableScrollPropagation(m);
+        }
+        m.onclick = function(e) { if (e.target === m) m.remove(); };
+        m.querySelector('#pwaVSorigX').onclick = function() { m.remove(); };
+        m.querySelector('#pwaVSorigMap').onclick = function() {
+            m.remove();
+            showToast('Toucher un point sur la carte pour le champ de visibilite.', 5000);
+            map.once('click', function(e) {
+                _vsParamsModal(e.latlng.lat, e.latlng.lng);
+            });
+        };
+        m.querySelector('#pwaVSorigGps').onclick = function() {
+            m.remove();
+            if (!navigator.geolocation) {
+                showToast('Geolocalisation indisponible sur cet appareil.', 5000);
+                return;
+            }
+            showToast('Acquisition de la position GPS…', 3000);
+            navigator.geolocation.getCurrentPosition(function(pos) {
+                var c = pos.coords;
+                if (c.accuracy != null && c.accuracy > 100) {
+                    showToast('Position imprecise (±' + Math.round(c.accuracy)
+                        + ' m). Sortir a ciel degage pour mieux.', 5000);
+                }
+                _vsParamsModal(c.latitude, c.longitude);
+            }, function(err) {
+                showToast(err && err.code === 1
+                    ? 'Geolocalisation refusee. Autoriser l\'acces a la position.'
+                    : 'Position introuvable. Se placer a ciel degage et reessayer.', 6000);
+            }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 });
+        };
     }
 
     function _vsParamsModal(lat, lon) {
