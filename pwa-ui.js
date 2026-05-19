@@ -1116,6 +1116,9 @@
             + '<button id="pwaCamRelief" title="Superposer la silhouette du relief calcule" '
             + 'style="background:rgba(255,100,180,0.2);color:#fff;border:1px solid rgba(255,100,180,0.5);'
             + 'border-radius:6px;padding:6px 10px;cursor:pointer;font:600 12px Segoe UI;">Relief</button>'
+            + '<button id="pwaCamAuto" title="Affiner automatiquement le cap en comparant la silhouette MNT aux contours du paysage reel (detection du sky/relief)" '
+            + 'style="background:rgba(120,200,140,0.22);color:#fff;border:1px solid rgba(120,200,140,0.55);'
+            + 'border-radius:6px;padding:6px 10px;cursor:pointer;font:600 12px Segoe UI;">Affiner</button>'
             + '<button id="pwaCamCal" style="background:rgba(255,255,255,0.18);color:#fff;'
             + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Calibrer</button>'
@@ -1644,6 +1647,114 @@
             b.style.background = showRelief
                 ? 'rgba(255,100,180,0.65)' : 'rgba(255,100,180,0.2)';
             schedule();
+        };
+        // Affinage automatique : capture une frame, detecte le sky/relief
+        // par gradient vertical, et trouve le decalage en pixels qui aligne
+        // au mieux la silhouette MNT sur les contours reels.
+        function autoRefine() {
+            if (xrSession) return { err: 'Affiner non dispo en mode AR (camera prise par ARCore)' };
+            if (calibAz != null) return { err: 'Valide d\'abord le calage perspective' };
+            if (!res.rayProf || !res.rayProf.length) return { err: 'Pas de viewshed' };
+            if (!video.videoWidth || !video.videoHeight) return { err: 'Camera pas prete' };
+            var SW = 200, SH = 110;
+            var tmp = document.createElement('canvas');
+            tmp.width = SW; tmp.height = SH;
+            var tctx = tmp.getContext('2d');
+            try { tctx.drawImage(video, 0, 0, SW, SH); }
+            catch(_e) { return { err: 'Capture camera impossible' }; }
+            var img = tctx.getImageData(0, 0, SW, SH).data;
+            // Detection : pour chaque colonne, y du gradient vertical max
+            // (luminosite au-dessus - en-dessous, positif a la limite ciel/relief)
+            var detected = new Array(SW), gradVal = new Array(SW), maxG = 0;
+            for (var x = 0; x < SW; x++) {
+                var bestG = -Infinity, bestY = -1;
+                for (var y = 6; y < SH - 6; y++) {
+                    var above = 0, below = 0;
+                    for (var dy = 1; dy <= 5; dy++) {
+                        var iA = ((y - dy) * SW + x) * 4;
+                        var iB = ((y + dy) * SW + x) * 4;
+                        above += img[iA] + img[iA + 1] + img[iA + 2];
+                        below += img[iB] + img[iB + 1] + img[iB + 2];
+                    }
+                    var gv = above - below;
+                    if (gv > bestG) { bestG = gv; bestY = y; }
+                }
+                detected[x] = bestY; gradVal[x] = bestG;
+                if (bestG > maxG) maxG = bestG;
+            }
+            // Seuil : on ne garde que les colonnes a gradient marque (>40% du max)
+            var thresh = Math.max(maxG * 0.4, 200);
+            var nKept = 0;
+            for (var xx = 0; xx < SW; xx++) {
+                if (gradVal[xx] < thresh) detected[xx] = null;
+                else nKept++;
+            }
+            if (nKept < 25) return { err: 'Pas d\'horizon clair (gradient faible)' };
+            // Silhouette synthetique aux memes colonnes, au cap actuel
+            var fxPx = (SW / 2) / Math.tan((hfov / 2) * Math.PI / 180);
+            var synthY = new Array(SW);
+            var rp = res.rayProf;
+            for (var xs = 0; xs < SW; xs++) {
+                var aOff = Math.atan2(xs - SW / 2, fxPx) * 180 / Math.PI;
+                var az = ((heading + aOff) % 360 + 360) % 360;
+                var best = null, bd = 999;
+                for (var ri = 0; ri < rp.length; ri++) {
+                    var dd = Math.abs(((rp[ri].bearing - az + 540) % 360) - 180);
+                    if (dd < bd) { bd = dd; best = rp[ri]; }
+                }
+                if (best && best.sky && best.sky.ang > -89) {
+                    synthY[xs] = SH / 2
+                        - fxPx * Math.tan((best.sky.ang - pitch) * Math.PI / 180);
+                } else synthY[xs] = null;
+            }
+            // Recherche du decalage en pixels minimisant l'erreur quadratique
+            var bestShift = 0, bestErr = Infinity, bestN = 0;
+            var maxDx = Math.round(SW * 0.4);
+            for (var dx = -maxDx; dx <= maxDx; dx++) {
+                var sumSq = 0, cnt = 0;
+                for (var x2 = 0; x2 < SW; x2++) {
+                    if (detected[x2] == null) continue;
+                    var xss = x2 + dx;
+                    if (xss < 0 || xss >= SW || synthY[xss] == null) continue;
+                    var e = synthY[xss] - detected[x2];
+                    sumSq += e * e; cnt++;
+                }
+                if (cnt < 20) continue;
+                var avg = sumSq / cnt;
+                if (avg < bestErr) { bestErr = avg; bestShift = dx; bestN = cnt; }
+            }
+            if (bestErr === Infinity) return { err: 'Pas de correspondance' };
+            // Qualite : MSE doit etre raisonnable (sinon faux match)
+            if (bestErr > 300) return { err: 'Match peu fiable (silhouette tres differente du reel)' };
+            var deltaDeg = Math.atan2(bestShift, fxPx) * 180 / Math.PI;
+            // bestShift > 0 -> synth doit decaler droite, donc heading_reel > heading
+            // -> on AJOUTE deltaDeg a l'offset.
+            headingOffset = ((headingOffset + deltaDeg + 540) % 360) - 180;
+            saveOff(); applyOffset(); tick();
+            return { delta: deltaDeg, cols: bestN, mse: bestErr };
+        }
+        hud.querySelector('#pwaCamAuto').onclick = function() {
+            var b = hud.querySelector('#pwaCamAuto');
+            var oldBg = b.style.background;
+            b.style.background = 'rgba(120,200,140,0.65)';
+            // Affiche le relief pendant l'affinage (utile pour voir le resultat)
+            if (!showRelief) {
+                showRelief = true;
+                var br = hud.querySelector('#pwaCamRelief');
+                if (br) br.style.background = 'rgba(255,100,180,0.65)';
+                schedule();
+            }
+            setTimeout(function() {
+                var r = autoRefine();
+                b.style.background = oldBg;
+                if (r.err) {
+                    showToast('Affiner : ' + r.err, 5000);
+                } else {
+                    var s = (r.delta > 0 ? '+' : '') + r.delta.toFixed(1) + '°';
+                    showToast('Affine : ' + s + ' (sur ' + r.cols
+                        + ' colonnes, erreur ~' + Math.round(Math.sqrt(r.mse)) + ' px)', 4500);
+                }
+            }, 80);
         };
         function exitCalib() {
             calibAz = null;
