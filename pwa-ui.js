@@ -769,6 +769,80 @@
     // Position du soleil (NOAA simplifie) -- azimut a partir du Nord, sens
     // horaire ; precision ~0.5 deg, suffisant pour caler une boussole.
     // alt < 0 = sous l'horizon (sera signale a l'utilisateur).
+    // Calibrage par marche GPS : on echantillonne navigator.geolocation
+    // jusqu'a ce que le deplacement atteigne ~15 m, on en deduit le cap.
+    // Independant du magnetometre et du soleil ; precision ~5-15 deg
+    // (limitee par la precision GPS, ~5 m en plein air).
+    function _vsCalibrateByWalk(ov, onAligned) {
+        var ph = document.createElement('div');
+        ph.style.cssText = 'position:absolute;inset:46px 0 0 0;background:rgba(0,0,0,0.85);'
+            + 'color:#fff;padding:18px;font:14px Segoe UI;z-index:5;display:flex;'
+            + 'flex-direction:column;align-items:center;justify-content:flex-start;'
+            + 'gap:8px;overflow:auto;';
+        ph.innerHTML = '<div style="font-weight:700;font-size:15px;">'
+            + 'Estimation du cap par GPS</div>'
+            + '<div id="pwaWalkMsg" style="text-align:center;max-width:340px;'
+            + 'opacity:0.9;font-size:12px;">Tiens le téléphone comme en AR (camera '
+            + 'vers l\'avant) et marche en ligne droite dans cette direction.</div>'
+            + '<div style="font-size:42px;font-weight:700;color:#aef;margin-top:8px;" '
+            + 'id="pwaWalkDist">0.0 m</div>'
+            + '<div id="pwaWalkBar" style="width:80%;max-width:300px;height:6px;'
+            + 'background:rgba(255,255,255,0.18);border-radius:3px;overflow:hidden;">'
+            + '<div id="pwaWalkBarF" style="width:0%;height:100%;background:#4caf50;'
+            + 'transition:width 0.3s;"></div></div>'
+            + '<div id="pwaWalkLive" style="font-size:11px;opacity:0.75;">'
+            + 'En attente du GPS…</div>'
+            + '<button id="pwaWalkX" style="margin-top:16px;background:#f0ebe3;'
+            + 'color:#5a3a1a;border:none;border-radius:6px;padding:8px 16px;'
+            + 'cursor:pointer;font:600 12px Segoe UI;">Annuler</button>';
+        ov.appendChild(ph);
+        var first = null, watch = -1, done = false;
+        var TARGET_M = 15;
+        function stop(success, bearing) {
+            done = true;
+            if (watch !== -1) { try { navigator.geolocation.clearWatch(watch); } catch(_e){} }
+            ph.remove();
+            if (success) onAligned(bearing);
+        }
+        ph.querySelector('#pwaWalkX').onclick = function() { stop(false); };
+        if (!navigator.geolocation) {
+            ph.querySelector('#pwaWalkMsg').textContent = 'GPS indisponible sur cet appareil';
+            return;
+        }
+        watch = navigator.geolocation.watchPosition(function(pos) {
+            if (done) return;
+            var c = pos.coords;
+            var msg = ph.querySelector('#pwaWalkMsg');
+            var live = ph.querySelector('#pwaWalkLive');
+            // On attend une fix decemment precise pour fixer le point de depart
+            if (!first) {
+                if (c.accuracy != null && c.accuracy <= 25) {
+                    first = { lat: c.latitude, lon: c.longitude };
+                    msg.textContent = 'Marche tout droit dans la direction où tu pointes le téléphone.';
+                } else {
+                    live.textContent = 'Attente d\'un point precis (±'
+                        + (c.accuracy != null ? Math.round(c.accuracy) : '?') + ' m)…';
+                    return;
+                }
+            }
+            var d = _vsDist(first.lat, first.lon, c.latitude, c.longitude);
+            ph.querySelector('#pwaWalkDist').textContent = d.toFixed(1) + ' m';
+            ph.querySelector('#pwaWalkBarF').style.width =
+                Math.min(100, (d / TARGET_M) * 100).toFixed(0) + '%';
+            var liveTxt = 'precision GPS ±' + Math.round(c.accuracy || 0) + ' m';
+            if (d >= 3) {
+                var br = _vsBearing(first.lat, first.lon, c.latitude, c.longitude);
+                liveTxt += ' · cap estime ' + Math.round(br) + '°';
+            }
+            live.textContent = liveTxt;
+            if (d >= TARGET_M) {
+                stop(true, _vsBearing(first.lat, first.lon, c.latitude, c.longitude));
+            }
+        }, function(err) {
+            ph.querySelector('#pwaWalkMsg').textContent = 'GPS erreur : '
+                + (err && err.message ? err.message : err);
+        }, { enableHighAccuracy: true, maximumAge: 0, timeout: 60000 });
+    }
     function _vsSunAzEl(date, lat, lon) {
         var rad = Math.PI / 180;
         var jd = date.getTime() / 86400000 + 2440587.5;
@@ -1310,11 +1384,21 @@
                 + '<div style="font-size:11px;opacity:0.85;">Tiens le téléphone vers '
                 + 'le Nord (boussole, sens du soleil, app météo), puis tape ici.'
                 + '</div></span></div>';
+            var walkRow = '<div id="pwaCamCalWalk" class="pwaCamCalRow" '
+                + 'style="display:flex;gap:8px;align-items:center;padding:10px 4px;'
+                + 'background:rgba(120,200,140,0.10);border:1px solid rgba(120,200,140,0.35);'
+                + 'border-radius:6px;margin-bottom:6px;cursor:pointer;">'
+                + '<span style="width:14px;color:#4caf50;font-size:16px;">⇢</span>'
+                + '<span style="flex:1;"><b>Estimer depuis ma position (marcher ~15 m)</b>'
+                + '<div style="font-size:11px;opacity:0.85;">Tiens le téléphone comme en AR '
+                + '(camera vers l\'avant) et marche en ligne droite. Le GPS deduit le cap '
+                + 'de la trajectoire — aucun repere ni soleil necessaire.'
+                + '</div></span></div>';
             cm.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">'
                 + 'Calibrage du cap</div>'
                 + '<div style="font-size:11px;opacity:0.85;margin-bottom:8px;">'
-                + 'Trois manieres au choix : repere connu (liste), Soleil, ou Nord.</div>'
-                + northRow + sunRow
+                + 'Quatre manieres au choix : repere identifie, Soleil, Nord, ou marche GPS.</div>'
+                + walkRow + northRow + sunRow
                 + (sorted.length ? '<div style="font-size:11px;opacity:0.7;margin:8px 0 4px;">'
                     + 'Reperes visibles (tries par proximite angulaire)</div>' : '')
                 + (sorted.length ? sorted.slice(0, 30).map(function(it, idx) {
@@ -1351,6 +1435,8 @@
             if (nrow) nrow.onclick = function() { alignTo(0); };
             var srow = cm.querySelector('#pwaCamCalSun');
             if (srow) srow.onclick = function() { alignTo(sun.az); };
+            var wrow = cm.querySelector('#pwaCamCalWalk');
+            if (wrow) wrow.onclick = function() { closeCal(); _vsCalibrateByWalk(ov, alignTo); };
             cm.querySelectorAll('.pwaCamCalRow').forEach(function(rw) {
                 if (!rw.hasAttribute('data-i')) return;
                 rw.onclick = function() {
