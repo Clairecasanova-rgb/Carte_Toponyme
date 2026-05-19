@@ -833,9 +833,15 @@
             var slice = pts.slice(i, i + ch);
             return doFetch(slice, 0).then(function(j) {
                 var ev = (j && j.elevations) || [];
-                ev.forEach(function(z) {
+                // ALIGNEMENT STRICT : chaque lot doit fournir EXACTEMENT
+                // slice.length altitudes. L'IGN peut en renvoyer moins/plus :
+                // sans ce garde-fou, tout l'index se decale et les cibles
+                // (points perso) recuperaient l'altitude d'un echantillon
+                // lointain -> elles se retrouvaient "sur des cretes".
+                for (var qi = 0; qi < slice.length; qi++) {
+                    var z = ev[qi];
                     out.push((typeof z === 'number' && z > -1000) ? z : 0);
-                });
+                }
                 i += slice.length;
                 if (onProgress) onProgress(Math.min(i, pts.length), pts.length);
                 return (i < pts.length) ? _vsDelay(postOk ? 150 : 120).then(next) : out;
