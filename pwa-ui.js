@@ -1446,7 +1446,7 @@
         var minA = 90, maxA = -90;
         rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
         res.targets.forEach(function(t) { if (!t.visible) return; if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
-        (res.peaks || []).forEach(function(p) { if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
+        (res.peaks || []).forEach(function(p) { if (!p.visible) return; if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
         (res.patrimoine || []).forEach(function(p) { if (!p.visible) return; if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
         var topA = Math.min(75, Math.ceil(maxA + 4));
         var botA = Math.max(-35, Math.floor(Math.min(-4, minA - 3)));
@@ -1533,31 +1533,30 @@
                 ctx.fillStyle = '#1b2631'; ctx.fillText(lbl, lx, ly);
             }
         });
-        // Sommets nommes (OSM) : tous affiches (reperes d'orientation) ;
-        // ceux qui ne sont pas en ligne de vue directe sont grises + "(masque)".
+        // Sommets nommes (OSM) : UNIQUEMENT ceux dans le champ de visibilite
+        // (les masques ne sont plus positionnes sur la vue).
         (res.peaks || []).forEach(function(p) {
+            if (!p.visible) return;
             if (!res.full) {
                 var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
                 if (dp > res.azW / 2) return;
             }
             var x = X(p.bearing), y = Y(p.ang);
-            var col = p.visible ? '#8a5a2b' : '#9aa3a3';
-            ctx.strokeStyle = p.visible ? 'rgba(138,90,43,0.55)' : 'rgba(154,163,163,0.5)';
+            ctx.strokeStyle = 'rgba(138,90,43,0.55)';
             ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
             ctx.setLineDash([]);
             ctx.beginPath();                                  // triangle (mont)
             ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 4); ctx.lineTo(x + 6, y + 4);
-            ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+            ctx.closePath(); ctx.fillStyle = '#8a5a2b'; ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
-            var lbl = p.name + (p.elev ? ' ' + p.elev + ' m' : '')
-                + (p.visible ? '' : ' (masque)');
+            var lbl = p.name + (p.elev ? ' ' + p.elev + ' m' : '');
             ctx.font = 'italic 10px Segoe UI';
             var tw = ctx.measureText(lbl).width;
             var lx = Math.min(W - tw - 4, x + 8), ly = Math.max(22, y - 8);
             ctx.fillStyle = 'rgba(255,255,255,0.82)';
             ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
-            ctx.fillStyle = p.visible ? '#5a3a1a' : '#6b7373';
+            ctx.fillStyle = '#5a3a1a';
             ctx.fillText(lbl, lx, ly);
         });
         // Points Patrimoine (losange rose) : UNIQUEMENT ceux dans le champ de
@@ -1638,7 +1637,7 @@
             if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
         });
         (res.peaks || []).forEach(function(t) {
-            if (!inFov(azp(t.bearing))) return;
+            if (!t.visible || !inFov(azp(t.bearing))) return;
             if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
         });
         (res.patrimoine || []).forEach(function(t) {
@@ -1726,8 +1725,9 @@
         // Tous affiches dans le champ ; non visibles grises.
         function drawPin(o, kind) {
             var a = azp(o.bearing); if (!inFov(a)) return;
-            // Cibles ET patrimoine : uniquement si dans le champ de visibilite.
-            if ((kind === 'target' || kind === 'patri') && !o.visible) return;
+            // Tous (cibles, sommets, patrimoine) : uniquement si dans le
+            // champ de visibilite (les masques ne sont plus positionnes).
+            if (!o.visible) return;
             var x = projX(a), y = projY(a, o.ang);
             var vis = o.visible;
             var col = !vis ? '#9aa3a3'
@@ -1873,6 +1873,7 @@
         var canMap = !!(res.rayProf && res.stepM && res.N);
         var hasMini = !!(res.bounds && res.planiURL);
         var _vsMode = 'cyl';  // 'cyl' (panoramique) | 'persp' (rectiligne)
+        var _setPerspAz = null, _perspTmr = null;  // pilotage perspective depuis la mini-carte
         function _curPanoURL() {
             return (_vsMode === 'persp' && res.perspectiveURL)
                 ? res.perspectiveURL : res.panoramaURL;
@@ -2134,6 +2135,13 @@
             var az = _vsBearing(res.lat, res.lon, la, lo);
             var dist = _vsDist(res.lat, res.lon, la, lo);
             syncFromAz(az, dist, null);
+            // En mode Perspective : recentrer la vue sur l'azimut pointe
+            // (immediat au clic/tap, leger differe au survol).
+            if (_vsMode === 'persp' && _setPerspAz) {
+                var imm = (ev.type === 'click' || ev.type === 'touchstart'
+                    || ev.type === 'touchend');
+                _setPerspAz(az, imm);
+            }
         }
         pImg.onload = function() {
             pReady = true;
@@ -2155,6 +2163,7 @@
             };
             mImg.src = res.planiURL;
             mini.addEventListener('mousemove', onMini);
+            mini.addEventListener('click', onMini);
             mini.addEventListener('touchmove', onMini, { passive: false });
             mini.addEventListener('touchstart', onMini, { passive: false });
         }
@@ -2214,6 +2223,14 @@
             pazEl.oninput = function() { pazv.textContent = pazEl.value; };
             pazEl.onchange = rebuildPersp;
             pfovEl.onchange = rebuildPersp;
+            // Permet a la mini-carte de piloter la direction (debounce si survol).
+            _setPerspAz = function(az, immediate) {
+                az = Math.round(((az % 360) + 360) % 360);
+                pazEl.value = String(az); pazv.textContent = String(az);
+                if (_perspTmr) { clearTimeout(_perspTmr); _perspTmr = null; }
+                if (immediate) rebuildPersp();
+                else _perspTmr = setTimeout(function() { _perspTmr = null; rebuildPersp(); }, 180);
+            };
             function rotate(d) {
                 var v = ((parseInt(pazEl.value, 10) || 0) + d + 360) % 360;
                 pazEl.value = String(v); pazv.textContent = String(v); rebuildPersp();
