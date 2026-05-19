@@ -963,6 +963,233 @@
         });
     }
 
+    // Vue CAMERA (realite augmentee legere) : flux camera arriere + cap
+    // boussole + overlay approximatif des elements visibles (sommets,
+    // patrimoine, points perso) + liste du secteur pointe. Calage indicatif
+    // (boussole/FOV web imprecis) : sert a identifier, pas a viser au degre.
+    function _vsCameraView(res) {
+        var items = [];
+        (res.peaks || []).forEach(function(p) {
+            if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
+                dist: p.dist, kind: 'peak', elev: p.elev });
+        });
+        (res.patrimoine || []).forEach(function(p) {
+            if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
+                dist: p.dist, kind: 'patri' });
+        });
+        (res.targets || []).forEach(function(t) {
+            if (t.visible) items.push({ name: t.name, bearing: t.bearing, ang: t.ang,
+                dist: t.dist, kind: 'cible' });
+        });
+        var R = res.radiusM || 1;
+        function dTxt(d) {
+            return d >= 1000 ? (d / 1000).toFixed(d >= 10000 ? 0 : 1) + ' km'
+                : Math.round(d) + ' m';
+        }
+        function card(az) {
+            return ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(((az % 360) / 45)) % 8];
+        }
+        var ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100085;background:#000;'
+            + 'font-family:Segoe UI,sans-serif;overflow:hidden;';
+        var video = document.createElement('video');
+        video.setAttribute('playsinline', ''); video.muted = true; video.autoplay = true;
+        video.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
+            + 'object-fit:cover;background:#111;';
+        var canvas = document.createElement('canvas');
+        canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
+            + 'pointer-events:none;';
+        var hud = document.createElement('div');
+        hud.style.cssText = 'position:absolute;top:0;left:0;right:0;'
+            + 'display:flex;align-items:center;gap:10px;padding:8px 12px;color:#fff;'
+            + 'background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0));font:600 14px Segoe UI;';
+        hud.innerHTML = '<span id="pwaCamCap">Cap —</span>'
+            + '<span style="font-weight:400;font-size:11px;opacity:0.85;">calage approximatif</span>'
+            + '<span style="flex:1"></span>'
+            + '<button id="pwaCamList" style="background:rgba(255,255,255,0.18);color:#fff;'
+            + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
+            + 'cursor:pointer;font:600 12px Segoe UI;">Liste</button>'
+            + '<button id="pwaCamX" style="background:#f0ebe3;color:#5a3a1a;border:none;'
+            + 'border-radius:6px;padding:6px 12px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>';
+        var manual = document.createElement('div');
+        manual.style.cssText = 'position:absolute;top:46px;left:0;right:0;display:none;'
+            + 'padding:6px 12px;color:#fff;background:rgba(0,0,0,0.4);font:600 11px Segoe UI;';
+        manual.innerHTML = 'Boussole indisponible — direction manuelle : '
+            + '<span id="pwaCamMv">0</span>°<br>'
+            + '<input type="range" id="pwaCamM" min="0" max="359" value="0" style="width:100%;">';
+        var list = document.createElement('div');
+        list.style.cssText = 'position:absolute;left:0;right:0;bottom:0;max-height:42vh;'
+            + 'overflow-y:auto;background:rgba(0,0,0,0.62);color:#fff;padding:8px 10px;'
+            + 'font:13px Segoe UI;display:none;';
+        ov.appendChild(video); ov.appendChild(canvas); ov.appendChild(hud);
+        ov.appendChild(manual); ov.appendChild(list);
+        var fe = document.fullscreenElement || document.webkitFullscreenElement;
+        (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
+
+        var heading = 0, pitch = 0, haveHeading = false, stream = null, raf = 0, dead = false;
+        var hfov = 63;                                   // champ camera arriere ~estime
+        function sizeCanvas() {
+            canvas.width = ov.clientWidth; canvas.height = ov.clientHeight;
+        }
+        sizeCanvas();
+        function glyph(g, x, y, kind, col, rr) {
+            g.beginPath();
+            if (kind === 'peak') { g.moveTo(x, y - rr); g.lineTo(x - rr, y + rr * 0.7); g.lineTo(x + rr, y + rr * 0.7); g.closePath(); }
+            else if (kind === 'patri') { g.moveTo(x, y - rr); g.lineTo(x + rr, y); g.lineTo(x, y + rr); g.lineTo(x - rr, y); g.closePath(); }
+            else g.arc(x, y, rr, 0, 2 * Math.PI);
+            g.fillStyle = col; g.fill();
+            g.strokeStyle = '#fff'; g.lineWidth = 1.6; g.stroke();
+        }
+        function draw() {
+            raf = 0;
+            if (dead) return;
+            var W = canvas.width, H = canvas.height, g = canvas.getContext('2d');
+            g.clearRect(0, 0, W, H);
+            var f = (W / 2) / Math.tan((hfov / 2) * Math.PI / 180);
+            var cx = W / 2, cyH = H / 2;
+            // horizon + reticule + cap
+            var hy = cyH + f * Math.tan(pitch * Math.PI / 180);
+            g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(0, hy); g.lineTo(W, hy); g.stroke();
+            g.strokeStyle = 'rgba(255,255,255,0.6)';
+            g.beginPath(); g.moveTo(cx, cyH - 14); g.lineTo(cx, cyH + 14);
+            g.moveTo(cx - 14, cyH); g.lineTo(cx + 14, cyH); g.stroke();
+            // marqueurs reperes cardinaux
+            g.font = 'bold 13px Segoe UI'; g.textAlign = 'center';
+            for (var cdir = 0; cdir < 360; cdir += 45) {
+                var ca = ((cdir - heading + 540) % 360) - 180;
+                if (Math.abs(ca) <= hfov / 2) {
+                    var cxp = cx + f * Math.tan(ca * Math.PI / 180);
+                    g.fillStyle = 'rgba(255,255,255,0.75)';
+                    g.fillText(card(cdir), cxp, 60);
+                    g.strokeStyle = 'rgba(255,255,255,0.25)';
+                    g.beginPath(); g.moveTo(cxp, 64); g.lineTo(cxp, H); g.stroke();
+                }
+            }
+            g.textAlign = 'left';
+            var rects = [];
+            items.slice().sort(_vsByDist).forEach(function(it) {
+                var a = ((it.bearing - heading + 540) % 360) - 180;
+                if (Math.abs(a) > hfov / 2) return;
+                var x = cx + f * Math.tan(a * Math.PI / 180);
+                var y = cyH - f * Math.tan((it.ang - pitch) * Math.PI / 180);
+                y = Math.max(8, Math.min(H - 8, y));
+                var col = _vsPtCol(it.kind === 'patri' ? 'patri'
+                    : it.kind === 'peak' ? 'peak' : 'target', it.dist, R);
+                var rr = Math.max(4, 7 - 3 * Math.min(1, it.dist / R));
+                glyph(g, x, y, it.kind, col, rr);
+                _vsPlaceLabel(g, rects, x, y,
+                    it.name + ' · ' + dTxt(it.dist),
+                    '12px Segoe UI', '#fff', W, H);
+            });
+        }
+        function schedule() { if (!raf && !dead) raf = requestAnimationFrame(draw); }
+        function refreshList() {
+            var inFov = items.filter(function(it) {
+                var a = Math.abs(((it.bearing - heading + 540) % 360) - 180);
+                return a <= Math.max(hfov / 2, 35);
+            }).map(function(it) {
+                it._off = ((it.bearing - heading + 540) % 360) - 180; return it;
+            }).sort(function(a, b) {
+                return Math.abs(a._off) - Math.abs(b._off) || a.dist - b.dist;
+            });
+            var gl = { peak: '▲', patri: '◆', cible: '●' };
+            list.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">Dans la '
+                + 'direction (cap ' + Math.round(heading) + '° ' + card(heading) + ') — '
+                + inFov.length + ' element(s)</div>'
+                + (inFov.length ? inFov.map(function(it) {
+                    var off = Math.round(it._off);
+                    var ar = off < -1 ? ('‹ ' + (-off) + '°')
+                        : off > 1 ? (off + '° ›') : '◉ face';
+                    return '<div style="display:flex;gap:8px;align-items:center;'
+                        + 'padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.12);">'
+                        + '<span style="width:54px;color:#cfd8dc;">' + ar + '</span>'
+                        + '<span style="width:14px;color:' + _vsPtCol(it.kind === 'patri' ? 'patri'
+                            : it.kind === 'peak' ? 'peak' : 'target', it.dist, R) + ';">'
+                        + (gl[it.kind] || '●') + '</span>'
+                        + '<span style="flex:1;">' + escapeHtml(it.name) + '</span>'
+                        + '<span style="color:#b0bec5;">' + dTxt(it.dist) + '</span></div>';
+                }).join('') : '<div style="opacity:0.7;">Rien de visible dans cette direction.</div>');
+        }
+        var listOpen = false;
+        function tick() { schedule(); if (listOpen) refreshList(); }
+        var capEl = hud.querySelector('#pwaCamCap');
+        var lastCapUpd = 0;
+        function setHeading(h) {
+            heading = ((h % 360) + 360) % 360;
+            var now = Date.now();
+            if (now - lastCapUpd > 120) {
+                capEl.textContent = 'Cap ' + Math.round(heading) + '° ' + card(heading);
+                lastCapUpd = now;
+            }
+            tick();
+        }
+        function onOri(ev) {
+            var hd = null;
+            if (typeof ev.webkitCompassHeading === 'number') hd = ev.webkitCompassHeading;
+            else if (typeof ev.alpha === 'number') hd = 360 - ev.alpha;
+            if (typeof ev.beta === 'number') pitch = Math.max(-45, Math.min(45, ev.beta - 90));
+            if (hd != null && isFinite(hd)) {
+                var so = 0;
+                try { so = (screen.orientation && screen.orientation.angle)
+                    || window.orientation || 0; } catch(_e) {}
+                haveHeading = true;
+                setHeading(hd + so);
+                if (manual.style.display !== 'none') manual.style.display = 'none';
+            } else { tick(); }
+        }
+        function startOri() {
+            var add = function() {
+                window.addEventListener('deviceorientationabsolute', onOri, true);
+                window.addEventListener('deviceorientation', onOri, true);
+            };
+            try {
+                if (typeof DeviceOrientationEvent !== 'undefined'
+                    && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    DeviceOrientationEvent.requestPermission()
+                        .then(function(s) { if (s === 'granted') add(); }).catch(function(){});
+                } else add();
+            } catch(_e) {}
+            // Si pas de cap apres 3 s -> direction manuelle
+            setTimeout(function() {
+                if (!haveHeading && !dead) {
+                    manual.style.display = 'block';
+                    var mr = manual.querySelector('#pwaCamM'), mv = manual.querySelector('#pwaCamMv');
+                    mr.oninput = function() { mv.textContent = mr.value; setHeading(parseInt(mr.value, 10) || 0); };
+                }
+            }, 3000);
+        }
+        navigator.mediaDevices && navigator.mediaDevices.getUserMedia
+            ? navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: 'environment' } }, audio: false
+              }).then(function(s) {
+                stream = s; video.srcObject = s; video.play().catch(function(){});
+              }).catch(function(e) {
+                video.style.background = '#222';
+                capEl.textContent = 'Camera indisponible (' + (e && e.name || 'refus') + ')';
+              })
+            : (capEl.textContent = 'Camera non supportee');
+        startOri();
+        tick();
+        var onResize = function() { sizeCanvas(); schedule(); };
+        window.addEventListener('resize', onResize);
+        hud.querySelector('#pwaCamList').onclick = function() {
+            listOpen = !listOpen;
+            list.style.display = listOpen ? 'block' : 'none';
+            if (listOpen) refreshList();
+        };
+        function close() {
+            dead = true;
+            if (raf) cancelAnimationFrame(raf);
+            window.removeEventListener('resize', onResize);
+            window.removeEventListener('deviceorientationabsolute', onOri, true);
+            window.removeEventListener('deviceorientation', onOri, true);
+            try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
+            ov.remove();
+        }
+        hud.querySelector('#pwaCamX').onclick = close;
+    }
+
     // IndexedDB : vues sauvegardees
     function _vsDbPut(v) {
         return openDb().then(function(db) {
@@ -2080,6 +2307,7 @@
             '<div id="pwaVSread" style="font-size:12px;color:#5a3a1a;margin-top:8px;min-height:16px;">Survoler une vue pour se reperer sur l\'autre.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">' +
             '<button id="pwaVSbig" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Agrandir</button>' +
+            '<button id="pwaVScam" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Camera</button>' +
             '<button id="pwaVSdl" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Telecharger</button>' +
             (canMap ? '<button id="pwaVSmap" style="background:#1e8449;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer sur la carte</button>' : '') +
             '<button id="pwaVSsave" style="background:#8b4513;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
@@ -2127,6 +2355,9 @@
         m.querySelector('#pwaVSbig').onclick = function() {
             _vsSetEnlarged(!_vsEnlarged);
         };
+        // Vue Camera (realite augmentee legere) : flux camera + cap boussole
+        // + overlay approximatif des elements visibles + liste du secteur.
+        m.querySelector('#pwaVScam').onclick = function() { _vsCameraView(res); };
         // Telecharger en local : PNG du panorama + JSON des donnees de la vue
         m.querySelector('#pwaVSdl').onclick = function() {
             var safe = (res.name || 'vue-tangentielle')
