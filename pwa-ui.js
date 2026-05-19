@@ -1066,7 +1066,8 @@
     // boussole + overlay approximatif des elements visibles (sommets,
     // patrimoine, points perso) + liste du secteur pointe. Calage indicatif
     // (boussole/FOV web imprecis) : sert a identifier, pas a viser au degre.
-    function _vsCameraView(res) {
+    function _vsCameraView(res, opts) {
+        opts = opts || {};
         var items = [];
         (res.peaks || []).forEach(function(p) {
             if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
@@ -1136,8 +1137,14 @@
         list.style.cssText = 'position:absolute;left:0;right:0;bottom:0;max-height:42vh;'
             + 'overflow-y:auto;background:rgba(0,0,0,0.62);color:#fff;padding:8px 10px;'
             + 'font:13px Segoe UI;display:none;';
+        // Bandeau de calage par perspective (visible seulement en mode calage)
+        var calibPane = document.createElement('div');
+        calibPane.style.cssText = 'position:absolute;left:0;right:0;bottom:0;'
+            + 'background:linear-gradient(rgba(0,0,0,0),rgba(168,58,138,0.88));'
+            + 'color:#fff;padding:14px 16px 16px;font:13px Segoe UI;display:none;'
+            + 'z-index:4;';
         ov.appendChild(video); ov.appendChild(canvas); ov.appendChild(hud);
-        ov.appendChild(manual); ov.appendChild(list);
+        ov.appendChild(manual); ov.appendChild(list); ov.appendChild(calibPane);
         var fe = document.fullscreenElement || document.webkitFullscreenElement;
         (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
 
@@ -1202,15 +1209,28 @@
         // Methode PeakLens-like, calage manuel : on ajuste +/-1deg ou
         // Calibrer jusqu'a ce que la silhouette epouse le relief reel.
         var showRelief = false;
+        // Mode "calage par perspective figee" : silhouette dessinee comme
+        // si heading == calibAz (donc immobile a l'ecran quand l'utilisateur
+        // pivote). Il oriente physiquement le tel pour superposer, et tape
+        // "Caler ici" -> headingOffset = calibAz - rawHeading.
+        var calibAz = (typeof opts.calibAz === 'number') ? opts.calibAz : null;
+        if (calibAz != null) showRelief = true;
         function drawRelief(g, W, H, f, cx, cyH) {
             if (!showRelief || !res.rayProf || !res.rayProf.length) return;
+            // En mode calage, on figue la silhouette au centre de l'ecran
+            // (anchoree sur calibAz), sinon elle suit le cap (heading).
+            var anchor = (calibAz != null) ? calibAz : heading;
             var rp = res.rayProf, pts = [];
             for (var r = 0; r < rp.length; r++) {
-                var a = ((rp[r].bearing - heading + 540) % 360) - 180;
+                var a = ((rp[r].bearing - anchor + 540) % 360) - 180;
                 if (Math.abs(a) > hfov / 2 + 2) continue;
                 var sky = rp[r].sky ? rp[r].sky.ang : -90;
                 var x = cx + f * Math.tan(a * Math.PI / 180);
-                var y = cyH - f * Math.tan((sky - pitch) * Math.PI / 180);
+                // En mode calage le pitch reel du tel doit aussi etre ignore
+                // pour la silhouette (sinon elle saute en haut/bas et c'est
+                // illisible). On suppose le tel tenu droit, pitch ~ 0.
+                var refPitch = (calibAz != null) ? 0 : pitch;
+                var y = cyH - f * Math.tan((sky - refPitch) * Math.PI / 180);
                 y = Math.max(-1000, Math.min(H + 1000, y));
                 pts.push({ x: x, y: y, a: a });
             }
@@ -1458,6 +1478,49 @@
                 ? 'rgba(255,100,180,0.65)' : 'rgba(255,100,180,0.2)';
             schedule();
         };
+        function exitCalib() {
+            calibAz = null;
+            calibPane.style.display = 'none';
+            // Relief reste affiche apres calage (suit le cap maintenant)
+            schedule();
+            if (hud.querySelector('#pwaCamRelief')) {
+                hud.querySelector('#pwaCamRelief').style.background =
+                    showRelief ? 'rgba(255,100,180,0.65)' : 'rgba(255,100,180,0.2)';
+            }
+        }
+        if (calibAz != null) {
+            calibPane.style.display = 'block';
+            var azStr = Math.round(calibAz) + '° '
+                + ['N','NE','E','SE','S','SO','O','NO']
+                  [Math.round(((calibAz % 360) / 45)) % 8];
+            calibPane.innerHTML = '<div style="font-weight:700;font-size:14px;'
+                + 'margin-bottom:6px;">Calage sur la perspective (azimut ' + azStr + ')</div>'
+                + '<div style="font-size:12px;opacity:0.95;margin-bottom:10px;">'
+                + 'La silhouette rose est figee au centre. Tourne le téléphone pour '
+                + 'que le RELIEF REEL derriere la camera epouse cette silhouette, '
+                + 'puis valide.</div>'
+                + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+                + '<button id="pwaCamCalibX" style="background:rgba(255,255,255,0.18);'
+                + 'color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:6px;'
+                + 'padding:8px 14px;cursor:pointer;font:600 12px Segoe UI;">'
+                + 'Annuler le calage</button>'
+                + '<button id="pwaCamCalibOk" style="background:#fff;color:#5a1a4a;'
+                + 'border:none;border-radius:6px;padding:8px 14px;cursor:pointer;'
+                + 'font:700 13px Segoe UI;">✓ Caler ici</button></div>';
+            calibPane.querySelector('#pwaCamCalibX').onclick = exitCalib;
+            calibPane.querySelector('#pwaCamCalibOk').onclick = function() {
+                // headingOffset tel que (rawHeading + offset) % 360 = calibAz
+                var target = calibAz;
+                headingOffset = ((target - rawHeading + 540) % 360) - 180;
+                saveOff(); applyOffset(); tick();
+                exitCalib();
+            };
+            // Etat visuel du bouton Relief : actif et verrouille en mode calage
+            setTimeout(function() {
+                var b = hud.querySelector('#pwaCamRelief');
+                if (b) b.style.background = 'rgba(255,100,180,0.65)';
+            }, 0);
+        }
         // Calibrage : choisir un element visible que l'utilisateur pointe au
         // centre de l'ecran -> on aligne le cap sur sa direction connue.
         hud.querySelector('#pwaCamCal').onclick = function() {
@@ -2919,6 +2982,7 @@
             '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">' +
             '<button id="pwaVSbig" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Agrandir</button>' +
             '<button id="pwaVScam" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Camera</button>' +
+            '<button id="pwaVScamCal" title="Ouvrir la camera en mode calage : superposer la silhouette figee de cette perspective et orienter le telephone pour la faire coincider avec le reel" style="background:#a83a8a;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Camera : caler sur cette vue</button>' +
             '<button id="pwaVSdl" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Telecharger</button>' +
             (canMap ? '<button id="pwaVSmap" style="background:#1e8449;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer sur la carte</button>' : '') +
             '<button id="pwaVSsave" style="background:#8b4513;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
@@ -2969,6 +3033,14 @@
         // Vue Camera (realite augmentee legere) : flux camera + cap boussole
         // + overlay approximatif des elements visibles + liste du secteur.
         m.querySelector('#pwaVScam').onclick = function() { _vsCameraView(res); };
+        var camCalBtn = m.querySelector('#pwaVScamCal');
+        if (camCalBtn) camCalBtn.onclick = function() {
+            // Az de la perspective courante (modifiable par le slider direction)
+            var az = (typeof res.perspAz === 'number')
+                ? ((res.perspAz % 360) + 360) % 360 : 0;
+            var fov = (typeof res.perspFov === 'number') ? res.perspFov : null;
+            _vsCameraView(res, { calibAz: az, calibFov: fov });
+        };
         // Telecharger en local : PNG du panorama + JSON des donnees de la vue
         m.querySelector('#pwaVSdl').onclick = function() {
             var safe = (res.name || 'vue-tangentielle')
