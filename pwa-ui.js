@@ -1220,39 +1220,90 @@
             // En mode calage, on figue la silhouette au centre de l'ecran
             // (anchoree sur calibAz), sinon elle suit le cap (heading).
             var anchor = (calibAz != null) ? calibAz : heading;
-            var rp = res.rayProf, pts = [];
+            var refPitch = (calibAz != null) ? 0 : pitch;
+            var rp = res.rayProf;
+            var hasBands = !!(rp[0] && rp[0].bandMax && res.bandOut);
+            // Filtre les rayons dans le FOV + projecte chaque bande
+            var inFov = [];
             for (var r = 0; r < rp.length; r++) {
                 var a = ((rp[r].bearing - anchor + 540) % 360) - 180;
                 if (Math.abs(a) > hfov / 2 + 2) continue;
-                var sky = rp[r].sky ? rp[r].sky.ang : -90;
                 var x = cx + f * Math.tan(a * Math.PI / 180);
-                // En mode calage le pitch reel du tel doit aussi etre ignore
-                // pour la silhouette (sinon elle saute en haut/bas et c'est
-                // illisible). On suppose le tel tenu droit, pitch ~ 0.
-                var refPitch = (calibAz != null) ? 0 : pitch;
-                var y = cyH - f * Math.tan((sky - refPitch) * Math.PI / 180);
-                y = Math.max(-1000, Math.min(H + 1000, y));
-                pts.push({ x: x, y: y, a: a });
+                inFov.push({ x: x, a: a, ray: rp[r] });
             }
-            if (pts.length < 2) return;
-            pts.sort(function(p, q) { return p.a - q.a; });
-            // Aplat semi-transparent sous la silhouette
-            g.fillStyle = 'rgba(255,100,180,0.18)';
-            g.beginPath();
-            g.moveTo(pts[0].x, H + 4);
-            for (var i = 0; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
-            g.lineTo(pts[pts.length - 1].x, H + 4);
-            g.closePath();
-            g.fill();
-            // Trace de l'horizon synthetique
-            g.strokeStyle = 'rgba(255,100,180,0.9)';
-            g.lineWidth = 2;
-            g.beginPath();
-            for (var j = 0; j < pts.length; j++) {
-                if (j === 0) g.moveTo(pts[j].x, pts[j].y);
-                else g.lineTo(pts[j].x, pts[j].y);
+            if (inFov.length < 2) return;
+            inFov.sort(function(p, q) { return p.a - q.a; });
+            function yFromAng(ang) {
+                if (ang == null || ang <= -89) return H + 4;
+                var y = cyH - f * Math.tan((ang - refPitch) * Math.PI / 180);
+                return Math.max(-1500, Math.min(H + 8, y));
             }
-            g.stroke();
+            if (hasBands) {
+                // SILHOUETTES PAR BANDE : peindre du loin au proche pour que
+                // les reliefs proches OCCLUDENT les plus eloignes. Coloration
+                // perspective : loin = bleute pale (atmosphere), proche =
+                // rose vif (premier plan). Meme schema que le panorama.
+                var NB = res.bandOut.length;
+                var bandFill = function(t, al) {
+                    // proche (t=0) : rose vif ; loin (t=1) : bleu-violet pale
+                    return 'rgba(' + Math.round(255 - 105 * t) + ','
+                        + Math.round(100 + 60 * t) + ','
+                        + Math.round(180 - 30 * t) + ',' + al + ')';
+                };
+                var bandLine = function(t) {
+                    return 'rgba(' + Math.round((255 - 130 * t) * 0.85) + ','
+                        + Math.round((80 + 60 * t) * 0.9) + ','
+                        + Math.round((180 - 30 * t) * 0.9) + ',0.92)';
+                };
+                for (var bnd = NB - 1; bnd >= 0; bnd--) {
+                    var t = (NB > 1) ? bnd / (NB - 1) : 0;     // 0=proche 1=loin
+                    g.fillStyle = bandFill(t, 0.34 - 0.12 * t); // proche plus opaque
+                    g.beginPath();
+                    g.moveTo(inFov[0].x, H + 4);
+                    for (var i = 0; i < inFov.length; i++) {
+                        var aa = inFov[i].ray.bandMax
+                            ? inFov[i].ray.bandMax[bnd] : -90;
+                        g.lineTo(inFov[i].x, yFromAng(aa));
+                    }
+                    g.lineTo(inFov[inFov.length - 1].x, H + 4);
+                    g.closePath(); g.fill();
+                    // Trace de l'arete (plus epais en premier plan)
+                    g.strokeStyle = bandLine(t);
+                    g.lineWidth = (bnd === 0) ? 2.2 : (bnd === 1 ? 1.7 : 1.3);
+                    g.beginPath();
+                    var started = false;
+                    for (var k = 0; k < inFov.length; k++) {
+                        var av = inFov[k].ray.bandMax
+                            ? inFov[k].ray.bandMax[bnd] : -90;
+                        if (av != null && av > -89) {
+                            var py = yFromAng(av);
+                            if (!started) { g.moveTo(inFov[k].x, py); started = true; }
+                            else g.lineTo(inFov[k].x, py);
+                        } else { started = false; }
+                    }
+                    g.stroke();
+                }
+            } else {
+                // Repli : silhouette unique du skyline (anciens res sans bandMax)
+                g.fillStyle = 'rgba(255,100,180,0.18)';
+                g.beginPath();
+                g.moveTo(inFov[0].x, H + 4);
+                for (var ii = 0; ii < inFov.length; ii++) {
+                    g.lineTo(inFov[ii].x,
+                        yFromAng(inFov[ii].ray.sky ? inFov[ii].ray.sky.ang : -90));
+                }
+                g.lineTo(inFov[inFov.length - 1].x, H + 4);
+                g.closePath(); g.fill();
+                g.strokeStyle = 'rgba(255,100,180,0.9)';
+                g.lineWidth = 2;
+                g.beginPath();
+                for (var jj = 0; jj < inFov.length; jj++) {
+                    var ay = yFromAng(inFov[jj].ray.sky ? inFov[jj].ray.sky.ang : -90);
+                    if (jj === 0) g.moveTo(inFov[jj].x, ay);
+                    else g.lineTo(inFov[jj].x, ay);
+                }
+                g.stroke();
+            }
         }
         function draw() {
             raf = 0;
