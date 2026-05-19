@@ -886,6 +886,17 @@
             + 'image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;}';
         (document.head || document.documentElement).appendChild(s);
     }
+    // Marqueur Patrimoine sur la carte 2D : losange (forme differente des
+    // sommets qui sont des cercles), couleur rose.
+    function _vsDiamondIcon(color) {
+        return L.divIcon({
+            className: 'pwa-vs-diamond',
+            html: '<div style="width:11px;height:11px;background:' + color
+                + ';border:2px solid #fff;transform:rotate(45deg);'
+                + 'box-shadow:0 0 2px rgba(0,0,0,0.45);"></div>',
+            iconSize: [17, 17], iconAnchor: [8, 8]
+        });
+    }
 
     // IndexedDB : vues sauvegardees
     function _vsDbPut(v) {
@@ -1333,9 +1344,8 @@
                 _vsFetchPatrimoine(res, function(pa) {
                     if (pa && pa.length && _vsLayer) {
                         pa.forEach(function(p) {
-                            L.circleMarker([p.lat, p.lon], {
-                                radius: 4, weight: 2, color: '#fff',
-                                fillColor: p.visible ? '#7c2d12' : '#9aa3a3', fillOpacity: 1
+                            L.marker([p.lat, p.lon], {
+                                icon: _vsDiamondIcon(p.visible ? '#e8458f' : '#cf8fb5')
                             }).bindPopup('◆ ' + escapeHtml(p.name)
                                 + (p.nature ? '<br>' + escapeHtml(p.nature) : '')
                                 + '<br>' + (p.visible ? 'VISIBLE' : 'masque')
@@ -1437,7 +1447,7 @@
         rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
         res.targets.forEach(function(t) { if (!t.visible) return; if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
         (res.peaks || []).forEach(function(p) { if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
-        (res.patrimoine || []).forEach(function(p) { if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
+        (res.patrimoine || []).forEach(function(p) { if (!p.visible) return; if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
         var topA = Math.min(75, Math.ceil(maxA + 4));
         var botA = Math.max(-35, Math.floor(Math.min(-4, minA - 3)));
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -1550,30 +1560,31 @@
             ctx.fillStyle = p.visible ? '#5a3a1a' : '#6b7373';
             ctx.fillText(lbl, lx, ly);
         });
-        // Points Patrimoine (losange) : reperes culturels, masques grises.
+        // Points Patrimoine (losange rose) : UNIQUEMENT ceux dans le champ de
+        // visibilite (les masques ne sont pas positionnes sur la vue).
         (res.patrimoine || []).forEach(function(p) {
+            if (!p.visible) return;
             if (!res.full) {
                 var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
                 if (dp > res.azW / 2) return;
             }
             var x = X(p.bearing), y = Y(p.ang);
-            var col = p.visible ? '#7c2d12' : '#9aa3a3';
-            ctx.strokeStyle = p.visible ? 'rgba(124,45,18,0.55)' : 'rgba(154,163,163,0.5)';
+            ctx.strokeStyle = 'rgba(232,69,143,0.6)';
             ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
             ctx.setLineDash([]);
             ctx.beginPath();                                  // losange
             ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y);
             ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y);
-            ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+            ctx.closePath(); ctx.fillStyle = '#e8458f'; ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
-            var lbl = (p.name || 'Patrimoine') + (p.visible ? '' : ' (masque)');
+            var lbl = (p.name || 'Patrimoine');
             ctx.font = '10px Segoe UI';
             var tw = ctx.measureText(lbl).width;
             var lx = Math.min(W - tw - 4, x + 8), ly = Math.max(34, y + 14);
             ctx.fillStyle = 'rgba(255,255,255,0.82)';
             ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
-            ctx.fillStyle = p.visible ? '#7c2d12' : '#6b7373';
+            ctx.fillStyle = '#c0317a';
             ctx.fillText(lbl, lx, ly);
         });
         // Legende distance
@@ -1619,8 +1630,12 @@
             if (!t.visible || !inFov(azp(t.bearing))) return;
             if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
         });
-        (res.peaks || []).concat(res.patrimoine || []).forEach(function(t) {
+        (res.peaks || []).forEach(function(t) {
             if (!inFov(azp(t.bearing))) return;
+            if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
+        });
+        (res.patrimoine || []).forEach(function(t) {
+            if (!t.visible || !inFov(azp(t.bearing))) return;
             if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
         });
         if (eMax < -89) { eMax = 10; eMin = -5; }
@@ -1704,14 +1719,15 @@
         // Tous affiches dans le champ ; non visibles grises.
         function drawPin(o, kind) {
             var a = azp(o.bearing); if (!inFov(a)) return;
-            if (kind === 'target' && !o.visible) return;   // cibles : strict
+            // Cibles ET patrimoine : uniquement si dans le champ de visibilite.
+            if ((kind === 'target' || kind === 'patri') && !o.visible) return;
             var x = projX(a), y = projY(a, o.ang);
             var vis = o.visible;
             var col = !vis ? '#9aa3a3'
                 : kind === 'peak' ? '#8a5a2b'
-                : kind === 'patri' ? '#7c2d12' : '#27ae60';
+                : kind === 'patri' ? '#e8458f' : '#27ae60';
             ctx.strokeStyle = vis ? (kind === 'peak' ? 'rgba(138,90,43,0.55)'
-                : kind === 'patri' ? 'rgba(124,45,18,0.55)' : 'rgba(39,174,96,0.7)')
+                : kind === 'patri' ? 'rgba(232,69,143,0.6)' : 'rgba(39,174,96,0.7)')
                 : 'rgba(154,163,163,0.5)';
             if (kind !== 'target') ctx.setLineDash(kind === 'patri' ? [2, 3] : [3, 3]);
             ctx.lineWidth = 1; ctx.beginPath();
@@ -1739,7 +1755,7 @@
                 ctx.fillStyle = 'rgba(255,255,255,0.82)';
                 ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
                 ctx.fillStyle = !vis ? '#6b7373'
-                    : kind === 'peak' ? '#5a3a1a' : kind === 'patri' ? '#7c2d12' : '#1b2631';
+                    : kind === 'peak' ? '#5a3a1a' : kind === 'patri' ? '#c0317a' : '#1b2631';
                 ctx.fillText(lbl, lx, ly);
             }
         }
@@ -2200,9 +2216,8 @@
                 + Math.round(p.dist) + ' m').addTo(g);
         });
         (v.patrimoine || []).forEach(function(p) {
-            L.circleMarker([p.lat, p.lon], {
-                radius: 4, weight: 2, color: '#fff',
-                fillColor: p.visible ? '#7c2d12' : '#9aa3a3', fillOpacity: 1
+            L.marker([p.lat, p.lon], {
+                icon: _vsDiamondIcon(p.visible ? '#e8458f' : '#cf8fb5')
             }).bindPopup('◆ ' + escapeHtml(p.name)
                 + (p.nature ? '<br>' + escapeHtml(p.nature) : '')
                 + '<br>' + (p.visible ? 'VISIBLE' : 'masque') + ' · '
