@@ -1004,8 +1004,18 @@
             + 'display:flex;align-items:center;gap:10px;padding:8px 12px;color:#fff;'
             + 'background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0));font:600 14px Segoe UI;';
         hud.innerHTML = '<span id="pwaCamCap">Cap —</span>'
-            + '<span style="font-weight:400;font-size:11px;opacity:0.85;">calage approximatif</span>'
+            + '<span id="pwaCamOff" style="font-weight:400;font-size:11px;opacity:0.9;'
+            + 'display:none;background:rgba(255,255,255,0.15);padding:2px 6px;border-radius:4px;"></span>'
+            + '<button id="pwaCamMin" title="Decaler -1deg" style="background:rgba(255,255,255,0.15);'
+            + 'color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:6px;padding:4px 8px;'
+            + 'cursor:pointer;font:600 12px Segoe UI;">−1°</button>'
+            + '<button id="pwaCamPlus" title="Decaler +1deg" style="background:rgba(255,255,255,0.15);'
+            + 'color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:6px;padding:4px 8px;'
+            + 'cursor:pointer;font:600 12px Segoe UI;">+1°</button>'
             + '<span style="flex:1"></span>'
+            + '<button id="pwaCamCal" style="background:rgba(255,255,255,0.18);color:#fff;'
+            + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
+            + 'cursor:pointer;font:600 12px Segoe UI;">Calibrer</button>'
             + '<button id="pwaCamList" style="background:rgba(255,255,255,0.18);color:#fff;'
             + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Liste</button>'
@@ -1026,7 +1036,26 @@
         var fe = document.fullscreenElement || document.webkitFullscreenElement;
         (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
 
-        var heading = 0, pitch = 0, haveHeading = false, stream = null, raf = 0, dead = false;
+        var rawHeading = 0, heading = 0, pitch = 0, haveHeading = false;
+        var stream = null, raf = 0, dead = false;
+        // Decalage de cap (calibrage) : appris quand l'utilisateur pointe un
+        // element connu, persiste en localStorage pour la session suivante.
+        var headingOffset = 0;
+        try { headingOffset = parseFloat(localStorage.getItem('pwaCamHeadOff')) || 0; } catch(_e) {}
+        function saveOff() {
+            try { localStorage.setItem('pwaCamHeadOff', String(headingOffset)); } catch(_e) {}
+            var oe = hud.querySelector('#pwaCamOff');
+            if (oe) {
+                if (Math.abs(headingOffset) < 0.5) { oe.style.display = 'none'; oe.textContent = ''; }
+                else {
+                    oe.style.display = 'inline-block';
+                    oe.textContent = (headingOffset > 0 ? '+' : '') + headingOffset.toFixed(1) + '°';
+                }
+            }
+        }
+        function applyOffset() {
+            heading = ((rawHeading + headingOffset) % 360 + 360) % 360;
+        }
         var hfov = 63;                                   // champ camera arriere ~estime
         function sizeCanvas() {
             canvas.width = ov.clientWidth; canvas.height = ov.clientHeight;
@@ -1116,7 +1145,8 @@
         var capEl = hud.querySelector('#pwaCamCap');
         var lastCapUpd = 0;
         function setHeading(h) {
-            heading = ((h % 360) + 360) % 360;
+            rawHeading = ((h % 360) + 360) % 360;
+            applyOffset();
             var now = Date.now();
             if (now - lastCapUpd > 120) {
                 capEl.textContent = 'Cap ' + Math.round(heading) + '° ' + card(heading);
@@ -1124,6 +1154,7 @@
             }
             tick();
         }
+        saveOff();
         function onOri(ev) {
             var hd = null;
             if (typeof ev.webkitCompassHeading === 'number') hd = ev.webkitCompassHeading;
@@ -1177,6 +1208,63 @@
             listOpen = !listOpen;
             list.style.display = listOpen ? 'block' : 'none';
             if (listOpen) refreshList();
+        };
+        function nudge(d) {
+            headingOffset = ((headingOffset + d + 540) % 360) - 180;
+            saveOff(); applyOffset(); tick();
+        }
+        hud.querySelector('#pwaCamMin').onclick = function() { nudge(-1); };
+        hud.querySelector('#pwaCamPlus').onclick = function() { nudge(1); };
+        // Calibrage : choisir un element visible que l'utilisateur pointe au
+        // centre de l'ecran -> on aligne le cap sur sa direction connue.
+        hud.querySelector('#pwaCamCal').onclick = function() {
+            var cm = document.createElement('div');
+            cm.style.cssText = 'position:absolute;inset:46px 0 0 0;background:rgba(0,0,0,0.78);'
+                + 'color:#fff;padding:10px 12px;overflow:auto;font:13px Segoe UI;z-index:2;';
+            var sorted = items.slice().map(function(it) {
+                it._cof = ((it.bearing - rawHeading + 540) % 360) - 180; return it;
+            }).sort(function(a, b) { return Math.abs(a._cof) - Math.abs(b._cof) || a.dist - b.dist; });
+            var gl = { peak: '▲', patri: '◆', cible: '●' };
+            cm.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">'
+                + 'Calibrage du cap</div>'
+                + '<div style="font-size:11px;opacity:0.85;margin-bottom:8px;">'
+                + 'Pointer le CENTRE de l\'ecran sur un element bien identifie, '
+                + 'puis taper son nom ci-dessous. Le cap sera recalé automatiquement.</div>'
+                + (sorted.length ? sorted.slice(0, 30).map(function(it, idx) {
+                    var col = _vsPtCol(it.kind === 'patri' ? 'patri'
+                        : it.kind === 'peak' ? 'peak' : 'target', it.dist, R);
+                    return '<div data-i="' + idx + '" class="pwaCamCalRow" '
+                        + 'style="display:flex;gap:8px;align-items:center;padding:8px 4px;'
+                        + 'border-bottom:1px solid rgba(255,255,255,0.12);cursor:pointer;">'
+                        + '<span style="width:14px;color:' + col + ';">'
+                        + (gl[it.kind] || '●') + '</span>'
+                        + '<span style="flex:1;">' + escapeHtml(it.name) + '</span>'
+                        + '<span style="color:#b0bec5;font-size:11px;">'
+                        + dTxt(it.dist) + ' · azimut ' + Math.round(it.bearing) + '°</span></div>';
+                  }).join('') : '<div style="opacity:0.7;">Aucun element visible.</div>')
+                + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'
+                + '<button id="pwaCamCalReset" style="background:#7f1d1d;color:#fff;border:none;'
+                + 'border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;">'
+                + 'Reinitialiser (offset 0°)</button>'
+                + '<span style="flex:1"></span>'
+                + '<button id="pwaCamCalX" style="background:#f0ebe3;color:#5a3a1a;border:none;'
+                + 'border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;">'
+                + 'Annuler</button></div>';
+            ov.appendChild(cm);
+            function closeCal() { cm.remove(); }
+            cm.querySelector('#pwaCamCalX').onclick = closeCal;
+            cm.querySelector('#pwaCamCalReset').onclick = function() {
+                headingOffset = 0; saveOff(); applyOffset(); tick(); closeCal();
+            };
+            cm.querySelectorAll('.pwaCamCalRow').forEach(function(rw) {
+                rw.onclick = function() {
+                    var it = sorted[parseInt(rw.dataset.i, 10)];
+                    if (!it) return;
+                    var off = ((it.bearing - rawHeading + 540) % 360) - 180;
+                    headingOffset = off;
+                    saveOff(); applyOffset(); tick(); closeCal();
+                };
+            });
         };
         function close() {
             dead = true;
