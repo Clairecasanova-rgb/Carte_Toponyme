@@ -1112,6 +1112,9 @@
             + 'color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:6px;padding:4px 8px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">+1°</button>'
             + '<span style="flex:1"></span>'
+            + '<button id="pwaCamRelief" title="Superposer la silhouette du relief calcule" '
+            + 'style="background:rgba(255,100,180,0.2);color:#fff;border:1px solid rgba(255,100,180,0.5);'
+            + 'border-radius:6px;padding:6px 10px;cursor:pointer;font:600 12px Segoe UI;">Relief</button>'
             + '<button id="pwaCamCal" style="background:rgba(255,255,255,0.18);color:#fff;'
             + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Calibrer</button>'
@@ -1193,6 +1196,44 @@
             g.fillStyle = col; g.fill();
             g.strokeStyle = '#fff'; g.lineWidth = 1.6; g.stroke();
         }
+        // Superposition de la silhouette du relief calcule (skyline MNT)
+        // sur le flux camera : permet de comparer visuellement l'horizon
+        // synthetique et le vrai pour caler la boussole sans repere connu.
+        // Methode PeakLens-like, calage manuel : on ajuste +/-1deg ou
+        // Calibrer jusqu'a ce que la silhouette epouse le relief reel.
+        var showRelief = false;
+        function drawRelief(g, W, H, f, cx, cyH) {
+            if (!showRelief || !res.rayProf || !res.rayProf.length) return;
+            var rp = res.rayProf, pts = [];
+            for (var r = 0; r < rp.length; r++) {
+                var a = ((rp[r].bearing - heading + 540) % 360) - 180;
+                if (Math.abs(a) > hfov / 2 + 2) continue;
+                var sky = rp[r].sky ? rp[r].sky.ang : -90;
+                var x = cx + f * Math.tan(a * Math.PI / 180);
+                var y = cyH - f * Math.tan((sky - pitch) * Math.PI / 180);
+                y = Math.max(-1000, Math.min(H + 1000, y));
+                pts.push({ x: x, y: y, a: a });
+            }
+            if (pts.length < 2) return;
+            pts.sort(function(p, q) { return p.a - q.a; });
+            // Aplat semi-transparent sous la silhouette
+            g.fillStyle = 'rgba(255,100,180,0.18)';
+            g.beginPath();
+            g.moveTo(pts[0].x, H + 4);
+            for (var i = 0; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+            g.lineTo(pts[pts.length - 1].x, H + 4);
+            g.closePath();
+            g.fill();
+            // Trace de l'horizon synthetique
+            g.strokeStyle = 'rgba(255,100,180,0.9)';
+            g.lineWidth = 2;
+            g.beginPath();
+            for (var j = 0; j < pts.length; j++) {
+                if (j === 0) g.moveTo(pts[j].x, pts[j].y);
+                else g.lineTo(pts[j].x, pts[j].y);
+            }
+            g.stroke();
+        }
         function draw() {
             raf = 0;
             if (dead) return;
@@ -1200,6 +1241,8 @@
             g.clearRect(0, 0, W, H);
             var f = (W / 2) / Math.tan((hfov / 2) * Math.PI / 180);
             var cx = W / 2, cyH = H / 2;
+            // Silhouette MNT en premier (sous les marqueurs et l'horizon)
+            drawRelief(g, W, H, f, cx, cyH);
             // horizon + reticule + cap
             var hy = cyH + f * Math.tan(pitch * Math.PI / 180);
             g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 1;
@@ -1408,6 +1451,13 @@
         }
         hud.querySelector('#pwaCamMin').onclick = function() { nudge(-1); };
         hud.querySelector('#pwaCamPlus').onclick = function() { nudge(1); };
+        hud.querySelector('#pwaCamRelief').onclick = function() {
+            showRelief = !showRelief;
+            var b = hud.querySelector('#pwaCamRelief');
+            b.style.background = showRelief
+                ? 'rgba(255,100,180,0.65)' : 'rgba(255,100,180,0.2)';
+            schedule();
+        };
         // Calibrage : choisir un element visible que l'utilisateur pointe au
         // centre de l'ecran -> on aligne le cap sur sa direction connue.
         hud.querySelector('#pwaCamCal').onclick = function() {
