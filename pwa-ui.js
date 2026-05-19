@@ -1016,6 +1016,9 @@
             + '<button id="pwaCamCal" style="background:rgba(255,255,255,0.18);color:#fff;'
             + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Calibrer</button>'
+            + '<button id="pwaCamXR" title="Mode AR stabilise (Android Chrome)" '
+            + 'style="display:none;background:#1e3a5f;color:#fff;border:1px solid #3a6ea5;'
+            + 'border-radius:6px;padding:6px 10px;cursor:pointer;font:600 12px Segoe UI;">AR</button>'
             + '<button id="pwaCamList" style="background:rgba(255,255,255,0.18);color:#fff;'
             + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Liste</button>'
@@ -1295,12 +1298,137 @@
                 };
             });
         };
+        // -------- Phase 2 : WebXR immersive-ar (Android Chrome) --------
+        // ARCore fournit un cap stabilise par vision (visual-inertial
+        // odometry) : ~0.5 deg de stabilite, vs 5-20 deg pour le
+        // magnetometre seul. On garde le meme pipeline de rendu, on
+        // remplace juste la source du couple (yaw, pitch).
+        var xrSession = null, xrRefSpace = null, xrGl = null, xrGlCv = null;
+        var smoothBeforeXR = SMOOTH;
+        if (navigator.xr && navigator.xr.isSessionSupported) {
+            try {
+                navigator.xr.isSessionSupported('immersive-ar').then(function(ok) {
+                    if (ok && !dead) {
+                        var b = hud.querySelector('#pwaCamXR');
+                        if (b) b.style.display = '';
+                    }
+                }).catch(function() {});
+            } catch(_e) {}
+        }
+        function _xrLoop(t, frame) {
+            if (dead || !xrSession) return;
+            var pose = frame.getViewerPose(xrRefSpace);
+            if (pose) {
+                var m = pose.transform.matrix;
+                // forward de la camera = -Z de sa base, en world space
+                var fx = -m[8], fy = -m[9], fz = -m[10];
+                var horiz = Math.sqrt(fx * fx + fz * fz);
+                var yawDeg = (Math.atan2(fx, -fz) * 180 / Math.PI + 360) % 360;
+                var pchDeg = Math.atan2(fy, horiz) * 180 / Math.PI;
+                pitch = Math.max(-45, Math.min(45, pchDeg));
+                haveHeading = true;
+                // FOV horizontal reel depuis la matrice de projection ARCore
+                // (m[0] = 1 / tan(hfov/2) pour une projection symetrique).
+                var v0 = pose.views && pose.views[0];
+                if (v0 && v0.projectionMatrix && v0.projectionMatrix[0]) {
+                    var hf = Math.atan(1 / v0.projectionMatrix[0]) * 2 * 180 / Math.PI;
+                    if (hf > 30 && hf < 100) hfov = hf;
+                }
+                setHeading(yawDeg);
+            }
+            xrSession.requestAnimationFrame(_xrLoop);
+        }
+        function _xrFinish(sess) {
+            sess.updateRenderState({ baseLayer: new XRWebGLLayer(sess, xrGl) });
+            sess.requestReferenceSpace('local').then(function(rs) {
+                xrRefSpace = rs;
+                sess.requestAnimationFrame(_xrLoop);
+            });
+        }
+        function startXR() {
+            if (!navigator.xr) return;
+            navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['local'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: ov }
+            }).then(function(sess) {
+                xrSession = sess;
+                // Couper l'ancien flux camera (la session XR en prend le controle)
+                // et les listeners boussole (remplaces par la pose ARCore).
+                try { window.removeEventListener('deviceorientationabsolute', onOri, true); } catch(_e) {}
+                try { window.removeEventListener('deviceorientation', onOri, true); } catch(_e) {}
+                try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
+                stream = null;
+                video.style.visibility = 'hidden';
+                // ARCore demarre dans une orientation arbitraire : il faut
+                // recalibrer. On remet l'offset a 0 et on invite l'utilisateur.
+                headingOffset = 0; smX = null; smY = null; smPitch = null;
+                lastShownCap = null; saveOff();
+                // Smoothing tres faible en XR : ARCore est deja stable, le
+                // gros lissage casse la reactivite. 0.45 = ~3 frames de lag.
+                smoothBeforeXR = SMOOTH; SMOOTH = 0.45;
+                // Couche WebGL minimale (XR exige une baseLayer GL meme avec
+                // dom-overlay actif ; on la cache, le navigateur peint la
+                // camera derriere notre <div> directement).
+                xrGlCv = document.createElement('canvas');
+                xrGlCv.style.cssText = 'position:absolute;width:1px;height:1px;'
+                    + 'opacity:0;pointer-events:none;';
+                ov.appendChild(xrGlCv);
+                xrGl = xrGlCv.getContext('webgl', { xrCompatible: true })
+                    || xrGlCv.getContext('experimental-webgl', { xrCompatible: true });
+                if (xrGl && xrGl.makeXRCompatible) {
+                    xrGl.makeXRCompatible().then(function() { _xrFinish(sess); })
+                        .catch(function() { _xrFinish(sess); });
+                } else { _xrFinish(sess); }
+                // Bandeau d'invite a la calibration (l'orientation initiale
+                // ARCore n'est pas le nord, il faut taper un repere connu).
+                var hint = document.createElement('div');
+                hint.style.cssText = 'position:absolute;top:46px;left:50%;'
+                    + 'transform:translateX(-50%);background:rgba(0,0,0,0.75);'
+                    + 'color:#fff;font:600 12px Segoe UI;padding:6px 10px;'
+                    + 'border-radius:6px;z-index:3;max-width:90%;text-align:center;';
+                hint.textContent = 'Mode AR actif — tape "Calibrer" puis pointe un repere identifie.';
+                ov.appendChild(hint);
+                setTimeout(function() { try { hint.remove(); } catch(_e) {} }, 6500);
+                var xrBtn = hud.querySelector('#pwaCamXR');
+                if (xrBtn) { xrBtn.style.background = '#5d8b3f';
+                    xrBtn.textContent = 'AR ●'; }
+                sess.addEventListener('end', function() {
+                    xrSession = null; xrRefSpace = null;
+                    try { if (xrGlCv) xrGlCv.remove(); } catch(_e) {}
+                    xrGlCv = null; xrGl = null;
+                    SMOOTH = smoothBeforeXR;
+                    if (dead) return;
+                    video.style.visibility = '';
+                    var bx = hud.querySelector('#pwaCamXR');
+                    if (bx) { bx.style.background = '#1e3a5f'; bx.textContent = 'AR'; }
+                    // Reprise du mode camera classique
+                    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                        navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: { ideal: 'environment' } }, audio: false
+                        }).then(function(s) {
+                            stream = s; video.srcObject = s;
+                            video.play().catch(function(){});
+                        }).catch(function() {});
+                    }
+                    window.addEventListener('deviceorientationabsolute', onOri, true);
+                    window.addEventListener('deviceorientation', onOri, true);
+                });
+            }).catch(function(e) {
+                alert('Mode AR indisponible : ' + (e && e.message || e));
+            });
+        }
+        hud.querySelector('#pwaCamXR').onclick = function() {
+            if (xrSession) { try { xrSession.end(); } catch(_e) {} }
+            else startXR();
+        };
         function close() {
             dead = true;
             if (raf) cancelAnimationFrame(raf);
             window.removeEventListener('resize', onResize);
             window.removeEventListener('deviceorientationabsolute', onOri, true);
             window.removeEventListener('deviceorientation', onOri, true);
+            if (xrSession) { try { xrSession.end(); } catch(_e) {} xrSession = null; }
             try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
             ov.remove();
         }
