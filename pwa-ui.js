@@ -1874,12 +1874,13 @@
         var hasMini = !!(res.bounds && res.planiURL);
         var _vsMode = 'cyl';  // 'cyl' (panoramique) | 'persp' (rectiligne)
         var _setPerspAz = null, _perspTmr = null;  // pilotage perspective depuis la mini-carte
+        var _vsEnlarged = false;  // fenetre tangentielle agrandie (plein ecran)
         function _curPanoURL() {
             return (_vsMode === 'persp' && res.perspectiveURL)
                 ? res.perspectiveURL : res.panoramaURL;
         }
         m.innerHTML =
-            '<div style="background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;">' +
+            '<div id="pwaVScard" style="background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;box-sizing:border-box;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;">' +
             '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Vue tangentielle</h2>' +
             '<button id="pwaVSc" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
@@ -1953,37 +1954,11 @@
             }).then(function() { showToast('Vue enregistree : ' + res.name, 4000); });
         };
         // Agrandir : panorama plein ecran, defilement horizontal (lecture fine)
+        // Agrandir : bascule TOUTE la fenetre en quasi plein ecran (panorama
+        // OU perspective + mini-carte planimetrique en grand, ensemble), avec
+        // recalcul des deux canvas. Re-clic = revenir a la taille normale.
         m.querySelector('#pwaVSbig').onclick = function() {
-            var ov = document.createElement('div');
-            ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);'
-                + 'z-index:100075;display:flex;flex-direction:column;';
-            var bar = document.createElement('div');
-            bar.style.cssText = 'flex:0 0 auto;display:flex;justify-content:space-between;'
-                + 'align-items:center;padding:8px 12px;color:#fff;font:600 13px Segoe UI;';
-            bar.innerHTML = '<span>' + escapeHtml(res.name || 'Vue tangentielle') + '</span>';
-            var xb = document.createElement('button');
-            xb.textContent = 'Fermer';
-            xb.style.cssText = 'background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;'
-                + 'border-radius:6px;cursor:pointer;font:600 12px Segoe UI;';
-            bar.appendChild(xb);
-            var scr = document.createElement('div');
-            scr.style.cssText = 'flex:1 1 auto;overflow:auto;display:flex;'
-                + 'align-items:center;padding:8px;';
-            var im = document.createElement('img');
-            im.src = _curPanoURL();
-            im.style.cssText = 'image-rendering:auto;max-width:none;height:auto;'
-                + 'min-width:100%;display:block;';
-            scr.appendChild(im);
-            ov.appendChild(bar); ov.appendChild(scr);
-            var fe = document.fullscreenElement || document.webkitFullscreenElement;
-            (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
-            if (typeof L !== 'undefined' && L.DomEvent) {
-                L.DomEvent.disableClickPropagation(ov);
-                L.DomEvent.disableScrollPropagation(ov);
-            }
-            function cl() { ov.remove(); }
-            xb.onclick = cl;
-            ov.onclick = function(e) { if (e.target === ov || e.target === scr) cl(); };
+            _vsSetEnlarged(!_vsEnlarged);
         };
         // Telecharger en local : PNG du panorama + JSON des donnees de la vue
         m.querySelector('#pwaVSdl').onclick = function() {
@@ -2143,24 +2118,49 @@
                 _setPerspAz(az, imm);
             }
         }
-        pImg.onload = function() {
-            pReady = true;
-            var cw = Math.min(pano.parentElement.clientWidth || 760, pImg.naturalWidth);
-            pano.width = Math.round(cw);
-            pano.height = Math.round(cw * pImg.naturalHeight / pImg.naturalWidth);
+        // Dimensionnement des 2 canvas (recalcule a l'agrandissement aussi).
+        function fitPano() {
+            if (!pReady) return;
+            var cap = _vsEnlarged ? pImg.naturalWidth * 2 : pImg.naturalWidth;
+            var cw = Math.min(pano.parentElement.clientWidth || 760, cap);
+            pano.width = Math.max(200, Math.round(cw));
+            pano.height = Math.round(pano.width * pImg.naturalHeight / pImg.naturalWidth);
             drawPano(null);
-        };
+        }
+        function fitMini() {
+            if (!mReady) return;
+            var maxD = _vsEnlarged
+                ? Math.max(260, Math.round(Math.min(window.innerHeight * 0.6,
+                    window.innerWidth * 0.42)))
+                : 300;
+            var ar = (east - west) / (north - south);
+            var mw = ar >= 1 ? maxD : Math.round(maxD * ar);
+            var mh = ar >= 1 ? Math.round(maxD / ar) : maxD;
+            mini.width = mw; mini.height = mh;
+            mini.style.width = mw + 'px'; mini.style.height = mh + 'px';
+            drawMini(null);
+        }
+        function _vsSetEnlarged(on) {
+            _vsEnlarged = !!on;
+            var card = m.querySelector('#pwaVScard');
+            var bb = m.querySelector('#pwaVSbig');
+            if (card) {
+                if (_vsEnlarged) {
+                    card.style.maxWidth = '99vw'; card.style.maxHeight = '97vh';
+                    card.style.width = '99vw'; card.style.height = '97vh';
+                } else {
+                    card.style.width = ''; card.style.height = '';
+                    card.style.maxWidth = '96vw'; card.style.maxHeight = '92vh';
+                }
+            }
+            if (bb) bb.textContent = _vsEnlarged ? 'Reduire' : 'Agrandir';
+            // Laisser le layout se recalculer avant de redimensionner les canvas.
+            setTimeout(function() { fitPano(); if (hasMini) fitMini(); }, 40);
+        }
+        pImg.onload = function() { pReady = true; fitPano(); };
         pImg.src = _curPanoURL();
         if (hasMini) {
-            mImg.onload = function() {
-                mReady = true;
-                var maxD = 300, ar = (east - west) / (north - south);
-                var mw = ar >= 1 ? maxD : Math.round(maxD * ar);
-                var mh = ar >= 1 ? Math.round(maxD / ar) : maxD;
-                mini.width = mw; mini.height = mh;
-                mini.style.width = mw + 'px'; mini.style.height = mh + 'px';
-                drawMini(null);
-            };
+            mImg.onload = function() { mReady = true; fitMini(); };
             mImg.src = res.planiURL;
             mini.addEventListener('mousemove', onMini);
             mini.addEventListener('click', onMini);
@@ -2172,13 +2172,9 @@
         pano.addEventListener('touchstart', onPano, { passive: false });
         // (Re)charge l'image du mode courant (panoramique ou perspective)
         function reloadPano() {
-            pReady = false; pImg.onload = function() {
-                pReady = true;
-                var cw = Math.min(pano.parentElement.clientWidth || 760, pImg.naturalWidth);
-                pano.width = Math.round(cw);
-                pano.height = Math.round(cw * pImg.naturalHeight / pImg.naturalWidth);
-                drawPano(null);
-            }; pImg.src = _curPanoURL();
+            pReady = false;
+            pImg.onload = function() { pReady = true; fitPano(); };
+            pImg.src = _curPanoURL();
         }
         // Hook : rafraichir quand les sommets arrivent (asynchrone)
         res._setPano = function() { reloadPano(); };
