@@ -1281,29 +1281,54 @@
             tick();
         }
         saveOff();
+        // Sources de cap acceptees, dans l'ordre :
+        //   1) webkitCompassHeading (iOS Safari) -- toujours absolu / boussole
+        //   2) deviceorientationabsolute avec absolute=true (Android Chrome)
+        // ON IGNORE les evenements 'deviceorientation' relatifs (absolute=false
+        // sans webkitCompassHeading) : leur alpha derive sans calage au Nord,
+        // ce qui faisait sauter les lettres cardinales toutes les frames quand
+        // les deux flux etaient melanges.
         function onOri(ev) {
-            var hd = null;
-            if (typeof ev.webkitCompassHeading === 'number') hd = ev.webkitCompassHeading;
-            else if (typeof ev.alpha === 'number') hd = 360 - ev.alpha;
+            // Pitch : toujours utilisable, beta est gravity-aligned sur tout
+            // appareil supportant l'API.
             if (typeof ev.beta === 'number') {
                 var p = Math.max(-45, Math.min(45, ev.beta - 90));
                 smPitch = (smPitch == null) ? p
                     : smPitch * (1 - SMOOTH_PITCH) + p * SMOOTH_PITCH;
                 pitch = smPitch;
             }
-            if (hd != null && isFinite(hd)) {
-                var so = 0;
-                try { so = (screen.orientation && screen.orientation.angle)
-                    || window.orientation || 0; } catch(_e) {}
-                haveHeading = true;
-                setHeading(hd + so);
-                if (manual.style.display !== 'none') manual.style.display = 'none';
-            } else { tick(); }
+            var hd = null;
+            if (typeof ev.webkitCompassHeading === 'number'
+                && isFinite(ev.webkitCompassHeading)) {
+                hd = ev.webkitCompassHeading;
+            } else if (ev.absolute === true && typeof ev.alpha === 'number'
+                && isFinite(ev.alpha)) {
+                hd = (360 - ev.alpha) % 360;
+            }
+            if (hd == null) { tick(); return; }
+            var so = 0;
+            try { so = (screen.orientation && screen.orientation.angle)
+                || window.orientation || 0; } catch(_e) {}
+            haveHeading = true;
+            setHeading(hd + so);
+            if (manual.style.display !== 'none') manual.style.display = 'none';
         }
         function startOri() {
+            // Variables locales pour suivre quelles sources tirent.
+            var sawAbs = false;
+            var onAbs = function(ev) { sawAbs = true; onOri(ev); };
+            // Sur 'deviceorientation', on relaie SEULEMENT si pas de flux abs
+            // deja en cours (autrement on l'ignore : doublons + valeurs alpha
+            // potentiellement relatives).
+            var onMaybe = function(ev) {
+                if (sawAbs) return;
+                if (typeof ev.webkitCompassHeading === 'number' || ev.absolute === true) {
+                    onOri(ev);
+                }
+            };
             var add = function() {
-                window.addEventListener('deviceorientationabsolute', onOri, true);
-                window.addEventListener('deviceorientation', onOri, true);
+                window.addEventListener('deviceorientationabsolute', onAbs, true);
+                window.addEventListener('deviceorientation', onMaybe, true);
             };
             try {
                 if (typeof DeviceOrientationEvent !== 'undefined'
@@ -1312,6 +1337,8 @@
                         .then(function(s) { if (s === 'granted') add(); }).catch(function(){});
                 } else add();
             } catch(_e) {}
+            // Memoriser les listeners pour pouvoir les retirer dans close()
+            onOri._abs = onAbs; onOri._rel = onMaybe;
             // Si pas de cap apres 3 s -> direction manuelle
             setTimeout(function() {
                 if (!haveHeading && !dead) {
@@ -1503,8 +1530,8 @@
                 xrSession = sess;
                 // Couper l'ancien flux camera (la session XR en prend le controle)
                 // et les listeners boussole (remplaces par la pose ARCore).
-                try { window.removeEventListener('deviceorientationabsolute', onOri, true); } catch(_e) {}
-                try { window.removeEventListener('deviceorientation', onOri, true); } catch(_e) {}
+                try { if (onOri._abs) window.removeEventListener('deviceorientationabsolute', onOri._abs, true); } catch(_e) {}
+                try { if (onOri._rel) window.removeEventListener('deviceorientation', onOri._rel, true); } catch(_e) {}
                 try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
                 stream = null;
                 video.style.visibility = 'hidden';
@@ -1559,8 +1586,8 @@
                             video.play().catch(function(){});
                         }).catch(function() {});
                     }
-                    window.addEventListener('deviceorientationabsolute', onOri, true);
-                    window.addEventListener('deviceorientation', onOri, true);
+                    // Reactive les listeners filtres (memes wrappers que startOri)
+                    startOri();
                 });
             }).catch(function(e) {
                 alert('Mode AR indisponible : ' + (e && e.message || e));
@@ -1574,8 +1601,8 @@
             dead = true;
             if (raf) cancelAnimationFrame(raf);
             window.removeEventListener('resize', onResize);
-            window.removeEventListener('deviceorientationabsolute', onOri, true);
-            window.removeEventListener('deviceorientation', onOri, true);
+            try { if (onOri._abs) window.removeEventListener('deviceorientationabsolute', onOri._abs, true); } catch(_e) {}
+            try { if (onOri._rel) window.removeEventListener('deviceorientation', onOri._rel, true); } catch(_e) {}
             if (xrSession) { try { xrSession.end(); } catch(_e) {} xrSession = null; }
             try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
             ov.remove();
