@@ -366,9 +366,35 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // 5bis. Assets same-origin (pwa-ui.js, css, icones, manifest...) :
+    // 5bis-A. pwa-ui.js : logique appli qui change souvent. NETWORK-FIRST
+    // (bypass cache navigateur) pour que les correctifs arrivent VRAIMENT a
+    // la page. La carte HTML charge pwa-ui.js?v=<jeton fige a la generation>
+    // et le SWR + CDN GitHub epinglaient une vieille version -> les fix
+    // deployes ne parvenaient jamais. Repli cache si hors-ligne (offline OK).
+    try {
+        const _pu = new URL(url);
+        if (_pu.origin === self.location.origin && /\/pwa-ui\.js$/.test(_pu.pathname)) {
+            event.respondWith((async () => {
+                const cache = await _getCache(STATIC_CACHE);
+                if (!_isOffline()) {
+                    try {
+                        const resp = await fetch(req, { cache: 'no-store' });
+                        if (resp && resp.ok) {
+                            cache.put(req, resp.clone()).catch(() => null);
+                            return resp;
+                        }
+                    } catch (e) {}
+                }
+                let c = await cache.match(req);
+                if (!c) c = await cache.match(req, { ignoreSearch: true });
+                return c || fetch(req);
+            })());
+            return;
+        }
+    } catch (e) {}
+
+    // 5bis. Autres assets same-origin (css, icones, manifest...) :
     // stale-while-revalidate pour qu'ils soient dispo hors-ligne.
-    // Sans ca, pwa-ui.js tombe en network-first -> 503 hors-ligne -> UI cassee.
     try {
         const _u = new URL(url);
         if (_u.origin === self.location.origin
