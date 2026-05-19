@@ -2165,15 +2165,26 @@
         var b = res.bounds;
         var south, west, north, east;
         if (b) { south = b[0][0]; west = b[0][1]; north = b[1][0]; east = b[1][1]; }
-        function crestInfo(az) {
+        // Relief a l'azimut az. Si dist fournie (survol mini-carte) -> angle
+        // de la silhouette JUSQU'A cette distance (maxAng cumule) : la pastille
+        // suit le relief proche pointe, et non plus la crete la plus lointaine.
+        function reliefAt(az, dist) {
             if (!res.rayProf) return null;
             var best = null, bd = 999;
             res.rayProf.forEach(function(p) {
                 var df = Math.abs(((p.bearing - az + 540) % 360) - 180);
                 if (df < bd) { bd = df; best = p; }
             });
-            return best ? { d: best.sky.d, ang: best.sky.ang } : null;
+            if (!best) return null;
+            if (dist == null || !res.stepM || !best.maxAng) {
+                return { d: best.sky.d, ang: best.sky.ang };
+            }
+            var nn = (res.N || best.maxAng.length);
+            var ki = Math.min(nn - 1, Math.max(0, Math.round(dist / res.stepM) - 1));
+            var a = (best.maxAng[ki] != null) ? best.maxAng[ki] : best.sky.ang;
+            return { d: dist, ang: a };
         }
+        function crestInfo(az) { return reliefAt(az, null); }
         function crestD(az) { var c = crestInfo(az); return c ? c.d : null; }
         // Couleur "profondeur" = meme echelle que les couches de relief :
         // proche = vert, loin = bleu pale -> lecture instinctive proche/loin.
@@ -2193,7 +2204,7 @@
             g.clearRect(0, 0, w, h); g.drawImage(pImg, 0, 0, w, h);
             if (az == null) return;
             var x, crestY = null;
-            var ci = crestInfo(az);
+            var ci = reliefAt(az, dist);
             if (_vsMode === 'persp' && res.perspMeta) {
                 var P = res.perspMeta;
                 var a = ((az - P.cAz + 540) % 360) - 180;
