@@ -1152,20 +1152,31 @@
     function _vsCompute(P) {
         var lat = P.lat, lon = P.lon, radiusM = P.radiusM, obsH = P.obsH;
         var full = (P.azW >= 360);
-        var rayStep = full ? 2 : (P.azW <= 60 ? 0.5 : P.azW <= 120 ? 1 : 1.5);
         var az0 = full ? 0 : (P.azC - P.azW / 2);
-        var nRays = full ? Math.round(360 / rayStep) : (Math.round(P.azW / rayStep) + 1);
-        // Grain choisi par l'utilisateur (taille de maille en m) -> intensite
-        // de l'effet "onde/pointille". Defaut ~40 m (= rendu de la vue 14:01).
-        var stepM = (P.grainM ? Math.max(8, P.grainM)
-                              : Math.min(30, Math.max(10, radiusM / 150)));
+        // Allocation ISOTROPE du budget : on equilibre rayons (angulaire) ET
+        // anneaux (radial) pour un meme espacement au sol. Avant, 180 rayons
+        // fixes -> a 60 km, 2 km entre rayons = rendu tres grossier malgre un
+        // pas radial fin. Le POST gros lots rend ~45000 echantillons abordable.
+        // Le grain reste un PLANCHER : grain fin = la finesse permise par le
+        // budget ; grain gros = mailles forcees plus grandes (zones, rapide).
+        var BUDGET = 45000;
+        var azSpan = full ? 360 : P.azW;
+        var azRad = azSpan * Math.PI / 180;
+        var sBud = Math.sqrt(azRad * radiusM * radiusM / BUDGET);  // espacement isotrope (m)
+        var grainFloor = (P.grainM ? Math.max(8, P.grainM)
+                                   : Math.min(40, Math.max(10, radiusM / 150)));
+        var stepM = Math.max(grainFloor, sBud, 10);
         var N = Math.max(8, Math.round(radiusM / stepM));
-        // Budget : limiter le total d'echantillons (~9000). Cette granularite
-        // (a 2 km/360deg : stepM ~40 m) donne le rendu "pointille/onde" voulu
-        // (mailles plus grandes). Au-dela du rayon, le pas s'espace tout seul
-        // (suffisant pour la ligne de crete lointaine). Moins de requetes
-        // altimetrie aussi -> moins de throttling IGN (429).
-        if (nRays * N > 15000) { N = Math.max(8, Math.floor(15000 / nRays)); stepM = radiusM / N; }
+        // Nombre de rayons pour que l'arc au bord ~ stepM (grille isotrope).
+        var nRays = full
+            ? Math.max(24, Math.round(2 * Math.PI * radiusM / stepM))
+            : Math.max(3, Math.round(azRad * radiusM / stepM) + 1);
+        var rayStep = full ? (360 / nRays) : (P.azW / (nRays - 1));
+        // Garde-fou dur (arrondis / grain) : ne pas exceder le budget.
+        if (nRays * N > BUDGET * 1.25) {
+            N = Math.max(8, Math.floor(BUDGET * 1.25 / nRays));
+            stepM = radiusM / N;
+        }
         var map = findLeafletMap();
         if (!map) return;
         var targets = _vsCollectTargets(map, lat, lon, radiusM,
