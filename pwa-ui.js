@@ -1606,7 +1606,8 @@
         var rp = res.rayProf;
         if (!rp || !rp.length) return null;
         var R = res.radiusM, D2R = Math.PI / 180;
-        // Centre + champ de vision
+        // Centre + champ de vision. L'utilisateur peut pivoter (res.perspAz)
+        // et changer l'angle (res.perspFov) depuis la fenetre de resultat.
         var cAz, hfov;
         if (res.full) {
             var top = rp[0];
@@ -1614,6 +1615,12 @@
             cAz = top.bearing; hfov = 90;
         } else {
             cAz = res.azC; hfov = Math.min(Math.max(res.azW, 20), 110);
+        }
+        if (typeof res.perspAz === 'number' && isFinite(res.perspAz)) {
+            cAz = ((res.perspAz % 360) + 360) % 360;
+        }
+        if (typeof res.perspFov === 'number' && isFinite(res.perspFov)) {
+            hfov = Math.max(30, Math.min(140, res.perspFov));
         }
         function azp(bearing) { return ((bearing - cAz + 540) % 360) - 180; }  // deg
         function inFov(a) { return Math.abs(a) <= hfov / 2 + 0.5; }
@@ -1882,6 +1889,16 @@
             (res.perspectiveURL ? '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
             '<button id="pwaVSmCyl" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#8b4513;color:#fff;">Panoramique</button>' +
             '<button id="pwaVSmPersp" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#f0ebe3;color:#5a3a1a;">Perspective</button>' +
+            '</div>' +
+            '<div id="pwaVSpctl" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;font:600 11px Segoe UI;color:#5a3a1a;">' +
+            '<label style="display:flex;align-items:center;gap:5px;">Direction <span id="pwaVSpazv">0</span>°' +
+            '<input type="range" id="pwaVSpaz" min="0" max="359" step="1" value="0" style="width:160px;"></label>' +
+            '<button id="pwaVSpazL" title="Pivoter a gauche" style="border:1px solid #d8cdbb;background:#f0ebe3;border-radius:6px;padding:4px 9px;cursor:pointer;font:600 12px Segoe UI;">◄</button>' +
+            '<button id="pwaVSpazR" title="Pivoter a droite" style="border:1px solid #d8cdbb;background:#f0ebe3;border-radius:6px;padding:4px 9px;cursor:pointer;font:600 12px Segoe UI;">►</button>' +
+            '<label style="display:flex;align-items:center;gap:5px;">Champ ' +
+            '<select id="pwaVSpfov" style="padding:4px;border:1px solid #ccc;border-radius:4px;">' +
+            '<option value="60">60°</option><option value="90" selected>90°</option>' +
+            '<option value="120">120°</option><option value="140">140°</option></select></label>' +
             '</div>' : '') +
             '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">' +
             '<div style="flex:1 1 520px;min-width:280px;">' +
@@ -2167,7 +2184,43 @@
                 bCyl.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'cyl' ? on : off);
                 bPersp.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'persp' ? on : off);
             }
+            if (pctl) pctl.style.display = (md === 'persp' && canPersp) ? 'flex' : 'none';
             reloadPano();
+        }
+        // Controles perspective : pivoter (direction) + champ de vision.
+        // Possible seulement si on peut re-rendre (res.rayProf present).
+        var pctl = m.querySelector('#pwaVSpctl');
+        var pazEl = m.querySelector('#pwaVSpaz'), pazv = m.querySelector('#pwaVSpazv');
+        var pfovEl = m.querySelector('#pwaVSpfov');
+        var canPersp = !!(res.rayProf && pctl);
+        function _snapFov(h) {
+            var opts = [60, 90, 120, 140], best = 90, bd = 1e9;
+            opts.forEach(function(o) { var d = Math.abs(o - h); if (d < bd) { bd = d; best = o; } });
+            return best;
+        }
+        if (canPersp) {
+            var c0 = (res.perspMeta && res.perspMeta.cAz != null)
+                ? Math.round(res.perspMeta.cAz)
+                : (typeof res.perspAz === 'number' ? Math.round(res.perspAz) : 0);
+            c0 = ((c0 % 360) + 360) % 360;
+            pazEl.value = String(c0); pazv.textContent = String(c0);
+            if (res.perspMeta && res.perspMeta.hfov) pfovEl.value = String(_snapFov(res.perspMeta.hfov));
+            var rebuildPersp = function() {
+                res.perspAz = parseInt(pazEl.value, 10) || 0;
+                res.perspFov = parseInt(pfovEl.value, 10) || 90;
+                res.perspectiveURL = _vsBuildPanoramaPerspective(res);
+                reloadPano();
+            };
+            pazEl.oninput = function() { pazv.textContent = pazEl.value; };
+            pazEl.onchange = rebuildPersp;
+            pfovEl.onchange = rebuildPersp;
+            function rotate(d) {
+                var v = ((parseInt(pazEl.value, 10) || 0) + d + 360) % 360;
+                pazEl.value = String(v); pazv.textContent = String(v); rebuildPersp();
+            }
+            var bL = m.querySelector('#pwaVSpazL'), bR = m.querySelector('#pwaVSpazR');
+            if (bL) bL.onclick = function() { rotate(-15); };
+            if (bR) bR.onclick = function() { rotate(15); };
         }
         if (bCyl) bCyl.onclick = function() { setMode('cyl'); };
         if (bPersp) bPersp.onclick = function() { setMode('persp'); };
