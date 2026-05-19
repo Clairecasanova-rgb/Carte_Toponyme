@@ -813,6 +813,34 @@
         return next();
     }
 
+    // Bandeau de progression FIXE pendant le calcul (remplace les toasts
+    // ephemeres qui clignotaient a chaque lot d'altimetrie). Un seul element,
+    // mis a jour sur place, retire en fin de calcul (succes ou echec).
+    var _vsProgEl = null;
+    function _vsProgShow(txt) {
+        _vsProgHide();
+        var d = document.createElement('div');
+        d.id = 'pwaVSprog';
+        d.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);'
+            + 'z-index:100068;background:#5a3a1a;color:#fff;padding:9px 16px;'
+            + 'border-radius:20px;font:600 13px Segoe UI,sans-serif;'
+            + 'box-shadow:0 2px 10px rgba(0,0,0,0.35);pointer-events:none;white-space:nowrap;';
+        d.textContent = txt;
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement
+            || document.mozFullScreenElement;
+        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(d);
+        _vsProgEl = d;
+    }
+    function _vsProgSet(txt) {
+        if (_vsProgEl && _vsProgEl.isConnected) _vsProgEl.textContent = txt;
+        else _vsProgShow(txt);
+    }
+    function _vsProgHide() {
+        if (_vsProgEl) { try { _vsProgEl.remove(); } catch(_e) {} _vsProgEl = null; }
+        var ex = document.getElementById('pwaVSprog');
+        if (ex) { try { ex.remove(); } catch(_e) {} }
+    }
+
     // IndexedDB : vues sauvegardees
     function _vsDbPut(v) {
         return openDb().then(function(db) {
@@ -1096,10 +1124,13 @@
             bearings.push(ang);
             for (k = 1; k <= N; k++) pts.push(_vsDest(lat, lon, stepM * k, ang));
         }
-        showToast('Champ de visibilite : altimetrie 0/' + pts.length + '...', 3000);
+        _vsProgShow('Altimetrie 0 / ' + pts.length + '...');
         _vsFetchElev(pts, function(done, tot) {
-            if (done < tot) showToast('Altimetrie ' + done + '/' + tot + '...', 1500);
+            _vsProgSet(done < tot
+                ? ('Altimetrie ' + done + ' / ' + tot + '...')
+                : 'Analyse du relief...');
         }).then(function(elev) {
+            _vsProgSet('Analyse du relief...');
             var obsTot = elev[0] + obsH;
             var T = targets.length;
             var sBase = 1 + T;
@@ -1163,6 +1194,7 @@
             _vsLast = res;
             res.panoramaURL = _vsBuildPanorama(res);  // dataURL
             res.perspectiveURL = _vsBuildPanoramaPerspective(res);  // dataURL
+            _vsProgHide();
             showToast('Champ de visibilite calcule.', 4000);
             _vsResultModal(res);
             // Sommets nommes IGN (asynchrone) : enrichit la vue une fois prets
@@ -1188,6 +1220,7 @@
                 showToast(pk.length + ' sommet(s) nomme(s) · ' + nv + ' visible(s).', 4500);
             });
         }).catch(function(err) {
+            _vsProgHide();
             showToast('Echec du calcul : ' + (err && err.message ? err.message : 'erreur reseau'), 6000);
         });
     }
