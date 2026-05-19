@@ -1265,28 +1265,30 @@
         // RENDU D'ORIGINE (commit 73e0f5b, le "premier rendu") : semis de
         // carres, 1 par point reellement visible (res.visPts), colore par
         // distance (proche=vert -> loin=bleu, alpha 0.45). C'EST l'effet
-        // "pointille/onde". La taille du carre suit le grain choisi
-        // (~5 px a grain Moyen ~40 m ; plus gros si grain plus grossier).
+        // "pointille/onde". Style Points = carre fixe ~5 px (fidele a
+        // l'origine, a tout rayon) ; Style Zones = carre elargi -> aplat.
         var W = 700, H = Math.round(W * (north - south) / (east - west)) || W;
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
         var ctx = cv.getContext('2d');
         function px(la, lo) {
             return [(lo - west) / (east - west) * W, (north - la) / (north - south) * H];
         }
-        // Taille du carre = f(espacement radial px, grain). Grain fin -> carre
-        // < espacement (semis de points detaille). Grain gros -> carre >
-        // espacement (les carres se recouvrent et FUSIONNENT en zones pleines).
-        // A grain Moyen (~40 m, W=700) -> ~5 px = le rendu d'origine inchange.
-        var sm = res.stepM || 40;
-        var sp = (sm / (2 * R)) * W;
-        // Style "Zones" : carre > espacement quel que soit le grain -> les
-        // mailles se recouvrent et fusionnent en aplat continu (meme en tres
-        // fin = zones detaillees lisses). Style "Points" : formule liee au
-        // grain (fin = semis separe ; Moyen = rendu d'origine ; gros = zones).
-        var mult = res.styleZones
-            ? 1.45
-            : (0.55 + Math.max(0, Math.min(1, (sm - 25) / 85)) * 0.95);
-        var cell = Math.max(3, Math.round(sp * mult));
+        var cell;
+        if (res.styleZones) {
+            // Style "Zones" : carre > espacement quel que soit le grain ->
+            // les mailles se recouvrent et fusionnent en aplat continu (meme
+            // en tres fin = zones detaillees lisses).
+            var sm = res.stepM || 40;
+            var sp = (sm / (2 * R)) * W;
+            cell = Math.max(3, Math.round(sp * 1.45));
+        } else {
+            // Style "Points" : carre PETIT et FIXE (~5 px, = rendu d'origine
+            // 73e0f5b), independant du grain et du rayon. Le grain ne change
+            // que la densite de points. A 60 km le semis est juste plus epars
+            // (echantillonnage borne par le budget) mais reste un semis de
+            // petits points, jamais de fausses zones grossieres.
+            cell = Math.max(3, Math.round(W / 140));
+        }
         (res.visPts || []).forEach(function(p) {
             var q = px(p.lat, p.lon);
             var f = Math.min(1, p.d / R);
