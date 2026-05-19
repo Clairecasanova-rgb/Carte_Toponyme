@@ -766,6 +766,31 @@
         return Math.sqrt(dx * dx + dy * dy);
     }
     function _vsCurv(d) { return (1 - VS_K) * d * d / (2 * VS_R); }  // chute (m)
+    // Position du soleil (NOAA simplifie) -- azimut a partir du Nord, sens
+    // horaire ; precision ~0.5 deg, suffisant pour caler une boussole.
+    // alt < 0 = sous l'horizon (sera signale a l'utilisateur).
+    function _vsSunAzEl(date, lat, lon) {
+        var rad = Math.PI / 180;
+        var jd = date.getTime() / 86400000 + 2440587.5;
+        var n = jd - 2451545.0;
+        var L = ((280.460 + 0.9856474 * n) % 360 + 360) % 360;
+        var g = (((357.528 + 0.9856003 * n) % 360 + 360) % 360) * rad;
+        var lam = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+        var eps = (23.439 - 0.0000004 * n) * rad;
+        var ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam));
+        var dec = Math.asin(Math.sin(eps) * Math.sin(lam));
+        var gmst_h = ((18.697374558 + 24.06570982441908 * n) % 24 + 24) % 24;
+        var lst_deg = gmst_h * 15 + lon;
+        var H = lst_deg * rad - ra;
+        var phi = lat * rad;
+        var x = -Math.cos(dec) * Math.sin(H);
+        var y = Math.sin(dec) * Math.cos(phi) - Math.cos(dec) * Math.sin(phi) * Math.cos(H);
+        var z = Math.sin(dec) * Math.sin(phi) + Math.cos(dec) * Math.cos(phi) * Math.cos(H);
+        return {
+            az: (Math.atan2(x, y) / rad + 360) % 360,
+            alt: Math.atan2(z, Math.sqrt(x * x + y * y)) / rad
+        };
+    }
 
     function _vsDelay(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
     // Altimetrie IGN par lots. Robuste au throttling : l'API renvoie 429
@@ -1257,11 +1282,41 @@
                 it._cof = ((it.bearing - rawHeading + 540) % 360) - 180; return it;
             }).sort(function(a, b) { return Math.abs(a._cof) - Math.abs(b._cof) || a.dist - b.dist; });
             var gl = { peak: '▲', patri: '◆', cible: '●' };
+            // Azimut solaire courant (formule NOAA simplifiee, ~0.5 deg)
+            // Permet de caler le cap meme sans repere identifie : il suffit
+            // de pointer le soleil (ou sa direction sous nuages legers).
+            var sun = _vsSunAzEl(new Date(), res.lat, res.lon);
+            var sunRow = '';
+            if (sun.alt > -2) {
+                var sCol = sun.alt > 0 ? '#f5b800' : '#a98a3b';
+                sunRow = '<div id="pwaCamCalSun" class="pwaCamCalRow" '
+                    + 'style="display:flex;gap:8px;align-items:center;padding:10px 4px;'
+                    + 'background:rgba(245,184,0,0.10);border:1px solid rgba(245,184,0,0.35);'
+                    + 'border-radius:6px;margin-bottom:6px;cursor:pointer;">'
+                    + '<span style="width:14px;color:' + sCol + ';font-size:16px;">☼</span>'
+                    + '<span style="flex:1;"><b>Aligner sur le Soleil</b>'
+                    + '<div style="font-size:11px;opacity:0.85;">Pointe le téléphone '
+                    + 'vers le soleil et tape ici. Azimut calcule : '
+                    + sun.az.toFixed(1) + '° · hauteur '
+                    + sun.alt.toFixed(1) + '°' + (sun.alt < 0 ? ' (sous l\'horizon)' : '')
+                    + '</div></span></div>';
+            }
+            var northRow = '<div id="pwaCamCalNorth" class="pwaCamCalRow" '
+                + 'style="display:flex;gap:8px;align-items:center;padding:10px 4px;'
+                + 'background:rgba(80,160,220,0.10);border:1px solid rgba(80,160,220,0.35);'
+                + 'border-radius:6px;margin-bottom:6px;cursor:pointer;">'
+                + '<span style="width:14px;color:#5fb0e0;font-size:16px;">↑</span>'
+                + '<span style="flex:1;"><b>Pointer vers le Nord</b>'
+                + '<div style="font-size:11px;opacity:0.85;">Tiens le téléphone vers '
+                + 'le Nord (boussole, sens du soleil, app météo), puis tape ici.'
+                + '</div></span></div>';
             cm.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">'
                 + 'Calibrage du cap</div>'
                 + '<div style="font-size:11px;opacity:0.85;margin-bottom:8px;">'
-                + 'Pointer le CENTRE de l\'ecran sur un element bien identifie, '
-                + 'puis taper son nom ci-dessous. Le cap sera recalé automatiquement.</div>'
+                + 'Trois manieres au choix : repere connu (liste), Soleil, ou Nord.</div>'
+                + northRow + sunRow
+                + (sorted.length ? '<div style="font-size:11px;opacity:0.7;margin:8px 0 4px;">'
+                    + 'Reperes visibles (tries par proximite angulaire)</div>' : '')
                 + (sorted.length ? sorted.slice(0, 30).map(function(it, idx) {
                     var col = _vsPtCol(it.kind === 'patri' ? 'patri'
                         : it.kind === 'peak' ? 'peak' : 'target', it.dist, R);
@@ -1288,13 +1343,20 @@
             cm.querySelector('#pwaCamCalReset').onclick = function() {
                 headingOffset = 0; saveOff(); applyOffset(); tick(); closeCal();
             };
+            function alignTo(targetAz) {
+                headingOffset = ((targetAz - rawHeading + 540) % 360) - 180;
+                saveOff(); applyOffset(); tick(); closeCal();
+            }
+            var nrow = cm.querySelector('#pwaCamCalNorth');
+            if (nrow) nrow.onclick = function() { alignTo(0); };
+            var srow = cm.querySelector('#pwaCamCalSun');
+            if (srow) srow.onclick = function() { alignTo(sun.az); };
             cm.querySelectorAll('.pwaCamCalRow').forEach(function(rw) {
+                if (!rw.hasAttribute('data-i')) return;
                 rw.onclick = function() {
                     var it = sorted[parseInt(rw.dataset.i, 10)];
                     if (!it) return;
-                    var off = ((it.bearing - rawHeading + 540) % 360) - 180;
-                    headingOffset = off;
-                    saveOff(); applyOffset(); tick(); closeCal();
+                    alignTo(it.bearing);
                 };
             });
         };
