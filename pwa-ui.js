@@ -1055,12 +1055,13 @@
             '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
             'Grain du rendu (taille des mailles)<br>' +
             '<select id="pwaVSgrain" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;">' +
+            '<option value="15">Tres fin (~15 m)</option>' +
             '<option value="25">Fin (~25 m)</option>' +
             '<option value="40">Moyen (~40 m)</option>' +
-            '<option value="70">Gros (~70 m)</option>' +
-            '<option value="110">Tres gros (~110 m)</option>' +
+            '<option value="70">Gros (~70 m, zones)</option>' +
+            '<option value="110">Tres gros (~110 m, zones)</option>' +
             '</select></label>' +
-            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Mailles plus grosses = effet "onde/pointille" plus marque, calcul plus rapide, moins precis. Au-dela d\'une dizaine de km le pas s\'espace de toute facon.</div>' +
+            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Fin = semis de points detaille (plus de requetes, plus lent). Gros / Tres gros = les mailles fusionnent en zones pleines. Au-dela d\'une dizaine de km le pas s\'espace de toute facon.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
             '<button id="pwaVSgo" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
@@ -1120,7 +1121,7 @@
         // (mailles plus grandes). Au-dela du rayon, le pas s'espace tout seul
         // (suffisant pour la ligne de crete lointaine). Moins de requetes
         // altimetrie aussi -> moins de throttling IGN (429).
-        if (nRays * N > 9000) { N = Math.max(8, Math.floor(9000 / nRays)); stepM = radiusM / N; }
+        if (nRays * N > 15000) { N = Math.max(8, Math.floor(15000 / nRays)); stepM = radiusM / N; }
         var map = findLeafletMap();
         if (!map) return;
         var targets = _vsCollectTargets(map, lat, lon, radiusM,
@@ -1261,7 +1262,14 @@
         function px(la, lo) {
             return [(lo - west) / (east - west) * W, (north - la) / (north - south) * H];
         }
-        var cell = Math.max(3, Math.round((W / 140) * ((res.stepM || 40) / 40)));
+        // Taille du carre = f(espacement radial px, grain). Grain fin -> carre
+        // < espacement (semis de points detaille). Grain gros -> carre >
+        // espacement (les carres se recouvrent et FUSIONNENT en zones pleines).
+        // A grain Moyen (~40 m, W=700) -> ~5 px = le rendu d'origine inchange.
+        var sm = res.stepM || 40;
+        var sp = (sm / (2 * R)) * W;
+        var mult = 0.55 + Math.max(0, Math.min(1, (sm - 25) / 85)) * 0.95;
+        var cell = Math.max(3, Math.round(sp * mult));
         (res.visPts || []).forEach(function(p) {
             var q = px(p.lat, p.lon);
             var f = Math.min(1, p.d / R);
