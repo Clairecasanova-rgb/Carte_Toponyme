@@ -1161,7 +1161,13 @@
         var headingOffset = 0;
         try { headingOffset = parseFloat(localStorage.getItem('pwaCamHeadOff')) || 0; } catch(_e) {}
         function saveOff() {
-            try { localStorage.setItem('pwaCamHeadOff', String(headingOffset)); } catch(_e) {}
+            // En mode XR, ARCore part d'un yaw arbitraire : l'offset ne
+            // s'applique qu'a cette session, on ne le persiste pas en
+            // localStorage (ce serait du bruit pour la prochaine session).
+            // En mode magneto, on sauvegarde -> calibration durable.
+            if (typeof xrSession === 'undefined' || !xrSession) {
+                try { localStorage.setItem('pwaCamHeadOff', String(headingOffset)); } catch(_e) {}
+            }
             var oe = hud.querySelector('#pwaCamOff');
             if (oe) {
                 if (Math.abs(headingOffset) < 0.5) { oe.style.display = 'none'; oe.textContent = ''; }
@@ -1490,6 +1496,9 @@
                 }).catch(function() {});
             } catch(_e) {}
         }
+        // Cap magneto memorise juste avant le passage en XR : sert a caler
+        // ARCore sur la boussole a la 1ere frame (pre-calage automatique).
+        var xrInitTargetMag = null;
         function _xrLoop(t, frame) {
             if (dead || !xrSession) return;
             var pose = frame.getViewerPose(xrRefSpace);
@@ -1509,6 +1518,13 @@
                     var hf = Math.atan(1 / v0.projectionMatrix[0]) * 2 * 180 / Math.PI;
                     if (hf > 30 && hf < 100) hfov = hf;
                 }
+                // Pre-calage : a la 1ere frame valide, on aligne l'offset
+                // pour que le cap affiche = cap magneto memorise.
+                if (xrInitTargetMag != null) {
+                    headingOffset = ((xrInitTargetMag - yawDeg + 540) % 360) - 180;
+                    xrInitTargetMag = null;
+                    // pas de saveOff() : on ne persiste pas l'offset XR
+                }
                 setHeading(yawDeg);
             }
             xrSession.requestAnimationFrame(_xrLoop);
@@ -1522,6 +1538,11 @@
         }
         function startXR() {
             if (!navigator.xr) return;
+            // Memorise l'etat magneto AVANT que les listeners soient retires.
+            // - savedMagOffset : offset magneto persistant -> sera restaure a la fin de session
+            // - magCapNow : cap corrige courant -> servira de cible pour pre-caler ARCore
+            var savedMagOffset = headingOffset;
+            var magCapNow = haveHeading ? heading : null;
             navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['local'],
                 optionalFeatures: ['dom-overlay'],
@@ -1535,10 +1556,13 @@
                 try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
                 stream = null;
                 video.style.visibility = 'hidden';
-                // ARCore demarre dans une orientation arbitraire : il faut
-                // recalibrer. On remet l'offset a 0 et on invite l'utilisateur.
-                headingOffset = 0; smX = null; smY = null; smPitch = null;
-                lastShownCap = null; saveOff();
+                // ARCore demarre dans une orientation arbitraire mais on l'aligne
+                // automatiquement sur le cap magneto a la 1ere frame valide
+                // (xrInitTargetMag est lu par _xrLoop). On NE clobber PAS l'offset
+                // magneto sauve sur disque (savedMagOffset restauree a la fin).
+                smX = null; smY = null; smPitch = null; lastShownCap = null;
+                xrInitTargetMag = magCapNow;
+                headingOffset = 0; // valeur intermediaire, ecrasee a la 1ere frame
                 // Smoothing tres faible en XR : ARCore est deja stable, le
                 // gros lissage casse la reactivite. 0.45 = ~3 frames de lag.
                 smoothBeforeXR = SMOOTH; SMOOTH = 0.45;
@@ -1555,14 +1579,17 @@
                     xrGl.makeXRCompatible().then(function() { _xrFinish(sess); })
                         .catch(function() { _xrFinish(sess); });
                 } else { _xrFinish(sess); }
-                // Bandeau d'invite a la calibration (l'orientation initiale
-                // ARCore n'est pas le nord, il faut taper un repere connu).
+                // Bandeau d'invite : si la boussole etait deja calee (offset
+                // magneto sauve), l'AR demarre dans le meme cap -> on n'invite
+                // a recalibrer qu'au besoin. Sinon, indiquer comment caler.
                 var hint = document.createElement('div');
                 hint.style.cssText = 'position:absolute;top:46px;left:50%;'
                     + 'transform:translateX(-50%);background:rgba(0,0,0,0.75);'
                     + 'color:#fff;font:600 12px Segoe UI;padding:6px 10px;'
                     + 'border-radius:6px;z-index:3;max-width:90%;text-align:center;';
-                hint.textContent = 'Mode AR actif — tape "Calibrer" puis pointe un repere identifie.';
+                hint.textContent = (magCapNow != null)
+                    ? 'Mode AR — cale sur la boussole. Tape "Calibrer" pour affiner.'
+                    : 'Mode AR — pas de boussole : tape "Calibrer" et choisis Soleil ou Repere.';
                 ov.appendChild(hint);
                 setTimeout(function() { try { hint.remove(); } catch(_e) {} }, 6500);
                 var xrBtn = hud.querySelector('#pwaCamXR');
@@ -1573,6 +1600,12 @@
                     try { if (xrGlCv) xrGlCv.remove(); } catch(_e) {}
                     xrGlCv = null; xrGl = null;
                     SMOOTH = smoothBeforeXR;
+                    // Restaure l'offset magneto sauvegarde (l'offset XR
+                    // calcule pendant la session etait specifique a ARCore).
+                    headingOffset = savedMagOffset;
+                    xrInitTargetMag = null;
+                    smX = null; smY = null; smPitch = null; lastShownCap = null;
+                    saveOff();
                     if (dead) return;
                     video.style.visibility = '';
                     var bx = hud.querySelector('#pwaCamXR');
@@ -1903,6 +1936,9 @@
                     showToast('Position imprecise (±' + Math.round(c.accuracy)
                         + ' m). Sortir a ciel degage pour mieux.', 5000);
                 }
+                // Marqueur pour que _vsResultModal ouvre directement la
+                // vue Camera apres calcul (cf. res.autoCam).
+                window._vsAutoCam = true;
                 _vsParamsModal(c.latitude, c.longitude);
             }, function(err) {
                 showToast(err && err.code === 1
@@ -2140,6 +2176,19 @@
             _vsProgHide();
             showToast('Champ de visibilite calcule.', 4000);
             _vsResultModal(res);
+            // Lancement depuis position GPS : on enchaine direct sur la
+            // Camera AR pour eviter a l'utilisateur de naviguer + on ouvre
+            // le modal de calibrage automatiquement (Soleil/Marche/Repere).
+            if (window._vsAutoCam) {
+                window._vsAutoCam = false;
+                setTimeout(function() {
+                    _vsCameraView(res);
+                    setTimeout(function() {
+                        var cal = document.getElementById('pwaCamCal');
+                        if (cal) cal.click();
+                    }, 600);
+                }, 300);
+            }
             // Enrichissement asynchrone : sommets nommes (OSM) puis Patrimoine
             // (sequentiel pour ne pas cumuler deux series d'altimetrie).
             _vsFetchPeaks(res, function(pk) {
