@@ -1302,12 +1302,21 @@
             var sBase = 1 + T;
             // Visibilite par echantillon + skyline par rayon (pour panorama)
             var visPts = [];                 // {lat,lon,d} visibles (planimetrique)
-            var rayProf = [];                // par rayon : {bearing, sky:{ang,d}, maxAng[]}
+            var rayProf = [];                // par rayon : {bearing, sky, maxAng[], vis[], bandMax[]}
+            // Tranches de distance (pour la superposition des reliefs sur la
+            // vue tangentielle : couches peintes arriere->avant + estompage).
+            // Bandes proches plus fines (perception de profondeur).
+            var BANDS = [0.05, 0.12, 0.25, 0.45, 0.70, 1.0].map(function(f) {
+                return f * radiusM;
+            });
+            var NB = BANDS.length;
             var idx = sBase;
             for (r = 0; r < nRays; r++) {
                 var maxSlope = -Infinity, sky = { ang: -90, d: 0 };
                 var maxAngAt = [];           // angle visible cumule (pour cible)
                 var visArr = [];             // visibilite par echantillon (grille)
+                var bandMax = [];            // angle max visible par tranche de distance
+                for (var bb = 0; bb < NB; bb++) bandMax.push(-90);
                 for (k = 1; k <= N; k++) {
                     var d = stepM * k;
                     var z = elev[idx++] - _vsCurv(d);
@@ -1319,11 +1328,15 @@
                         visPts.push({ lat: pos[0], lon: pos[1], d: d });
                         var ang = Math.atan2(z - obsTot, d) * 180 / Math.PI;
                         if (ang > sky.ang) sky = { ang: ang, d: d };
+                        var bi = 0;
+                        while (bi < NB - 1 && d > BANDS[bi]) bi++;
+                        if (ang > bandMax[bi]) bandMax[bi] = ang;
                     }
                     if (slope > maxSlope) maxSlope = slope;
                     maxAngAt.push(Math.atan(maxSlope) * 180 / Math.PI);
                 }
-                rayProf.push({ bearing: bearings[r], sky: sky, maxAng: maxAngAt, vis: visArr });
+                rayProf.push({ bearing: bearings[r], sky: sky, maxAng: maxAngAt,
+                               vis: visArr, bandMax: bandMax });
             }
             // Cibles : bearing/dist/elev + visible ? (via le rayon le plus proche)
             var tgt = [];
@@ -1354,7 +1367,7 @@
                 lat: lat, lon: lon, obsH: obsH, obsElev: Math.round(elev[0]),
                 radiusM: radiusM, azC: P.azC, azW: P.azW, full: full,
                 stepM: stepM, N: N, nRays: nRays, rayStep: rayStep,
-                styleZones: !!P.styleZones,
+                styleZones: !!P.styleZones, bandOut: BANDS,
                 date: Date.now(), visPts: visPts, rayProf: rayProf, targets: tgt
             };
             _vsRenderPlani(res);
@@ -1506,22 +1519,64 @@
         ctx.fillStyle = sky; ctx.fillRect(PAD, 0, PW, H);
         // Rayons tries par X (ordre azimut affiche)
         var ord = rp.slice().sort(function(a, b) { return X(a.bearing) - X(b.bearing); });
-        // Relief : polygone plein (gradient vertical)
-        var grd = ctx.createLinearGradient(0, Y(maxA), 0, H);
-        grd.addColorStop(0, '#6b8e4e'); grd.addColorStop(1, '#3d5230');
-        ctx.fillStyle = grd; ctx.beginPath();
-        ctx.moveTo(X(ord[0].bearing), H);
-        ord.forEach(function(p) { ctx.lineTo(X(p.bearing), Y(p.sky.ang)); });
-        ctx.lineTo(X(ord[ord.length - 1].bearing), H);
-        ctx.closePath(); ctx.fill();
-        // Liseré de crête colore par distance (lisibilite du relief lointain)
-        ctx.lineWidth = 3;
-        for (var i = 0; i < ord.length - 1; i++) {
-            ctx.strokeStyle = dCol(Math.min(1, ord[i].sky.d / R));
-            ctx.beginPath();
-            ctx.moveTo(X(ord[i].bearing), Y(ord[i].sky.ang));
-            ctx.lineTo(X(ord[i + 1].bearing), Y(ord[i + 1].sky.ang));
-            ctx.stroke();
+        var hasBands = !!(rp[0] && rp[0].bandMax && res.bandOut);
+        function clY(a) { return Math.max(0, Math.min(H, Y(Math.min(a, topA)))); }
+        if (hasBands) {
+            // RELIEFS SUPERPOSES : une couche de silhouette par tranche de
+            // distance, peinte de l'ARRIERE vers l'AVANT. Estompage
+            // atmospherique : loin = pale/bleute, proche = soutenu/vert.
+            var NB = res.bandOut.length;
+            var bandFill = function(t, al) {
+                return 'rgba(' + Math.round(46 + 104 * t) + ',' + Math.round(120 + 60 * t)
+                    + ',' + Math.round(60 + 145 * t) + ',' + al + ')';
+            };
+            var bandLine = function(t) {
+                return 'rgba(' + Math.round((46 + 104 * t) * 0.55) + ','
+                    + Math.round((120 + 60 * t) * 0.55) + ','
+                    + Math.round((60 + 145 * t) * 0.6) + ',0.85)';
+            };
+            for (var bnd = NB - 1; bnd >= 0; bnd--) {
+                var t = (NB > 1) ? bnd / (NB - 1) : 0;        // 0=proche 1=loin
+                ctx.fillStyle = bandFill(t, 0.96 - 0.4 * t);
+                ctx.beginPath();
+                ctx.moveTo(X(ord[0].bearing), H);
+                ord.forEach(function(p) {
+                    var a = p.bandMax ? p.bandMax[bnd] : -90;
+                    ctx.lineTo(X(p.bearing), a > -89 ? clY(a) : H);
+                });
+                ctx.lineTo(X(ord[ord.length - 1].bearing), H);
+                ctx.closePath(); ctx.fill();
+                ctx.lineWidth = (bnd === 0) ? 2 : 1.4;
+                ctx.strokeStyle = bandLine(t);
+                ctx.beginPath();
+                var started = false;
+                ord.forEach(function(p) {
+                    var a = p.bandMax ? p.bandMax[bnd] : -90;
+                    if (a > -89) {
+                        var px = X(p.bearing), py = clY(a);
+                        if (!started) { ctx.moveTo(px, py); started = true; }
+                        else ctx.lineTo(px, py);
+                    } else { started = false; }
+                });
+                ctx.stroke();
+            }
+        } else {
+            // Repli : silhouette unique (anciens res sans bandMax)
+            var grd = ctx.createLinearGradient(0, Y(maxA), 0, H);
+            grd.addColorStop(0, '#6b8e4e'); grd.addColorStop(1, '#3d5230');
+            ctx.fillStyle = grd; ctx.beginPath();
+            ctx.moveTo(X(ord[0].bearing), H);
+            ord.forEach(function(p) { ctx.lineTo(X(p.bearing), Y(p.sky.ang)); });
+            ctx.lineTo(X(ord[ord.length - 1].bearing), H);
+            ctx.closePath(); ctx.fill();
+            ctx.lineWidth = 3;
+            for (var i = 0; i < ord.length - 1; i++) {
+                ctx.strokeStyle = dCol(Math.min(1, ord[i].sky.d / R));
+                ctx.beginPath();
+                ctx.moveTo(X(ord[i].bearing), Y(ord[i].sky.ang));
+                ctx.lineTo(X(ord[i + 1].bearing), Y(ord[i + 1].sky.ang));
+                ctx.stroke();
+            }
         }
         // Grille angles verticaux + labels (axe gauche)
         ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.fillStyle = '#5a3a1a';
@@ -1609,14 +1664,19 @@
             _vsPlaceLabel(ctx, lblRects, x, y, (p.name || 'Patrimoine'),
                 '10px Segoe UI', '#c0317a', W, H);
         });
-        // Legende distance
-        var lgX = PAD + 8, lgY = H - 14, lgW = 120;
+        // Legende profondeur (meme echelle que les couches de relief :
+        // proche = vert soutenu -> loin = bleu pale / estompe)
+        var lgX = PAD + 8, lgY = H - 14, lgW = 130;
         var lg = ctx.createLinearGradient(lgX, 0, lgX + lgW, 0);
-        lg.addColorStop(0, dCol(0)); lg.addColorStop(1, dCol(1));
+        lg.addColorStop(0, 'rgb(46,120,60)');
+        lg.addColorStop(0.5, 'rgb(98,150,132)');
+        lg.addColorStop(1, 'rgb(150,180,205)');
         ctx.fillStyle = lg; ctx.fillRect(lgX, lgY, lgW, 8);
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1;
+        ctx.strokeRect(lgX, lgY, lgW, 8);
         ctx.fillStyle = '#1b2631'; ctx.font = '9px Segoe UI';
         ctx.fillText('proche', lgX, lgY - 2);
-        ctx.fillText((R / 1000) + ' km', lgX + lgW - 26, lgY - 2);
+        ctx.fillText((R / 1000) + ' km', lgX + lgW - 28, lgY - 2);
         return cv.toDataURL('image/png');
     }
 
@@ -1691,7 +1751,46 @@
         // Rayons dans le champ, tries par azimut affiche
         var ord = rp.filter(function(p) { return inFov(azp(p.bearing)); })
             .sort(function(a, b) { return azp(a.bearing) - azp(b.bearing); });
-        if (ord.length >= 2) {
+        var hasBands = !!(rp[0] && rp[0].bandMax && res.bandOut);
+        function pclY(a, e) { return Math.max(0, Math.min(H, projY(a, e))); }
+        if (ord.length >= 2 && hasBands) {
+            // Reliefs superposes par tranche de distance (arriere->avant) +
+            // estompage atmospherique (loin = pale/bleute, proche = vert).
+            var NB = res.bandOut.length;
+            var bFill = function(t, al) {
+                return 'rgba(' + Math.round(46 + 104 * t) + ',' + Math.round(120 + 60 * t)
+                    + ',' + Math.round(60 + 145 * t) + ',' + al + ')';
+            };
+            var bLine = function(t) {
+                return 'rgba(' + Math.round((46 + 104 * t) * 0.55) + ','
+                    + Math.round((120 + 60 * t) * 0.55) + ','
+                    + Math.round((60 + 145 * t) * 0.6) + ',0.85)';
+            };
+            for (var bnd = NB - 1; bnd >= 0; bnd--) {
+                var t = (NB > 1) ? bnd / (NB - 1) : 0;
+                ctx.fillStyle = bFill(t, 0.96 - 0.4 * t);
+                ctx.beginPath();
+                ctx.moveTo(projX(azp(ord[0].bearing)), H);
+                ord.forEach(function(p) {
+                    var a = azp(p.bearing), v = p.bandMax ? p.bandMax[bnd] : -90;
+                    ctx.lineTo(projX(a), v > -89 ? pclY(a, v) : H);
+                });
+                ctx.lineTo(projX(azp(ord[ord.length - 1].bearing)), H);
+                ctx.closePath(); ctx.fill();
+                ctx.lineWidth = (bnd === 0) ? 2 : 1.4; ctx.strokeStyle = bLine(t);
+                ctx.beginPath();
+                var st0 = false;
+                ord.forEach(function(p) {
+                    var a = azp(p.bearing), v = p.bandMax ? p.bandMax[bnd] : -90;
+                    if (v > -89) {
+                        var px = projX(a), py = pclY(a, v);
+                        if (!st0) { ctx.moveTo(px, py); st0 = true; }
+                        else ctx.lineTo(px, py);
+                    } else { st0 = false; }
+                });
+                ctx.stroke();
+            }
+        } else if (ord.length >= 2) {
             var grd = ctx.createLinearGradient(0, Math.max(0, projY(0, eMax)), 0, H);
             grd.addColorStop(0, '#6b8e4e'); grd.addColorStop(1, '#3d5230');
             ctx.fillStyle = grd; ctx.beginPath();
@@ -1701,15 +1800,6 @@
             });
             ctx.lineTo(projX(azp(ord[ord.length - 1].bearing)), H);
             ctx.closePath(); ctx.fill();
-            ctx.lineWidth = 3;
-            for (var i = 0; i < ord.length - 1; i++) {
-                var a1 = azp(ord[i].bearing), a2 = azp(ord[i + 1].bearing);
-                ctx.strokeStyle = dCol(Math.min(1, ord[i].sky.d / R));
-                ctx.beginPath();
-                ctx.moveTo(projX(a1), projY(a1, ord[i].sky.ang));
-                ctx.lineTo(projX(a2), projY(a2, ord[i + 1].sky.ang));
-                ctx.stroke();
-            }
         }
         // Horizon (droite) + grille d'angles verticaux (courbes echantillonnees)
         ctx.strokeStyle = 'rgba(0,0,0,0.40)'; ctx.lineWidth = 1;
