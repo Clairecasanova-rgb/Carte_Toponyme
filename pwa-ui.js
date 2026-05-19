@@ -1038,6 +1038,22 @@
 
         var rawHeading = 0, heading = 0, pitch = 0, haveHeading = false;
         var stream = null, raf = 0, dead = false;
+        // Lissage du cap : moyenne mobile sur (cos, sin) pour gerer le saut
+        // 359 -> 0 sans clignotement. SMOOTH ~ poids du nouvel echantillon
+        // (0.12 = lag ~8 frames a 60 Hz, ~130 ms, confortable a l'oeil).
+        var smX = null, smY = null, smPitch = null;
+        var SMOOTH = 0.12, SMOOTH_PITCH = 0.18;
+        function smoothHeading(h) {
+            var r = h * Math.PI / 180;
+            var nx = Math.cos(r), ny = Math.sin(r);
+            if (smX == null) { smX = nx; smY = ny; }
+            else { smX = smX * (1 - SMOOTH) + nx * SMOOTH;
+                   smY = smY * (1 - SMOOTH) + ny * SMOOTH; }
+            return (Math.atan2(smY, smX) * 180 / Math.PI + 360) % 360;
+        }
+        // Hysteresis sur le cap affiche : ne reaffiche le degre rond
+        // que si l'ecart au precedent depasse 1.2 deg (sinon flicker).
+        var lastShownCap = null;
         // Decalage de cap (calibrage) : appris quand l'utilisateur pointe un
         // element connu, persiste en localStorage pour la session suivante.
         var headingOffset = 0;
@@ -1145,11 +1161,19 @@
         var capEl = hud.querySelector('#pwaCamCap');
         var lastCapUpd = 0;
         function setHeading(h) {
-            rawHeading = ((h % 360) + 360) % 360;
+            // Lisse l'echantillon brut AVANT toute lecture, sinon les
+            // micro-vibrations du magnetometre se voient dans les boutons
+            // cardinaux et la barre HUD.
+            rawHeading = smoothHeading(((h % 360) + 360) % 360);
             applyOffset();
             var now = Date.now();
-            if (now - lastCapUpd > 120) {
-                capEl.textContent = 'Cap ' + Math.round(heading) + '° ' + card(heading);
+            if (now - lastCapUpd > 150) {
+                var disp = Math.round(heading);
+                if (lastShownCap == null
+                    || Math.abs(((disp - lastShownCap + 540) % 360) - 180) >= 2) {
+                    capEl.textContent = 'Cap ' + disp + '° ' + card(heading);
+                    lastShownCap = disp;
+                }
                 lastCapUpd = now;
             }
             tick();
@@ -1159,7 +1183,12 @@
             var hd = null;
             if (typeof ev.webkitCompassHeading === 'number') hd = ev.webkitCompassHeading;
             else if (typeof ev.alpha === 'number') hd = 360 - ev.alpha;
-            if (typeof ev.beta === 'number') pitch = Math.max(-45, Math.min(45, ev.beta - 90));
+            if (typeof ev.beta === 'number') {
+                var p = Math.max(-45, Math.min(45, ev.beta - 90));
+                smPitch = (smPitch == null) ? p
+                    : smPitch * (1 - SMOOTH_PITCH) + p * SMOOTH_PITCH;
+                pitch = smPitch;
+            }
             if (hd != null && isFinite(hd)) {
                 var so = 0;
                 try { so = (screen.orientation && screen.orientation.angle)
