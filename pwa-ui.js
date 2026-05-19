@@ -773,41 +773,69 @@
     // respecte Retry-After / backoff exponentiel + petit espacement entre
     // lots, sinon le calcul echouait silencieusement (rien ne s'affichait).
     function _vsFetchElev(pts, onProgress) {
-        var CH = 180, out = [], i = 0, MAXTRY = 6;
-        function fetchBatch(url, attempt) {
-            return fetch(url).then(function(r) {
+        // POST par GROS lots (1500 pts) -> tres peu de requetes : evite la
+        // saturation de la passerelle IGN (504) et le throttling (429) sur
+        // grand rayon. Repli automatique en GET (lots de 180) si le POST
+        // n'est pas accepte (status method/format ou blocage reseau/CORS).
+        var out = [], i = 0, MAXTRY = 7, postOk = true;
+        var CH_POST = 1500, CH_GET = 180;
+        function lonsLats(slice) {
+            return [slice.map(function(p) { return p[1].toFixed(6); }).join('|'),
+                    slice.map(function(p) { return p[0].toFixed(6); }).join('|')];
+        }
+        function doFetch(slice, attempt) {
+            var usePost = postOk, ll = lonsLats(slice), req;
+            if (usePost) {
+                req = fetch(VS_ALTI, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'lon=' + encodeURIComponent(ll[0]) + '&lat=' + encodeURIComponent(ll[1])
+                        + '&resource=ign_rge_alti_wld&delimiter=' + encodeURIComponent('|') + '&zonly=true'
+                });
+            } else {
+                req = fetch(VS_ALTI + '?lon=' + ll[0] + '&lat=' + ll[1]
+                    + '&resource=ign_rge_alti_wld&delimiter=|&zonly=true');
+            }
+            return req.then(function(r) {
                 if (r.ok) return r.json();
+                if (usePost && (r.status === 400 || r.status === 404 || r.status === 405
+                        || r.status === 413 || r.status === 414 || r.status === 415)) {
+                    var er = new Error('post-unsupported'); er.__switchGet = true; throw er;
+                }
                 if ((r.status === 429 || r.status >= 500) && attempt < MAXTRY) {
                     var ra = parseInt(r.headers.get('Retry-After'), 10);
-                    var wait = (ra > 0 ? ra * 1000 : Math.min(12000, 700 * Math.pow(2, attempt)));
-                    return _vsDelay(wait).then(function() { return fetchBatch(url, attempt + 1); });
+                    var wait = (ra > 0 ? ra * 1000 : Math.min(15000, 800 * Math.pow(2, attempt)));
+                    return _vsDelay(wait).then(function() { return doFetch(slice, attempt + 1); });
                 }
                 throw new Error('Altimetrie IGN HTTP ' + r.status
-                    + (r.status === 429 ? ' (trop de requetes — reessayer dans un instant ou reduire le rayon)' : ''));
+                    + (r.status === 429 ? ' (trop de requetes)'
+                       : r.status === 504 ? ' (serveur IGN sature : reessayer ou reduire le rayon)' : ''));
             }).catch(function(e) {
-                if (attempt < MAXTRY && /NetworkError|Failed to fetch|load failed/i.test(String(e && e.message))) {
-                    return _vsDelay(Math.min(12000, 700 * Math.pow(2, attempt)))
-                        .then(function() { return fetchBatch(url, attempt + 1); });
+                if (e && e.__switchGet) throw e;
+                var net = /NetworkError|Failed to fetch|load failed|aborted/i.test(String(e && e.message));
+                if (usePost && net) { var er2 = new Error('post-net'); er2.__switchGet = true; throw er2; }
+                if (attempt < MAXTRY && net) {
+                    return _vsDelay(Math.min(15000, 800 * Math.pow(2, attempt)))
+                        .then(function() { return doFetch(slice, attempt + 1); });
                 }
                 throw e;
             });
         }
         function next() {
             if (i >= pts.length) return Promise.resolve(out);
-            var slice = pts.slice(i, i + CH);
-            var lons = slice.map(function(p) { return p[1].toFixed(6); }).join('|');
-            var lats = slice.map(function(p) { return p[0].toFixed(6); }).join('|');
-            var url = VS_ALTI + '?lon=' + lons + '&lat=' + lats
-                + '&resource=ign_rge_alti_wld&delimiter=|&zonly=true';
-            return fetchBatch(url, 0).then(function(j) {
+            var ch = postOk ? CH_POST : CH_GET;
+            var slice = pts.slice(i, i + ch);
+            return doFetch(slice, 0).then(function(j) {
                 var ev = (j && j.elevations) || [];
                 ev.forEach(function(z) {
                     out.push((typeof z === 'number' && z > -1000) ? z : 0);
                 });
-                i += CH;
+                i += slice.length;
                 if (onProgress) onProgress(Math.min(i, pts.length), pts.length);
-                // Petit espacement anti-throttling entre 2 lots.
-                return (i < pts.length) ? _vsDelay(120).then(next) : out;
+                return (i < pts.length) ? _vsDelay(postOk ? 150 : 120).then(next) : out;
+            }).catch(function(e) {
+                if (e && e.__switchGet) { postOk = false; return next(); }  // re-decoupe en GET
+                throw e;
             });
         }
         return next();
