@@ -891,14 +891,16 @@
     // n'est libre, l'etiquette est masquee (le point/marqueur reste).
     function _vsPlaceLabel(ctx, rects, mx, my, text, font, fg, W, H) {
         ctx.font = font;
-        var tw = ctx.measureText(text).width, th = 12, pad = 2;
+        var tw = ctx.measureText(text).width, th = 12, pad = 2, MG = 3;
+        // Candidates classees du PLUS PRES du point au plus loin (l'etiquette
+        // reste collee au point -> on ne le percoit plus "plus haut").
         var cands = [
-            [mx + 8, my - 6], [mx + 8, my + 14],
-            [mx - tw - 10, my - 6], [mx - tw - 10, my + 14],
-            [mx - tw / 2, my - 13], [mx - tw / 2, my + 21],
-            [mx + 8, my - 20], [mx + 8, my + 28],
-            [mx - tw - 10, my - 20], [mx - tw - 10, my + 28],
-            [mx + 8, my - 34], [mx + 8, my + 42]
+            [mx + 7, my + 4], [mx - tw - 9, my + 4],
+            [mx + 7, my - 5], [mx - tw - 9, my - 5],
+            [mx - tw / 2, my + 13], [mx - tw / 2, my - 11],
+            [mx + 7, my + 15], [mx - tw - 9, my + 15],
+            [mx + 7, my - 16], [mx - tw - 9, my - 16],
+            [mx - tw / 2, my + 24], [mx - tw / 2, my - 22]
         ];
         for (var i = 0; i < cands.length; i++) {
             var lx = Math.max(2, Math.min(W - tw - 4, cands[i][0]));
@@ -907,12 +909,13 @@
             var hit = false;
             for (var k = 0; k < rects.length; k++) {
                 var o = rects[k];
-                if (!(r.x2 < o.x1 || r.x1 > o.x2 || r.y2 < o.y1 || r.y1 > o.y2)) { hit = true; break; }
+                if (!(r.x2 + MG < o.x1 || r.x1 - MG > o.x2
+                      || r.y2 + MG < o.y1 || r.y1 - MG > o.y2)) { hit = true; break; }
             }
             if (hit) continue;
             rects.push(r);
-            if (Math.abs((lx + tw / 2) - mx) > 16 || Math.abs(ly - my) > 18) {
-                ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 1;
+            if (Math.abs((lx + tw / 2) - mx) > 14 || Math.abs(ly - my) > 14) {
+                ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = 1;
                 ctx.beginPath(); ctx.moveTo(mx, my);
                 ctx.lineTo(mx < lx ? lx - 1 : lx + tw + 1, ly - 4); ctx.stroke();
             }
@@ -923,6 +926,9 @@
         }
         return false;
     }
+    // Tri par distance croissante : les points PROCHES sont etiquetes en
+    // priorite ; les lointains perdent leur libelle si la zone est saturee.
+    function _vsByDist(a, b) { return (a.dist || 0) - (b.dist || 0); }
     // Marqueur Patrimoine sur la carte 2D : losange (forme differente des
     // sommets qui sont des cercles), couleur rose.
     function _vsDiamondIcon(color) {
@@ -1604,7 +1610,7 @@
         var lblRects = [];  // anti-chevauchement des etiquettes (3 types)
         // Cibles projetees : UNIQUEMENT celles strictement visibles depuis le
         // point de vue (les masquees ne sont pas positionnees sur la vue).
-        res.targets.forEach(function(t) {
+        res.targets.slice().sort(_vsByDist).forEach(function(t) {
             if (!t.visible) return;
             if (!res.full) {
                 var dd = Math.abs(((t.bearing - res.azC + 540) % 360) - 180);
@@ -1624,7 +1630,7 @@
         });
         // Sommets nommes (OSM) : UNIQUEMENT ceux dans le champ de visibilite
         // (les masques ne sont plus positionnes sur la vue).
-        (res.peaks || []).forEach(function(p) {
+        (res.peaks || []).slice().sort(_vsByDist).forEach(function(p) {
             if (!p.visible) return;
             if (!res.full) {
                 var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
@@ -1645,7 +1651,7 @@
         });
         // Points Patrimoine (losange rose) : UNIQUEMENT ceux dans le champ de
         // visibilite (les masques ne sont pas positionnes sur la vue).
-        (res.patrimoine || []).forEach(function(p) {
+        (res.patrimoine || []).slice().sort(_vsByDist).forEach(function(p) {
             if (!p.visible) return;
             if (!res.full) {
                 var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
@@ -1874,9 +1880,9 @@
                     W, H);
             }
         }
-        (res.targets || []).forEach(function(t) { drawPin(t, 'target'); });
-        (res.peaks || []).forEach(function(p) { drawPin(p, 'peak'); });
-        (res.patrimoine || []).forEach(function(p) { drawPin(p, 'patri'); });
+        (res.targets || []).slice().sort(_vsByDist).forEach(function(t) { drawPin(t, 'target'); });
+        (res.peaks || []).slice().sort(_vsByDist).forEach(function(p) { drawPin(p, 'peak'); });
+        (res.patrimoine || []).slice().sort(_vsByDist).forEach(function(p) { drawPin(p, 'patri'); });
         // Legende
         ctx.fillStyle = 'rgba(255,255,255,0.78)'; ctx.fillRect(6, H - 30, 250, 24);
         ctx.fillStyle = '#1b2631'; ctx.font = '10px Segoe UI';
@@ -2110,14 +2116,26 @@
         var b = res.bounds;
         var south, west, north, east;
         if (b) { south = b[0][0]; west = b[0][1]; north = b[1][0]; east = b[1][1]; }
-        function crestD(az) {
+        function crestInfo(az) {
             if (!res.rayProf) return null;
             var best = null, bd = 999;
             res.rayProf.forEach(function(p) {
                 var df = Math.abs(((p.bearing - az + 540) % 360) - 180);
                 if (df < bd) { bd = df; best = p; }
             });
-            return best ? best.sky.d : null;
+            return best ? { d: best.sky.d, ang: best.sky.ang } : null;
+        }
+        function crestD(az) { var c = crestInfo(az); return c ? c.d : null; }
+        // Couleur "profondeur" = meme echelle que les couches de relief :
+        // proche = vert, loin = bleu pale -> lecture instinctive proche/loin.
+        function _depthCol(d) {
+            var t = Math.max(0, Math.min(1, d / (res.radiusM || 1)));
+            return 'rgb(' + Math.round(46 + 104 * t) + ',' + Math.round(120 + 60 * t)
+                + ',' + Math.round(60 + 145 * t) + ')';
+        }
+        function _distTxt(d) {
+            return d >= 1000 ? (d / 1000).toFixed(d >= 10000 ? 0 : 1) + ' km'
+                : Math.round(d) + ' m';
         }
         function drawPano(az, vAng) {
             if (!pReady) return;
@@ -2125,26 +2143,50 @@
             var g = pano.getContext('2d');
             g.clearRect(0, 0, w, h); g.drawImage(pImg, 0, 0, w, h);
             if (az == null) return;
-            var x;
+            var x, crestY = null;
+            var ci = crestInfo(az);
             if (_vsMode === 'persp' && res.perspMeta) {
                 var P = res.perspMeta;
                 var a = ((az - P.cAz + 540) % 360) - 180;
                 a = Math.max(-P.hfov / 2, Math.min(P.hfov / 2, a));
                 x = (P.cx + P.f * Math.tan(a * Math.PI / 180)) / P.W * w;
-                g.strokeStyle = 'rgba(192,57,43,0.9)'; g.lineWidth = 1.5;
-                g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
-                return;
+                if (ci) {
+                    var pyi = P.cy - P.f * Math.tan(ci.ang * Math.PI / 180)
+                        / Math.cos(a * Math.PI / 180);
+                    crestY = Math.max(0, Math.min(h, pyi / P.H * h));
+                }
+            } else {
+                var W0 = pm.W || pImg.naturalWidth || w;
+                var PADd = (pm.PAD || 34) / W0 * w;
+                var PWd = w - PADd;
+                x = PADd + ((az - pm.azStart + 360) % 360) / pm.azSpan * PWd;
+                if (ci && pm.topA != null && pm.botA != null) {
+                    crestY = Math.max(0, Math.min(h,
+                        (pm.topA - ci.ang) / (pm.topA - pm.botA) * h));
+                }
             }
-            var W0 = pm.W || pImg.naturalWidth || w;
-            var PADd = (pm.PAD || 34) / W0 * w;
-            var PWd = w - PADd;
-            x = PADd + ((az - pm.azStart + 360) % 360) / pm.azSpan * PWd;
-            g.strokeStyle = 'rgba(192,57,43,0.9)'; g.lineWidth = 1.5;
+            // Ligne curseur
+            g.strokeStyle = 'rgba(192,57,43,0.85)'; g.lineWidth = 1.5;
             g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
-            if (vAng != null && pm.topA != null && pm.botA != null) {
+            if (vAng != null && _vsMode !== 'persp' && pm.topA != null && pm.botA != null) {
                 var y = (pm.topA - vAng) / (pm.topA - pm.botA) * h;
-                g.strokeStyle = 'rgba(192,57,43,0.45)';
+                g.strokeStyle = 'rgba(192,57,43,0.4)';
                 g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+            }
+            // Pastille a la crete + distance, colorees par profondeur
+            if (ci) {
+                var dy = (crestY != null) ? crestY : 14;
+                g.beginPath(); g.arc(x, dy, 6, 0, 2 * Math.PI);
+                g.fillStyle = _depthCol(ci.d); g.fill();
+                g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke();
+                var txt = _distTxt(ci.d);
+                g.font = 'bold 12px Segoe UI';
+                var tw = g.measureText(txt).width;
+                var bx = Math.max(2, Math.min(w - tw - 10, x + 9));
+                var by = Math.max(16, Math.min(h - 6, dy - 10));
+                g.fillStyle = 'rgba(0,0,0,0.62)';
+                g.fillRect(bx - 4, by - 13, tw + 8, 17);
+                g.fillStyle = '#fff'; g.fillText(txt, bx, by);
             }
         }
         function drawMini(az, dist) {
