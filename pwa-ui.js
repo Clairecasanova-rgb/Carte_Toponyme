@@ -1007,6 +1007,29 @@
             return c.slice(0, 40);
         } catch(_e) { return ''; }
     }
+    // Nom AFFICHE d'un point. Pour un point perso (feature collaborative),
+    // on prend le vrai champ "name" de la feature (via customFeaturesData /
+    // featureId) -> SANS la categorie ni le reste du popup, pour ne pas
+    // surcharger la vue tangentielle.
+    function _vsFeatName(l) {
+        try {
+            if (l && l.featureId != null && Array.isArray(window.customFeaturesData)) {
+                for (var i = 0; i < window.customFeaturesData.length; i++) {
+                    var f = window.customFeaturesData[i];
+                    if (f && f.id === l.featureId)
+                        return String(f.name || f.nom || '').trim().slice(0, 48)
+                            || _vsLayerName(l);
+                }
+            }
+        } catch(_e) {}
+        var n = _vsLayerName(l);
+        if (l && l._customCategory) {  // retirer la categorie du blob popup
+            var cat = String(l._customCategory);
+            n = n.split(cat).join(' ').replace(/^[\s\-–—:|]+/, '')
+                 .replace(/[\s\-–—:|]+$/, '').replace(/\s+/g, ' ').trim();
+        }
+        return n.slice(0, 40);
+    }
     // Points proches (marqueurs Leaflet) dans le rayon, hors couche viewshed.
     // Un marqueur de feature collaborative ("point perso") porte _customCategory ;
     // les autres marqueurs sont des toponymes. La projection sur la vue depend
@@ -1025,7 +1048,8 @@
                 if (!ll) return;
                 var d = _vsDist(lat, lon, ll.lat, ll.lng);
                 if (d < 25 || d > radiusM) return;  // exclut l'observateur lui-meme
-                t.push({ lat: ll.lat, lon: ll.lng, dist: d, name: _vsLayerName(l),
+                t.push({ lat: ll.lat, lon: ll.lng, dist: d,
+                         name: isPerso ? _vsFeatName(l) : _vsLayerName(l),
                          perso: isPerso });
             } catch(_e) {}
         });
@@ -2155,7 +2179,7 @@
             return d >= 1000 ? (d / 1000).toFixed(d >= 10000 ? 0 : 1) + ' km'
                 : Math.round(d) + ' m';
         }
-        function drawPano(az, vAng) {
+        function drawPano(az, vAng, dist) {
             if (!pReady) return;
             var w = pano.width, h = pano.height;
             var g = pano.getContext('2d');
@@ -2191,13 +2215,16 @@
                 g.strokeStyle = 'rgba(192,57,43,0.4)';
                 g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
             }
-            // Pastille a la crete + distance, colorees par profondeur
-            if (ci) {
+            // Pastille + distance, colorees par profondeur. La distance est
+            // celle du point SURVOLE (dist, ex: mini-carte) si fournie ;
+            // sinon la crete a cet azimut.
+            var dShown = (dist != null) ? dist : (ci ? ci.d : null);
+            if (dShown != null) {
                 var dy = (crestY != null) ? crestY : 14;
                 g.beginPath(); g.arc(x, dy, 6, 0, 2 * Math.PI);
-                g.fillStyle = _depthCol(ci.d); g.fill();
+                g.fillStyle = _depthCol(dShown); g.fill();
                 g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke();
-                var txt = _distTxt(ci.d);
+                var txt = _distTxt(dShown);
                 g.font = 'bold 12px Segoe UI';
                 var tw = g.measureText(txt).width;
                 var bx = Math.max(2, Math.min(w - tw - 10, x + 9));
@@ -2243,7 +2270,7 @@
             if (vAng != null) s += ' · ' + (vAng > 0 ? '+' : '') + vAng.toFixed(1) + '°';
             readEl.textContent = s;
         }
-        function syncFromAz(az, dist, vAng) { drawPano(az, vAng); drawMini(az, dist); readout(az, dist, vAng); }
+        function syncFromAz(az, dist, vAng) { drawPano(az, vAng, dist); drawMini(az, dist); readout(az, dist, vAng); }
         function evtXY(el, ev) {
             var r = el.getBoundingClientRect();
             var t = (ev.touches && ev.touches[0]) || ev;
