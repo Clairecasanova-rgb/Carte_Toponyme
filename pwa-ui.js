@@ -929,6 +929,22 @@
     // Tri par distance croissante : les points PROCHES sont etiquetes en
     // priorite ; les lointains perdent leur libelle si la zone est saturee.
     function _vsByDist(a, b) { return (a.dist || 0) - (b.dist || 0); }
+    // Couleur d'un point selon sa distance (effet de profondeur, meme echelle
+    // que les reliefs/curseur) : proche = teinte vive de la categorie,
+    // loin = estompe/pale. La forme garde l'identite (cercle/triangle/losange).
+    function _vsPtCol(kind, dist, R) {
+        var t = Math.max(0, Math.min(1, (dist || 0) / (R || 1)));
+        function mix(a, b) { return Math.round(a + (b - a) * t); }
+        if (kind === 'peak')
+            return 'rgb(' + mix(120, 172) + ',' + mix(70, 160) + ',' + mix(20, 150) + ')';
+        if (kind === 'patri')
+            return 'rgb(' + mix(214, 200) + ',' + mix(20, 165) + ',' + mix(120, 190) + ')';
+        return 'rgb(' + mix(20, 150) + ',' + mix(150, 182) + ',' + mix(60, 172) + ')';
+    }
+    function _vsPtR(dist, R) {
+        var t = Math.max(0, Math.min(1, (dist || 0) / (R || 1)));
+        return 6.5 - 3 * t;   // proche ~6.5 px -> loin ~3.5 px
+    }
     // Marqueur Patrimoine sur la carte 2D : losange (forme differente des
     // sommets qui sont des cercles), couleur rose.
     function _vsDiamondIcon(color) {
@@ -1617,10 +1633,11 @@
                 if (dd > res.azW / 2) return;
             }
             var x = X(t.bearing), y = Y(t.ang);
-            ctx.strokeStyle = t.visible ? 'rgba(39,174,96,0.7)' : 'rgba(127,140,141,0.6)';
+            var tc = _vsPtCol('target', t.dist, R), trr = _vsPtR(t.dist, R);
+            ctx.strokeStyle = 'rgba(39,174,96,0.45)';
             ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
-            ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI);
-            ctx.fillStyle = t.visible ? '#27ae60' : '#95a5a6';
+            ctx.beginPath(); ctx.arc(x, y, trr, 0, 2 * Math.PI);
+            ctx.fillStyle = tc;
             ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
             if (t.name) {
                 _vsPlaceLabel(ctx, lblRects, x, y,
@@ -1637,13 +1654,15 @@
                 if (dp > res.azW / 2) return;
             }
             var x = X(p.bearing), y = Y(p.ang);
-            ctx.strokeStyle = 'rgba(138,90,43,0.55)';
+            var pr = _vsPtR(p.dist, R) + 1;
+            ctx.strokeStyle = 'rgba(138,90,43,0.4)';
             ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
             ctx.setLineDash([]);
             ctx.beginPath();                                  // triangle (mont)
-            ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 4); ctx.lineTo(x + 6, y + 4);
-            ctx.closePath(); ctx.fillStyle = '#8a5a2b'; ctx.fill();
+            ctx.moveTo(x, y - pr); ctx.lineTo(x - pr, y + pr * 0.66);
+            ctx.lineTo(x + pr, y + pr * 0.66);
+            ctx.closePath(); ctx.fillStyle = _vsPtCol('peak', p.dist, R); ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
             _vsPlaceLabel(ctx, lblRects, x, y,
                 p.name + (p.elev ? ' ' + p.elev + ' m' : ''),
@@ -1658,14 +1677,15 @@
                 if (dp > res.azW / 2) return;
             }
             var x = X(p.bearing), y = Y(p.ang);
-            ctx.strokeStyle = 'rgba(232,69,143,0.6)';
+            var qr = _vsPtR(p.dist, R) + 0.5;
+            ctx.strokeStyle = 'rgba(232,69,143,0.45)';
             ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
             ctx.setLineDash([]);
             ctx.beginPath();                                  // losange
-            ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y);
-            ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y);
-            ctx.closePath(); ctx.fillStyle = '#e8458f'; ctx.fill();
+            ctx.moveTo(x, y - qr); ctx.lineTo(x + qr, y);
+            ctx.lineTo(x, y + qr); ctx.lineTo(x - qr, y);
+            ctx.closePath(); ctx.fillStyle = _vsPtCol('patri', p.dist, R); ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
             _vsPlaceLabel(ctx, lblRects, x, y, (p.name || 'Patrimoine'),
                 '10px Segoe UI', '#c0317a', W, H);
@@ -1849,26 +1869,24 @@
             // champ de visibilite (les masques ne sont plus positionnes).
             if (!o.visible) return;
             var x = projX(a), y = projY(a, o.ang);
-            var vis = o.visible;
-            var col = !vis ? '#9aa3a3'
-                : kind === 'peak' ? '#8a5a2b'
-                : kind === 'patri' ? '#e8458f' : '#27ae60';
-            ctx.strokeStyle = vis ? (kind === 'peak' ? 'rgba(138,90,43,0.55)'
-                : kind === 'patri' ? 'rgba(232,69,143,0.6)' : 'rgba(39,174,96,0.7)')
-                : 'rgba(154,163,163,0.5)';
+            var col = _vsPtCol(kind === 'patri' ? 'patri' : kind === 'peak' ? 'peak' : 'target',
+                o.dist, R);
+            var rr = _vsPtR(o.dist, R);
+            ctx.strokeStyle = (kind === 'peak' ? 'rgba(138,90,43,0.4)'
+                : kind === 'patri' ? 'rgba(232,69,143,0.4)' : 'rgba(39,174,96,0.4)');
             if (kind !== 'target') ctx.setLineDash(kind === 'patri' ? [2, 3] : [3, 3]);
             ctx.lineWidth = 1; ctx.beginPath();
             ctx.moveTo(x, y); ctx.lineTo(x, horizonY); ctx.stroke();
             ctx.setLineDash([]);
             ctx.beginPath();
             if (kind === 'peak') {
-                ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 4); ctx.lineTo(x + 6, y + 4);
-                ctx.closePath();
+                ctx.moveTo(x, y - rr - 1); ctx.lineTo(x - rr - 1, y + rr * 0.66);
+                ctx.lineTo(x + rr + 1, y + rr * 0.66); ctx.closePath();
             } else if (kind === 'patri') {
-                ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y);
-                ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y); ctx.closePath();
+                ctx.moveTo(x, y - rr); ctx.lineTo(x + rr, y);
+                ctx.lineTo(x, y + rr); ctx.lineTo(x - rr, y); ctx.closePath();
             } else {
-                ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                ctx.arc(x, y, rr, 0, 2 * Math.PI);
             }
             ctx.fillStyle = col; ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4; ctx.stroke();
