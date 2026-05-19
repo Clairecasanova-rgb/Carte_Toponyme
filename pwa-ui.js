@@ -1545,7 +1545,7 @@
         var azSpan = res.full ? 360 : res.azW;
         var PAD = 34;                                         // marge axes
         var W = Math.min(1800, Math.max(760, Math.round(azSpan * 4))) + PAD;
-        var H = 320;
+        var PW = W - PAD;                                     // largeur panorama
         var minA = 90, maxA = -90;
         rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
         res.targets.forEach(function(t) { if (!t.visible) return; if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
@@ -1553,9 +1553,13 @@
         (res.patrimoine || []).forEach(function(p) { if (!p.visible) return; if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
         var topA = Math.min(75, Math.ceil(maxA + 4));
         var botA = Math.max(-35, Math.floor(Math.min(-4, minA - 3)));
+        // Hauteur = MEME echelle angulaire que l'horizontale (1 deg vertical
+        // = 1 deg horizontal) -> proportions realistes, plus de tassement.
+        var pxDeg = PW / azSpan;
+        var H = Math.max(200, Math.min(1100,
+            Math.round((topA - botA) * pxDeg)));
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
         var ctx = cv.getContext('2d'); ctx.lineJoin = 'round';
-        var PW = W - PAD;                                     // largeur panorama
         function X(az) { return PAD + ((az - azStart + 360) % 360) / azSpan * PW; }
         function Y(a) { return (topA - a) / (topA - botA) * H; }
         // Meta : mapping curseur <-> azimut/angle (sync vue planimetrique)
