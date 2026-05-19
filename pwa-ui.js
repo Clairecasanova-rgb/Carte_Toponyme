@@ -1039,6 +1039,56 @@
         tryHost(0);
     }
 
+    // Points Patrimoine (donnees locales de la carte : window.getPatrimoine),
+    // dans le rayon/secteur, projetes sur la vue. Altimetrie pour l'angle.
+    function _vsFetchPatrimoine(res, done) {
+        function fin(arr) { res.patrimoine = arr || []; if (done) done(res.patrimoine); }
+        var rp = res.rayProf;
+        if (!rp || typeof window.getPatrimoine !== 'function') { fin([]); return; }
+        var list;
+        try { list = window.getPatrimoine(res.lat, res.lon, res.radiusM) || []; }
+        catch (_e) { fin([]); return; }
+        var cand = [];
+        list.forEach(function(it) {
+            if (it.lat == null || it.lon == null) return;
+            var d = _vsDist(res.lat, res.lon, it.lat, it.lon);
+            if (d < 25 || d > res.radiusM) return;
+            if (!res.full) {
+                var pb = _vsBearing(res.lat, res.lon, it.lat, it.lon);
+                var dd = Math.abs(((pb - res.azC + 540) % 360) - 180);
+                if (dd > res.azW / 2) return;
+            }
+            cand.push({ name: String(it.nom || it.layer_name || 'Patrimoine'),
+                        lat: it.lat, lon: it.lon, dist: d,
+                        nature: it.layer_name || it.type || 'patrimoine' });
+        });
+        cand.sort(function(a, c) { return a.dist - c.dist; });
+        cand = cand.slice(0, 40);
+        if (!cand.length) { fin([]); return; }
+        _vsFetchElev(cand.map(function(p) { return [p.lat, p.lon]; }))
+            .then(function(pe) {
+                var obsTot = res.obsElev + res.obsH;
+                var nR = res.nRays, N = res.N, st = res.stepM;
+                var gate = Math.max(res.rayStep || 2, 1.5);
+                fin(cand.map(function(p, i) {
+                    var pz = pe[i] - _vsCurv(p.dist);
+                    var pang = Math.atan2(pz - obsTot, p.dist) * 180 / Math.PI;
+                    var pbear = _vsBearing(res.lat, res.lon, p.lat, p.lon);
+                    var best = null, bd = 999, r;
+                    for (r = 0; r < nR; r++) {
+                        var diff = Math.abs(((rp[r].bearing - pbear + 540) % 360) - 180);
+                        if (diff < bd) { bd = diff; best = rp[r]; }
+                    }
+                    var ki = Math.min(N - 1, Math.max(0, Math.round(p.dist / st) - 1));
+                    var blk = (best && best.maxAng[ki] != null) ? best.maxAng[ki] : -90;
+                    return { name: p.name, lat: p.lat, lon: p.lon, dist: p.dist,
+                             nature: p.nature, bearing: pbear, ang: pang,
+                             elev: Math.round(pe[i]),
+                             visible: (bd <= gate) && (pang >= blk + 0.05) };
+                }));
+            }).catch(function() { fin([]); });
+    }
+
     function _vsStart() {
         if ((typeof isAppOffline === 'function') && isAppOffline()) {
             showToast('Champ de visibilite : connexion requise (altimetrie IGN).', 5000);
@@ -1266,14 +1316,10 @@
             _vsProgHide();
             showToast('Champ de visibilite calcule.', 4000);
             _vsResultModal(res);
-            // Sommets nommes IGN (asynchrone) : enrichit la vue une fois prets
+            // Enrichissement asynchrone : sommets nommes (OSM) puis Patrimoine
+            // (sequentiel pour ne pas cumuler deux series d'altimetrie).
             _vsFetchPeaks(res, function(pk) {
-                if (!pk || !pk.length) return;
-                res.panoramaURL = _vsBuildPanorama(res);
-                res.perspectiveURL = _vsBuildPanoramaPerspective(res);
-                if (typeof res._setPano === 'function') res._setPano();
-                if (_vsLayer) {
-                    var map = findLeafletMap();
+                if (pk && pk.length && _vsLayer) {
                     pk.forEach(function(p) {
                         L.circleMarker([p.lat, p.lon], {
                             radius: 4, weight: 2, color: '#fff',
@@ -1283,10 +1329,29 @@
                             + '<br>' + (p.visible ? 'VISIBLE' : 'masque')
                             + ' · ' + Math.round(p.dist) + ' m').addTo(_vsLayer);
                     });
-                    if (map) { /* deja sur la carte via _vsLayer */ }
                 }
-                var nv = pk.filter(function(p) { return p.visible; }).length;
-                showToast(pk.length + ' sommet(s) nomme(s) · ' + nv + ' visible(s).', 4500);
+                _vsFetchPatrimoine(res, function(pa) {
+                    if (pa && pa.length && _vsLayer) {
+                        pa.forEach(function(p) {
+                            L.circleMarker([p.lat, p.lon], {
+                                radius: 4, weight: 2, color: '#fff',
+                                fillColor: p.visible ? '#7c2d12' : '#9aa3a3', fillOpacity: 1
+                            }).bindPopup('◆ ' + escapeHtml(p.name)
+                                + (p.nature ? '<br>' + escapeHtml(p.nature) : '')
+                                + '<br>' + (p.visible ? 'VISIBLE' : 'masque')
+                                + ' · ' + Math.round(p.dist) + ' m').addTo(_vsLayer);
+                        });
+                    }
+                    if ((pk && pk.length) || (pa && pa.length)) {
+                        res.panoramaURL = _vsBuildPanorama(res);
+                        res.perspectiveURL = _vsBuildPanoramaPerspective(res);
+                        if (typeof res._setPano === 'function') res._setPano();
+                    }
+                    var msg = [];
+                    if (pk && pk.length) msg.push(pk.length + ' sommet(s)');
+                    if (pa && pa.length) msg.push(pa.length + ' patrimoine');
+                    if (msg.length) showToast(msg.join(' · ') + ' ajoutes a la vue.', 4500);
+                });
             });
         }).catch(function(err) {
             _vsProgHide();
@@ -1371,7 +1436,8 @@
         var minA = 90, maxA = -90;
         rp.forEach(function(p) { if (p.sky.ang > maxA) maxA = p.sky.ang; });
         res.targets.forEach(function(t) { if (!t.visible) return; if (t.ang < minA) minA = t.ang; if (t.ang > maxA) maxA = t.ang; });
-        (res.peaks || []).forEach(function(p) { if (!p.visible) return; if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
+        (res.peaks || []).forEach(function(p) { if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
+        (res.patrimoine || []).forEach(function(p) { if (p.ang < minA) minA = p.ang; if (p.ang > maxA) maxA = p.ang; });
         var topA = Math.min(75, Math.ceil(maxA + 4));
         var botA = Math.max(-35, Math.floor(Math.min(-4, minA - 3)));
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
@@ -1457,9 +1523,9 @@
                 ctx.fillStyle = '#1b2631'; ctx.fillText(lbl, lx, ly);
             }
         });
-        // Sommets nommes (OSM) : UNIQUEMENT ceux strictement visibles.
+        // Sommets nommes (OSM) : tous affiches (reperes d'orientation) ;
+        // ceux qui ne sont pas en ligne de vue directe sont grises + "(masque)".
         (res.peaks || []).forEach(function(p) {
-            if (!p.visible) return;
             if (!res.full) {
                 var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
                 if (dp > res.azW / 2) return;
@@ -1482,6 +1548,32 @@
             ctx.fillStyle = 'rgba(255,255,255,0.82)';
             ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
             ctx.fillStyle = p.visible ? '#5a3a1a' : '#6b7373';
+            ctx.fillText(lbl, lx, ly);
+        });
+        // Points Patrimoine (losange) : reperes culturels, masques grises.
+        (res.patrimoine || []).forEach(function(p) {
+            if (!res.full) {
+                var dp = Math.abs(((p.bearing - res.azC + 540) % 360) - 180);
+                if (dp > res.azW / 2) return;
+            }
+            var x = X(p.bearing), y = Y(p.ang);
+            var col = p.visible ? '#7c2d12' : '#9aa3a3';
+            ctx.strokeStyle = p.visible ? 'rgba(124,45,18,0.55)' : 'rgba(154,163,163,0.5)';
+            ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, Y(0)); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.beginPath();                                  // losange
+            ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y);
+            ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y);
+            ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
+            var lbl = (p.name || 'Patrimoine') + (p.visible ? '' : ' (masque)');
+            ctx.font = '10px Segoe UI';
+            var tw = ctx.measureText(lbl).width;
+            var lx = Math.min(W - tw - 4, x + 8), ly = Math.max(34, y + 14);
+            ctx.fillStyle = 'rgba(255,255,255,0.82)';
+            ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
+            ctx.fillStyle = p.visible ? '#7c2d12' : '#6b7373';
             ctx.fillText(lbl, lx, ly);
         });
         // Legende distance
@@ -1523,8 +1615,12 @@
             if (p.sky.ang > eMax) eMax = p.sky.ang;
             if (p.sky.ang < eMin) eMin = p.sky.ang;
         });
-        (res.targets || []).concat(res.peaks || []).forEach(function(t) {
+        (res.targets || []).forEach(function(t) {
             if (!t.visible || !inFov(azp(t.bearing))) return;
+            if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
+        });
+        (res.peaks || []).concat(res.patrimoine || []).forEach(function(t) {
+            if (!inFov(azp(t.bearing))) return;
             if (t.ang > eMax) eMax = t.ang; if (t.ang < eMin) eMin = t.ang;
         });
         if (eMax < -89) { eMax = 10; eMin = -5; }
@@ -1604,37 +1700,52 @@
             ctx.fillText(mk[1] || (Math.round(mk[0]) + '°'),
                 Math.min(W - 28, xx + 3), 12);
         });
-        // Cibles + sommets : uniquement strictement visibles, dans le champ
-        function drawPin(o, isPeak) {
-            var a = azp(o.bearing); if (!o.visible || !inFov(a)) return;
+        // Cibles (cercle), sommets (triangle), patrimoine (losange).
+        // Tous affiches dans le champ ; non visibles grises.
+        function drawPin(o, kind) {
+            var a = azp(o.bearing); if (!inFov(a)) return;
+            if (kind === 'target' && !o.visible) return;   // cibles : strict
             var x = projX(a), y = projY(a, o.ang);
-            ctx.strokeStyle = isPeak ? 'rgba(138,90,43,0.55)' : 'rgba(39,174,96,0.7)';
-            if (isPeak) ctx.setLineDash([3, 3]);
+            var vis = o.visible;
+            var col = !vis ? '#9aa3a3'
+                : kind === 'peak' ? '#8a5a2b'
+                : kind === 'patri' ? '#7c2d12' : '#27ae60';
+            ctx.strokeStyle = vis ? (kind === 'peak' ? 'rgba(138,90,43,0.55)'
+                : kind === 'patri' ? 'rgba(124,45,18,0.55)' : 'rgba(39,174,96,0.7)')
+                : 'rgba(154,163,163,0.5)';
+            if (kind !== 'target') ctx.setLineDash(kind === 'patri' ? [2, 3] : [3, 3]);
             ctx.lineWidth = 1; ctx.beginPath();
             ctx.moveTo(x, y); ctx.lineTo(x, horizonY); ctx.stroke();
             ctx.setLineDash([]);
-            if (isPeak) {
-                ctx.beginPath(); ctx.moveTo(x, y - 7);
-                ctx.lineTo(x - 6, y + 4); ctx.lineTo(x + 6, y + 4);
-                ctx.closePath(); ctx.fillStyle = '#8a5a2b'; ctx.fill();
+            ctx.beginPath();
+            if (kind === 'peak') {
+                ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 4); ctx.lineTo(x + 6, y + 4);
+                ctx.closePath();
+            } else if (kind === 'patri') {
+                ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y);
+                ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y); ctx.closePath();
             } else {
-                ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI);
-                ctx.fillStyle = '#27ae60'; ctx.fill();
+                ctx.arc(x, y, 5, 0, 2 * Math.PI);
             }
+            ctx.fillStyle = col; ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4; ctx.stroke();
             if (o.name) {
-                var lbl = o.name + (isPeak && o.elev ? ' ' + o.elev + ' m' : '');
-                ctx.font = (isPeak ? 'italic ' : '') + '10px Segoe UI';
+                var lbl = o.name + (kind === 'peak' && o.elev ? ' ' + o.elev + ' m' : '')
+                    + (vis ? '' : ' (masque)');
+                ctx.font = (kind === 'peak' ? 'italic ' : '') + '10px Segoe UI';
                 var tw = ctx.measureText(lbl).width;
-                var lx = Math.min(W - tw - 4, x + 8), ly = Math.max(20, y - 7);
+                var lx = Math.min(W - tw - 4, x + 8);
+                var ly = kind === 'patri' ? Math.max(34, y + 14) : Math.max(20, y - 7);
                 ctx.fillStyle = 'rgba(255,255,255,0.82)';
                 ctx.fillRect(lx - 2, ly - 9, tw + 4, 12);
-                ctx.fillStyle = isPeak ? '#5a3a1a' : '#1b2631';
+                ctx.fillStyle = !vis ? '#6b7373'
+                    : kind === 'peak' ? '#5a3a1a' : kind === 'patri' ? '#7c2d12' : '#1b2631';
                 ctx.fillText(lbl, lx, ly);
             }
         }
-        (res.targets || []).forEach(function(t) { drawPin(t, false); });
-        (res.peaks || []).forEach(function(p) { drawPin(p, true); });
+        (res.targets || []).forEach(function(t) { drawPin(t, 'target'); });
+        (res.peaks || []).forEach(function(p) { drawPin(p, 'peak'); });
+        (res.patrimoine || []).forEach(function(p) { drawPin(p, 'patri'); });
         // Legende
         ctx.fillStyle = 'rgba(255,255,255,0.78)'; ctx.fillRect(6, H - 30, 250, 24);
         ctx.fillStyle = '#1b2631'; ctx.font = '10px Segoe UI';
@@ -1798,6 +1909,11 @@
                 peaks: (res.peaks || []).map(function(p) {
                     return { name: p.name, lat: p.lat, lon: p.lon,
                              dist: Math.round(p.dist), elev: p.elev,
+                             bearing: p.bearing, ang: p.ang, visible: p.visible };
+                }),
+                patrimoine: (res.patrimoine || []).map(function(p) {
+                    return { name: p.name, lat: p.lat, lon: p.lon,
+                             dist: Math.round(p.dist), nature: p.nature,
                              bearing: p.bearing, ang: p.ang, visible: p.visible };
                 })
             }).then(function() { showToast('Vue enregistree : ' + res.name, 4000); });
@@ -2080,6 +2196,15 @@
                 radius: 4, weight: 2, color: '#fff',
                 fillColor: p.visible ? '#8a5a2b' : '#9aa3a3', fillOpacity: 1
             }).bindPopup('▲ ' + escapeHtml(p.name) + (p.elev ? '<br>' + p.elev + ' m' : '')
+                + '<br>' + (p.visible ? 'VISIBLE' : 'masque') + ' · '
+                + Math.round(p.dist) + ' m').addTo(g);
+        });
+        (v.patrimoine || []).forEach(function(p) {
+            L.circleMarker([p.lat, p.lon], {
+                radius: 4, weight: 2, color: '#fff',
+                fillColor: p.visible ? '#7c2d12' : '#9aa3a3', fillOpacity: 1
+            }).bindPopup('◆ ' + escapeHtml(p.name)
+                + (p.nature ? '<br>' + escapeHtml(p.nature) : '')
                 + '<br>' + (p.visible ? 'VISIBLE' : 'masque') + ' · '
                 + Math.round(p.dist) + ' m').addTo(g);
         });
