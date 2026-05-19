@@ -1061,7 +1061,13 @@
             '<option value="70">Gros (~70 m, zones)</option>' +
             '<option value="110">Tres gros (~110 m, zones)</option>' +
             '</select></label>' +
-            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Fin = semis de points detaille (plus de requetes, plus lent). Gros / Tres gros = les mailles fusionnent en zones pleines. Au-dela d\'une dizaine de km le pas s\'espace de toute facon.</div>' +
+            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
+            'Style du rendu<br>' +
+            '<select id="pwaVSstyle" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;">' +
+            '<option value="points">Points (semis)</option>' +
+            '<option value="zones">Zones (aplat plein)</option>' +
+            '</select></label>' +
+            '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Grain = finesse d\'echantillonnage (fin = plus detaille, plus de requetes, plus lent). Style Zones = les mailles fusionnent en aplat continu meme en tres fin. Au-dela d\'une dizaine de km le pas s\'espace de toute facon.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
             '<button id="pwaVSgo" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
@@ -1079,11 +1085,13 @@
         az.oninput = function() { m.querySelector('#pwaVSazv').textContent = az.value; };
         var ckP = m.querySelector('#pwaVStpPerso'), ckT = m.querySelector('#pwaVStpTopo');
         var grSel = m.querySelector('#pwaVSgrain');
+        var stSel = m.querySelector('#pwaVSstyle');
         try {
             ckP.checked = (localStorage.getItem('pwaVSshowPerso') !== '0');  // defaut : actif
             ckT.checked = (localStorage.getItem('pwaVSshowTopo') === '1');   // defaut : inactif
             grSel.value = localStorage.getItem('pwaVSgrain') || '40';        // defaut : Moyen (vue 14:01)
-        } catch(_e) { ckP.checked = true; ckT.checked = false; grSel.value = '40'; }
+            stSel.value = localStorage.getItem('pwaVSstyle') || 'points';    // defaut : Points (= rendu d'origine)
+        } catch(_e) { ckP.checked = true; ckT.checked = false; grSel.value = '40'; stSel.value = 'points'; }
         m.querySelector('#pwaVSx').onclick = function() { m.remove(); };
         m.onclick = function(e) { if (e.target === m) m.remove(); };
         m.querySelector('#pwaVSgo').onclick = function() {
@@ -1093,15 +1101,17 @@
             var ac = parseInt(az.value, 10) || 0;
             var sP = !!ckP.checked, sT = !!ckT.checked;
             var grainM = parseInt(grSel.value, 10) || 40;
+            var styleZones = (stSel.value === 'zones');
             try {
                 localStorage.setItem('pwaVSshowPerso', sP ? '1' : '0');
                 localStorage.setItem('pwaVSshowTopo', sT ? '1' : '0');
                 localStorage.setItem('pwaVSgrain', String(grainM));
+                localStorage.setItem('pwaVSstyle', styleZones ? 'zones' : 'points');
             } catch(_e) {}
             m.remove();
             _vsCompute({ lat: lat, lon: lon, radiusM: rkm * 1000, obsH: oh,
                          azC: ac, azW: aw, showPerso: sP, showTopo: sT,
-                         grainM: grainM });
+                         grainM: grainM, styleZones: styleZones });
         };
     }
 
@@ -1201,6 +1211,7 @@
                 lat: lat, lon: lon, obsH: obsH, obsElev: Math.round(elev[0]),
                 radiusM: radiusM, azC: P.azC, azW: P.azW, full: full,
                 stepM: stepM, N: N, nRays: nRays, rayStep: rayStep,
+                styleZones: !!P.styleZones,
                 date: Date.now(), visPts: visPts, rayProf: rayProf, targets: tgt
             };
             _vsRenderPlani(res);
@@ -1268,7 +1279,13 @@
         // A grain Moyen (~40 m, W=700) -> ~5 px = le rendu d'origine inchange.
         var sm = res.stepM || 40;
         var sp = (sm / (2 * R)) * W;
-        var mult = 0.55 + Math.max(0, Math.min(1, (sm - 25) / 85)) * 0.95;
+        // Style "Zones" : carre > espacement quel que soit le grain -> les
+        // mailles se recouvrent et fusionnent en aplat continu (meme en tres
+        // fin = zones detaillees lisses). Style "Points" : formule liee au
+        // grain (fin = semis separe ; Moyen = rendu d'origine ; gros = zones).
+        var mult = res.styleZones
+            ? 1.45
+            : (0.55 + Math.max(0, Math.min(1, (sm - 25) / 85)) * 0.95);
         var cell = Math.max(3, Math.round(sp * mult));
         (res.visPts || []).forEach(function(p) {
             var q = px(p.lat, p.lon);
