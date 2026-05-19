@@ -786,11 +786,13 @@
         function doFetch(slice, attempt) {
             var usePost = postOk, ll = lonsLats(slice), req;
             if (usePost) {
+                // POST JSON : l'IGN exige des valeurs en CHAINE (lon/lat
+                // delimites, zonly:'true'). Verifie OK via Playwright.
                 req = fetch(VS_ALTI, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: 'lon=' + encodeURIComponent(ll[0]) + '&lat=' + encodeURIComponent(ll[1])
-                        + '&resource=ign_rge_alti_wld&delimiter=' + encodeURIComponent('|') + '&zonly=true'
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lon: ll[0], lat: ll[1],
+                        resource: 'ign_rge_alti_wld', delimiter: '|', zonly: 'true' })
                 });
             } else {
                 req = fetch(VS_ALTI + '?lon=' + ll[0] + '&lat=' + ll[1]
@@ -798,10 +800,13 @@
             }
             return req.then(function(r) {
                 if (r.ok) return r.json();
+                // POST refuse (format/methode/charge/500) -> repli GET prouve.
                 if (usePost && (r.status === 400 || r.status === 404 || r.status === 405
-                        || r.status === 413 || r.status === 414 || r.status === 415)) {
-                    var er = new Error('post-unsupported'); er.__switchGet = true; throw er;
+                        || r.status === 413 || r.status === 414 || r.status === 415
+                        || r.status === 500 || r.status === 501)) {
+                    var er = new Error('post-ko'); er.__switchGet = true; throw er;
                 }
+                // Passerelle saturee (429/502/503/504) : backoff + retry.
                 if ((r.status === 429 || r.status >= 500) && attempt < MAXTRY) {
                     var ra = parseInt(r.headers.get('Retry-After'), 10);
                     var wait = (ra > 0 ? ra * 1000 : Math.min(15000, 800 * Math.pow(2, attempt)));
@@ -809,7 +814,8 @@
                 }
                 throw new Error('Altimetrie IGN HTTP ' + r.status
                     + (r.status === 429 ? ' (trop de requetes)'
-                       : r.status === 504 ? ' (serveur IGN sature : reessayer ou reduire le rayon)' : ''));
+                       : (r.status === 503 || r.status === 504)
+                         ? ' (serveur IGN sature : reessayer ou reduire le rayon)' : ''));
             }).catch(function(e) {
                 if (e && e.__switchGet) throw e;
                 var net = /NetworkError|Failed to fetch|load failed|aborted/i.test(String(e && e.message));
