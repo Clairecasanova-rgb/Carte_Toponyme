@@ -1290,33 +1290,62 @@
         // Sources de cap acceptees, dans l'ordre :
         //   1) webkitCompassHeading (iOS Safari) -- toujours absolu / boussole
         //   2) deviceorientationabsolute avec absolute=true (Android Chrome)
+        //      -> on calcule le cap a partir de l'attitude complete a,b,g
+        //         (pas seulement alpha) sinon ca ne marche qu'en portrait
+        //         vertical. Voir derivation ci-dessous.
         // ON IGNORE les evenements 'deviceorientation' relatifs (absolute=false
-        // sans webkitCompassHeading) : leur alpha derive sans calage au Nord,
-        // ce qui faisait sauter les lettres cardinales toutes les frames quand
-        // les deux flux etaient melanges.
+        // sans webkitCompassHeading) : leur alpha derive sans calage au Nord.
         function onOri(ev) {
-            // Pitch : toujours utilisable, beta est gravity-aligned sur tout
-            // appareil supportant l'API.
-            if (typeof ev.beta === 'number') {
-                var p = Math.max(-45, Math.min(45, ev.beta - 90));
+            var hd = null;
+            var pComputed = null;
+            if (typeof ev.webkitCompassHeading === 'number'
+                && isFinite(ev.webkitCompassHeading)) {
+                // iOS Safari : webkitCompassHeading est deja le cap "boussole"
+                // du haut physique du device. On compense l'orientation ecran.
+                hd = ev.webkitCompassHeading;
+                var so = 0;
+                try { so = (screen.orientation && screen.orientation.angle)
+                    || window.orientation || 0; } catch(_e) {}
+                hd = ((hd + so) % 360 + 360) % 360;
+                if (typeof ev.beta === 'number' && isFinite(ev.beta)) {
+                    pComputed = ev.beta - 90;
+                }
+            } else if (ev.absolute === true
+                && typeof ev.alpha === 'number' && isFinite(ev.alpha)
+                && typeof ev.beta === 'number' && isFinite(ev.beta)
+                && typeof ev.gamma === 'number' && isFinite(ev.gamma)) {
+                // Android Chrome (et autres conformes W3C).
+                // Decomposition Z-X'-Y'' (alpha,beta,gamma) -> matrice R.
+                // Direction camera dans world frame = -R * [0,0,1]^T
+                // Au lieu d'utiliser (360 - alpha) (qui ne marche QUE phone
+                // vertical car gimbal lock a beta=90), on projette le vecteur
+                // camera sur le plan horizontal pour avoir le cap exact.
+                var rad = Math.PI / 180;
+                var a = ev.alpha * rad, b = ev.beta * rad, g = ev.gamma * rad;
+                var ca = Math.cos(a), sa = Math.sin(a);
+                var cb = Math.cos(b), sb = Math.sin(b);
+                var cg = Math.cos(g), sg = Math.sin(g);
+                var cx = -ca * sg - sa * sb * cg;     // est du camera-forward
+                var cy =  ca * sb * cg - sa * sg;     // nord du camera-forward
+                var cz = -cb * cg;                    // composante verticale
+                var horiz = Math.sqrt(cx * cx + cy * cy);
+                if (horiz > 0.001) {
+                    hd = (Math.atan2(cx, cy) * 180 / Math.PI + 360) % 360;
+                    pComputed = Math.atan2(cz, horiz) * 180 / Math.PI;
+                }
+                // Pas de + screen.orientation.angle ici : la rotation autour de
+                // l'axe camera est deja entierement encodee dans (beta, gamma).
+                // Ajouter so introduisait une erreur de 90/180/270 en paysage.
+            }
+            if (pComputed != null) {
+                var p = Math.max(-45, Math.min(45, pComputed));
                 smPitch = (smPitch == null) ? p
                     : smPitch * (1 - SMOOTH_PITCH) + p * SMOOTH_PITCH;
                 pitch = smPitch;
             }
-            var hd = null;
-            if (typeof ev.webkitCompassHeading === 'number'
-                && isFinite(ev.webkitCompassHeading)) {
-                hd = ev.webkitCompassHeading;
-            } else if (ev.absolute === true && typeof ev.alpha === 'number'
-                && isFinite(ev.alpha)) {
-                hd = (360 - ev.alpha) % 360;
-            }
             if (hd == null) { tick(); return; }
-            var so = 0;
-            try { so = (screen.orientation && screen.orientation.angle)
-                || window.orientation || 0; } catch(_e) {}
             haveHeading = true;
-            setHeading(hd + so);
+            setHeading(hd);
             if (manual.style.display !== 'none') manual.style.display = 'none';
         }
         function startOri() {
