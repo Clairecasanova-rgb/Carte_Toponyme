@@ -1137,14 +1137,23 @@
         list.style.cssText = 'position:absolute;left:0;right:0;bottom:0;max-height:42vh;'
             + 'overflow-y:auto;background:rgba(0,0,0,0.62);color:#fff;padding:8px 10px;'
             + 'font:13px Segoe UI;display:none;';
-        // Bandeau de calage par perspective (visible seulement en mode calage)
+        // Mini-carte radar (boussole + secteur FOV qui pivote avec le cap)
+        var miniMap = document.createElement('canvas');
+        miniMap.width = 240; miniMap.height = 240;
+        miniMap.style.cssText = 'position:absolute;bottom:12px;left:12px;width:130px;'
+            + 'height:130px;pointer-events:none;z-index:6;border-radius:50%;'
+            + 'background:rgba(15,25,40,0.55);border:1.5px solid rgba(255,255,255,0.4);'
+            + 'box-shadow:0 2px 8px rgba(0,0,0,0.5);';
+        // Bandeau de calage par perspective (visible seulement en mode calage).
+        // left:155px pour ne pas recouvrir la mini-carte (toujours visible).
         var calibPane = document.createElement('div');
-        calibPane.style.cssText = 'position:absolute;left:0;right:0;bottom:0;'
+        calibPane.style.cssText = 'position:absolute;left:155px;right:0;bottom:0;'
             + 'background:linear-gradient(rgba(0,0,0,0),rgba(168,58,138,0.88));'
             + 'color:#fff;padding:14px 16px 16px;font:13px Segoe UI;display:none;'
             + 'z-index:4;';
         ov.appendChild(video); ov.appendChild(canvas); ov.appendChild(hud);
         ov.appendChild(manual); ov.appendChild(list); ov.appendChild(calibPane);
+        ov.appendChild(miniMap);
         var fe = document.fullscreenElement || document.webkitFullscreenElement;
         (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
 
@@ -1349,6 +1358,113 @@
                     it.name + ' · ' + dTxt(it.dist),
                     '12px Segoe UI', '#fff', W, H);
             });
+            drawMiniMap();
+        }
+        // Mini-carte (boussole radar). Convention NORD-EN-HAUT du canvas :
+        // - cercle plein = limite du rayon viewshed
+        // - triangle rouge en haut = Nord geographique (fixe)
+        // - secteur jaune = FOV de la camera, oriente sur heading -> tu
+        //   fais tourner le tel jusqu'a aligner ce secteur sur le nord
+        //   rouge pour pointer le nord, puis "Calibrer / Pointer Nord".
+        // - points colores = sommets / patrimoine / cibles visibles
+        // - triangle violet dashed = azimut cible en mode calage perspective.
+        function drawMiniMap() {
+            var ctx = miniMap.getContext('2d');
+            var W = miniMap.width, H = miniMap.height;
+            ctx.clearRect(0, 0, W, H);
+            var mcx = W / 2, mcy = H / 2;
+            var R = Math.min(mcx, mcy) - 12;
+            var radM = res.radiusM || 1;
+            // Fond radar : degrade radial centre clair -> bord sombre
+            var grd = ctx.createRadialGradient(mcx, mcy, 0, mcx, mcy, R);
+            grd.addColorStop(0, 'rgba(90,150,220,0.20)');
+            grd.addColorStop(1, 'rgba(15,25,40,0)');
+            ctx.fillStyle = grd;
+            ctx.beginPath(); ctx.arc(mcx, mcy, R, 0, 2 * Math.PI); ctx.fill();
+            // Anneaux concentriques (1/3 et 2/3 du rayon viewshed)
+            ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+            ctx.lineWidth = 1.4;
+            for (var ri = 1; ri < 3; ri++) {
+                ctx.beginPath();
+                ctx.arc(mcx, mcy, R * ri / 3, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
+            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+            ctx.beginPath(); ctx.arc(mcx, mcy, R, 0, 2 * Math.PI); ctx.stroke();
+            // Cible perspective (en mode calage) : trait pointille vers calibAz
+            if (calibAz != null) {
+                var ta = calibAz * Math.PI / 180;
+                ctx.strokeStyle = 'rgba(168,58,138,0.95)';
+                ctx.setLineDash([6, 4]);
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(mcx, mcy);
+                ctx.lineTo(mcx + (R - 6) * Math.sin(ta),
+                           mcy - (R - 6) * Math.cos(ta));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            // Secteur de champ de vision (FOV) oriente sur heading actuel.
+            // En convention canvas : x=sin(az), y=-cos(az), donc l'angle dans
+            // le repere canvas = (az - 90 deg) en radians.
+            if (haveHeading) {
+                var hd = heading * Math.PI / 180;
+                var halfFov = (hfov / 2) * Math.PI / 180;
+                ctx.fillStyle = 'rgba(255,200,80,0.42)';
+                ctx.strokeStyle = 'rgba(255,200,80,0.95)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(mcx, mcy);
+                ctx.arc(mcx, mcy, R - 4,
+                        hd - halfFov - Math.PI / 2,
+                        hd + halfFov - Math.PI / 2);
+                ctx.closePath();
+                ctx.fill(); ctx.stroke();
+                // Axe central du regard (ligne plus marquee)
+                ctx.strokeStyle = 'rgba(255,235,140,1)';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(mcx, mcy);
+                ctx.lineTo(mcx + (R - 4) * Math.sin(hd),
+                           mcy - (R - 4) * Math.cos(hd));
+                ctx.stroke();
+            }
+            // Points : sommets / patrimoine / cibles visibles dans le viewshed
+            items.forEach(function(it) {
+                if (it.dist > radM) return;
+                var rr = (it.dist / radM) * R;
+                var br = it.bearing * Math.PI / 180;
+                var px = mcx + rr * Math.sin(br);
+                var py = mcy - rr * Math.cos(br);
+                var col = (it.kind === 'patri') ? '#ff80c0'
+                    : (it.kind === 'peak') ? '#ffe066' : '#88c0d0';
+                ctx.fillStyle = col;
+                ctx.beginPath(); ctx.arc(px, py, 3, 0, 2 * Math.PI); ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+                ctx.lineWidth = 0.8; ctx.stroke();
+            });
+            // Observateur au centre (cercle bleu)
+            ctx.fillStyle = '#4eafff';
+            ctx.beginPath(); ctx.arc(mcx, mcy, 6, 0, 2 * Math.PI); ctx.fill();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+            // Marqueur Nord (triangle rouge en haut + lettre N)
+            ctx.fillStyle = '#ff5252';
+            ctx.beginPath();
+            ctx.moveTo(mcx, 4);
+            ctx.lineTo(mcx - 9, 22);
+            ctx.lineTo(mcx + 9, 22);
+            ctx.closePath(); ctx.fill();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px Segoe UI';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('N', mcx, 38);
+            // Echelle (rayon en km en bas de la mini-carte)
+            ctx.font = '600 11px Segoe UI';
+            ctx.fillStyle = 'rgba(255,255,255,0.75)';
+            var rkm = radM >= 1000 ? (radM / 1000).toFixed(radM >= 10000 ? 0 : 1) + ' km'
+                : Math.round(radM) + ' m';
+            ctx.fillText('R = ' + rkm, mcx, H - 8);
         }
         function schedule() { if (!raf && !dead) raf = requestAnimationFrame(draw); }
         function refreshList() {
