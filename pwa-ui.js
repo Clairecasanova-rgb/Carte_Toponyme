@@ -1250,47 +1250,25 @@
         var cW = _vsDest(res.lat, res.lon, R, 270)[1];    // ouest lon
         var north = Math.max(c0, c180), south = Math.min(c0, c180);
         var east = Math.max(cE, cW), west = Math.min(cE, cW);
-        var W = 1100, H = Math.round(W * (north - south) / (east - west)) || W;
+        // RENDU D'ORIGINE (commit 73e0f5b, le "premier rendu") : semis de
+        // carres, 1 par point reellement visible (res.visPts), colore par
+        // distance (proche=vert -> loin=bleu, alpha 0.45). C'EST l'effet
+        // "pointille/onde". La taille du carre suit le grain choisi
+        // (~5 px a grain Moyen ~40 m ; plus gros si grain plus grossier).
+        var W = 700, H = Math.round(W * (north - south) / (east - west)) || W;
         var cv = document.createElement('canvas'); cv.width = W; cv.height = H;
         var ctx = cv.getContext('2d');
-        ctx.lineJoin = 'round';
         function px(la, lo) {
             return [(lo - west) / (east - west) * W, (north - la) / (north - south) * H];
         }
-        function distCol(f, a) {
-            // proche = vert, loin = bleu (degrade Pixscape-like)
-            return 'rgba(' + Math.round(46 + 70 * f) + ',' + Math.round(174 - 96 * f)
-                + ',' + Math.round(80 + 150 * f) + ',' + a + ')';
-        }
-        // Surface remplie : quads entre rayons adjacents la ou les 2 sont
-        // visibles -> aire fidele avec trous (vallees masquees), degrade
-        // distance. Condition stricte (ET), sans liseré : rendu fin (le
-        // "pointille" garde son detail, ne montre QUE le reellement vu).
-        var rp = res.rayProf, nR = res.nRays, N = res.N, st = res.stepM;
-        var oc = px(res.lat, res.lon);
-        function ptRC(ri, ki) {  // ki=0 => observateur
-            var d = st * ki;
-            var pos = (ki === 0) ? [res.lat, res.lon]
-                : _vsDest(res.lat, res.lon, d, rp[ri].bearing);
-            return px(pos[0], pos[1]);
-        }
-        var ri, ki;
-        for (ri = 0; ri < nR - (res.full ? 0 : 1); ri++) {
-            var ri2 = (ri + 1) % nR;
-            var va = rp[ri].vis, vb = rp[ri2].vis;
-            for (ki = 0; ki < N; ki++) {
-                var outer = va[ki] && vb[ki];
-                if (!outer) continue;  // cellule visible seulement si bord ext. visible
-                var f = Math.min(1, (st * (ki + 1)) / R);
-                var A = ptRC(ri, ki), B = ptRC(ri2, ki);
-                var C = ptRC(ri2, ki + 1), D = ptRC(ri, ki + 1);
-                ctx.fillStyle = distCol(f, 0.5);
-                ctx.beginPath();
-                ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]);
-                ctx.lineTo(C[0], C[1]); ctx.lineTo(D[0], D[1]);
-                ctx.closePath(); ctx.fill();
-            }
-        }
+        var cell = Math.max(3, Math.round((W / 140) * ((res.stepM || 40) / 40)));
+        (res.visPts || []).forEach(function(p) {
+            var q = px(p.lat, p.lon);
+            var f = Math.min(1, p.d / R);
+            ctx.fillStyle = 'rgba(' + Math.round(40 + 60 * f) + ','
+                + Math.round(180 - 90 * f) + ',' + Math.round(70 + 150 * f) + ',0.45)';
+            ctx.fillRect(q[0] - cell / 2, q[1] - cell / 2, cell, cell);
+        });
         var url = cv.toDataURL('image/png');
         res.planiURL = url; res.bounds = [[south, west], [north, east]];
         _vsInjectOverlayStyle();
