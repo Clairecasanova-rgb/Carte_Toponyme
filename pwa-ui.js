@@ -1274,10 +1274,23 @@
                 dark:  P('M -0.6 -7 L 0.6 -7 L 0.6 -5 L -0.6 -5 Z')
             },
             'patri-chapelle': {
-                white: P('M -5.5 -7 L 5.5 -7 L 5.5 -0.5 L -5.5 -0.5 Z'
-                    + ' M -5.5 -7 L 0 -11 L 5.5 -7 Z'
-                    + ' M -0.7 -15 L 0.7 -15 L 0.7 -10.5 L -0.7 -10.5 Z'
-                    + ' M -2 -13.5 L 2 -13.5 L 2 -12.1 L -2 -12.1 Z')
+                // Nef + toit + clocher (rect plein, jonction nette au toit) +
+                // croix posee sur le clocher. Plus de demi-triangles parasites
+                // a l'apex : le clocher est plus large que l'apex donc la
+                // jonction est propre.
+                white: P(
+                    // nef
+                      'M -5.5 -7 L 5.5 -7 L 5.5 -0.5 L -5.5 -0.5 Z'
+                    // toit
+                    + ' M -5.5 -7 L 0 -10 L 5.5 -7 Z'
+                    // clocher (rect plein, descend dans la nef et depasse au-dessus du toit)
+                    + ' M -1.6 -13 L 1.6 -13 L 1.6 -7 L -1.6 -7 Z'
+                    // croix verticale, posee sur le clocher
+                    + ' M -0.55 -15 L 0.55 -15 L 0.55 -13 L -0.55 -13 Z'
+                    // croix horizontale
+                    + ' M -2 -14.4 L 2 -14.4 L 2 -13.4 L -2 -13.4 Z'),
+                // Ouverture du clocher (abat-son) en couleur fond
+                dark: P('M -0.7 -10.5 L 0.7 -10.5 L 0.7 -8.5 L -0.7 -8.5 Z')
             },
             'patri-fort': {
                 white: P('M -6 -1 L -6 -8 L -4.5 -8 L -4.5 -10 L -2.5 -10 '
