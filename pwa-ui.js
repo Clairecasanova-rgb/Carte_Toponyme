@@ -1218,43 +1218,78 @@
             canvas.width = ov.clientWidth; canvas.height = ov.clientHeight;
         }
         sizeCanvas();
-        function glyph(g, x, y, kind, col, rr) {
-            // Halo : grand cercle pale derriere pour decoller du fond.
+        // Icones SVG (Path2D) : units centrees sur (0,0), echelle ~20px.
+        // Genere a partir de chemins SVG, plus reconnaissables et propres
+        // que les triangles/losanges canvas. Scale = rr / 10 a l'utilisation.
+        var ICON_PATHS = (function() {
+            // Sommet : pic montagneux avec calotte neigeuse
+            var peak = new Path2D();
+            peak.moveTo(-10, 8); peak.lineTo(-3, -2); peak.lineTo(0, -10);
+            peak.lineTo(3, -2); peak.lineTo(10, 8); peak.closePath();
+            // Patrimoine : tour / monument crenele simplifie
+            var patri = new Path2D();
+            patri.moveTo(-8, 8); patri.lineTo(-8, -3); patri.lineTo(-5, -3);
+            patri.lineTo(-5, -7); patri.lineTo(-3, -7); patri.lineTo(-3, -5);
+            patri.lineTo(0, -5); patri.lineTo(0, -7); patri.lineTo(3, -7);
+            patri.lineTo(3, -5); patri.lineTo(5, -5); patri.lineTo(5, -7);
+            patri.lineTo(8, -7); patri.lineTo(8, 8); patri.closePath();
+            // Cible perso : epingle de carte type Google Maps
+            var cible = new Path2D('M 0 -10 C -5 -10 -8 -7 -8 -3 '
+                + 'C -8 2 0 10 0 10 C 0 10 8 2 8 -3 C 8 -7 5 -10 0 -10 Z');
+            // Cercle interieur de la cible
+            var cibleHole = new Path2D();
+            cibleHole.arc(0, -3, 2.4, 0, 2 * Math.PI);
+            return { peak: peak, patri: patri, cible: cible, cibleHole: cibleHole };
+        })();
+        function drawIcon(g, x, y, kind, col, rr) {
+            // Halo sombre derriere pour decoller du fond, plus diffuse
+            g.save();
             g.fillStyle = 'rgba(0,0,0,0.45)';
-            g.beginPath(); g.arc(x, y, rr + 4, 0, 2 * Math.PI); g.fill();
-            // Forme distinctive : triangle = sommet, losange = patrimoine,
-            // disque = cible perso. Contour blanc epais pour lisibilite.
-            g.beginPath();
+            g.beginPath(); g.arc(x, y, rr + 5, 0, 2 * Math.PI); g.fill();
+            g.fillStyle = 'rgba(0,0,0,0.25)';
+            g.beginPath(); g.arc(x, y, rr + 8, 0, 2 * Math.PI); g.fill();
+            g.restore();
+            g.save();
+            g.translate(x, y);
+            var s = rr / 9;
+            g.scale(s, s);
+            var path = ICON_PATHS[kind] || ICON_PATHS.cible;
+            // Ombre portee subtile
+            g.shadowColor = 'rgba(0,0,0,0.4)';
+            g.shadowBlur = 2 / s;
+            g.shadowOffsetY = 1 / s;
+            g.fillStyle = col;
+            g.fill(path);
+            g.shadowColor = 'transparent';
+            // Contour blanc epais + filet sombre exterieur
+            g.lineJoin = 'round';
+            g.strokeStyle = '#fff';
+            g.lineWidth = 2 / s;
+            g.stroke(path);
+            g.strokeStyle = 'rgba(0,0,0,0.6)';
+            g.lineWidth = 0.7 / s;
+            g.stroke(path);
+            // Detail interne selon kind
             if (kind === 'peak') {
-                g.moveTo(x, y - rr); g.lineTo(x - rr, y + rr * 0.75);
-                g.lineTo(x + rr, y + rr * 0.75); g.closePath();
-            } else if (kind === 'patri') {
-                g.moveTo(x, y - rr); g.lineTo(x + rr, y);
-                g.lineTo(x, y + rr); g.lineTo(x - rr, y); g.closePath();
-            } else g.arc(x, y, rr, 0, 2 * Math.PI);
-            g.fillStyle = col; g.fill();
-            g.strokeStyle = '#fff'; g.lineWidth = 2.6; g.stroke();
-            g.strokeStyle = 'rgba(0,0,0,0.55)'; g.lineWidth = 1; g.stroke();
+                // Calotte neigeuse
+                g.fillStyle = 'rgba(255,255,255,0.85)';
+                g.beginPath();
+                g.moveTo(-3, -2); g.lineTo(0, -10); g.lineTo(3, -2);
+                g.lineTo(2, -1); g.lineTo(-2, -1); g.closePath();
+                g.fill();
+            } else if (kind === 'cible' || kind === 'target') {
+                // Trou central de l'epingle
+                g.fillStyle = '#fff';
+                g.fill(ICON_PATHS.cibleHole);
+                g.strokeStyle = 'rgba(0,0,0,0.5)';
+                g.lineWidth = 0.6 / s;
+                g.stroke(ICON_PATHS.cibleHole);
+            }
+            g.restore();
         }
-        // Pastille label : rectangle arrondi sombre + filet colore + texte blanc
-        function labelChip(g, x, y, text, kindCol, font) {
-            g.font = font;
-            var tw = g.measureText(text).width;
-            var pad = 7, hh = 19;
-            var bx = x + 9, by = y - hh / 2;
-            // Reste dans l'ecran horizontalement
-            if (bx + tw + pad * 2 > g.canvas.width - 4) bx = x - tw - pad * 2 - 9;
-            // Fond fonce semi-opaque
-            g.fillStyle = 'rgba(20,28,40,0.82)';
-            roundRect(g, bx, by, tw + pad * 2, hh, 9);
-            g.fill();
-            // Filet a gauche de la couleur du kind
-            g.fillStyle = kindCol;
-            g.fillRect(bx, by, 3, hh);
-            // Texte blanc
-            g.fillStyle = '#fff';
-            g.textAlign = 'left'; g.textBaseline = 'middle';
-            g.fillText(text, bx + pad, by + hh / 2);
+        // Garde l'ancien nom comme alias pour le code existant
+        function glyph(g, x, y, kind, col, rr) {
+            drawIcon(g, x, y, kind, col, rr);
         }
         function roundRect(g, x, y, w, h, r) {
             g.beginPath();
@@ -1264,6 +1299,52 @@
             g.arcTo(x, y + h, x, y, r);
             g.arcTo(x, y, x + w, y, r);
             g.closePath();
+        }
+        // Pastille label moderne : gradient sombre + pastille kind + nom + sous-texte distance
+        function labelChip(g, x, y, name, distTxt, kindCol, kind) {
+            var fNa = '600 12.5px system-ui, -apple-system, "Segoe UI", sans-serif';
+            var fSu = '500 11px system-ui, sans-serif';
+            g.font = fNa;
+            var nw = g.measureText(name).width;
+            g.font = fSu;
+            var sw2 = g.measureText('· ' + distTxt).width;
+            var pad = 10, hh = 23, gap = 11;
+            var totalW = pad + 9 + gap + nw + 5 + sw2 + pad;
+            var bx = x + 13, by = y - hh / 2;
+            if (bx + totalW > g.canvas.width - 4) bx = x - totalW - 13;
+            // Fond degradé subtile
+            var grd = g.createLinearGradient(bx, by, bx, by + hh);
+            grd.addColorStop(0, 'rgba(22,30,42,0.93)');
+            grd.addColorStop(1, 'rgba(32,40,52,0.86)');
+            g.fillStyle = grd;
+            roundRect(g, bx, by, totalW, hh, 12);
+            g.fill();
+            // Filet interieur clair
+            g.strokeStyle = 'rgba(255,255,255,0.18)';
+            g.lineWidth = 1;
+            roundRect(g, bx + 0.5, by + 0.5, totalW - 1, hh - 1, 11.5);
+            g.stroke();
+            // Pastille couleur kind a gauche (mini-glyphe rond)
+            g.fillStyle = kindCol;
+            g.beginPath();
+            g.arc(bx + pad, by + hh / 2, 4.5, 0, 2 * Math.PI);
+            g.fill();
+            g.strokeStyle = 'rgba(0,0,0,0.45)';
+            g.lineWidth = 0.8; g.stroke();
+            g.strokeStyle = 'rgba(255,255,255,0.65)';
+            g.lineWidth = 0.8;
+            g.beginPath();
+            g.arc(bx + pad, by + hh / 2, 4.5, 0, 2 * Math.PI);
+            g.stroke();
+            // Texte name
+            g.font = fNa;
+            g.fillStyle = '#fff';
+            g.textAlign = 'left'; g.textBaseline = 'middle';
+            g.fillText(name, bx + pad + 9 + gap, by + hh / 2 + 0.5);
+            // Sous-texte distance, gris clair
+            g.font = fSu;
+            g.fillStyle = 'rgba(225,235,245,0.78)';
+            g.fillText('· ' + distTxt, bx + pad + 9 + gap + nw + 5, by + hh / 2 + 0.5);
         }
         // Superposition de la silhouette du relief calcule (skyline MNT)
         // sur le flux camera : permet de comparer visuellement l'horizon
@@ -1302,24 +1383,52 @@
             }
             if (hasBands) {
                 // SILHOUETTES PAR BANDE : peindre du loin au proche pour que
-                // les reliefs proches OCCLUDENT les plus eloignes. Coloration
-                // perspective : loin = bleute pale (atmosphere), proche =
-                // rose vif (premier plan). Meme schema que le panorama.
+                // les reliefs proches OCCLUDENT les plus eloignes. Palette
+                // topographique : proche = vert-olive profond, mid = gris-vert
+                // brumeux, loin = bleu-gris atmospherique (perspective aerienne).
                 var NB = res.bandOut.length;
+                // Interpolation lineaire entre 3 couleurs cle :
+                // t=0   -> RGB(58, 92, 64)   olive forestier
+                // t=0.5 -> RGB(120,135,128)  gris-vert
+                // t=1   -> RGB(180,200,215)  bleu-gris brume
                 var bandFill = function(t, al) {
-                    // proche (t=0) : rose vif ; loin (t=1) : bleu-violet pale
-                    return 'rgba(' + Math.round(255 - 105 * t) + ','
-                        + Math.round(100 + 60 * t) + ','
-                        + Math.round(180 - 30 * t) + ',' + al + ')';
+                    var r, gn, b;
+                    if (t < 0.5) {
+                        var u = t * 2;
+                        r = 58 + u * (120 - 58);
+                        gn = 92 + u * (135 - 92);
+                        b = 64 + u * (128 - 64);
+                    } else {
+                        var u2 = (t - 0.5) * 2;
+                        r = 120 + u2 * (180 - 120);
+                        gn = 135 + u2 * (200 - 135);
+                        b = 128 + u2 * (215 - 128);
+                    }
+                    return 'rgba(' + Math.round(r) + ',' + Math.round(gn) + ','
+                        + Math.round(b) + ',' + al + ')';
                 };
                 var bandLine = function(t) {
-                    return 'rgba(' + Math.round((255 - 130 * t) * 0.85) + ','
-                        + Math.round((80 + 60 * t) * 0.9) + ','
-                        + Math.round((180 - 30 * t) * 0.9) + ',0.92)';
+                    // Filet plus sombre que le fill (0.55x) pour relief contraste
+                    var r, gn, b;
+                    if (t < 0.5) {
+                        var u = t * 2;
+                        r = (58 + u * (120 - 58)) * 0.55;
+                        gn = (92 + u * (135 - 92)) * 0.55;
+                        b = (64 + u * (128 - 64)) * 0.55;
+                    } else {
+                        var u2 = (t - 0.5) * 2;
+                        r = (120 + u2 * (180 - 120)) * 0.7;
+                        gn = (135 + u2 * (200 - 135)) * 0.7;
+                        b = (128 + u2 * (215 - 128)) * 0.7;
+                    }
+                    return 'rgba(' + Math.round(r) + ',' + Math.round(gn) + ','
+                        + Math.round(b) + ',' + (0.88 - t * 0.15) + ')';
                 };
                 for (var bnd = NB - 1; bnd >= 0; bnd--) {
                     var t = (NB > 1) ? bnd / (NB - 1) : 0;     // 0=proche 1=loin
-                    g.fillStyle = bandFill(t, 0.34 - 0.12 * t); // proche plus opaque
+                    // Plus opaque en premier plan, fond atmospherique au loin
+                    var al = 0.62 - t * 0.25;
+                    g.fillStyle = bandFill(t, al);
                     g.beginPath();
                     g.moveTo(inFov[0].x, H + 4);
                     for (var i = 0; i < inFov.length; i++) {
@@ -1331,7 +1440,8 @@
                     g.closePath(); g.fill();
                     // Trace de l'arete (plus epais en premier plan)
                     g.strokeStyle = bandLine(t);
-                    g.lineWidth = (bnd === 0) ? 2.2 : (bnd === 1 ? 1.7 : 1.3);
+                    g.lineWidth = (bnd === 0) ? 2.4 : (bnd === 1 ? 1.8 : 1.3);
+                    g.lineJoin = 'round';
                     g.beginPath();
                     var started = false;
                     for (var k = 0; k < inFov.length; k++) {
@@ -1437,7 +1547,7 @@
                     g.setLineDash([]);
                 }
                 glyph(g, x, y, it.kind, col, rr);
-                labelChip(g, x, y, it.name + ' · ' + dTxt(it.dist), col, '600 12px Segoe UI');
+                labelChip(g, x, y, it.name, dTxt(it.dist), col, it.kind);
             });
             drawMiniMap();
         }
