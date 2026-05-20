@@ -1071,15 +1071,15 @@
         var items = [];
         (res.peaks || []).forEach(function(p) {
             if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
-                dist: p.dist, kind: 'peak', elev: p.elev });
+                dist: p.dist, kind: 'peak', elev: p.elev, lat: p.lat, lon: p.lon });
         });
         (res.patrimoine || []).forEach(function(p) {
             if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
-                dist: p.dist, kind: 'patri' });
+                dist: p.dist, kind: 'patri', lat: p.lat, lon: p.lon });
         });
         (res.targets || []).forEach(function(t) {
             if (t.visible) items.push({ name: t.name, bearing: t.bearing, ang: t.ang,
-                dist: t.dist, kind: 'cible' });
+                dist: t.dist, kind: 'cible', lat: t.lat, lon: t.lon });
         });
         var R = res.radiusM || 1;
         function dTxt(d) {
@@ -1140,13 +1140,21 @@
         list.style.cssText = 'position:absolute;left:0;right:0;bottom:0;max-height:42vh;'
             + 'overflow-y:auto;background:rgba(0,0,0,0.62);color:#fff;padding:8px 10px;'
             + 'font:13px Segoe UI;display:none;';
-        // Mini-carte radar (boussole + secteur FOV qui pivote avec le cap)
-        var miniMap = document.createElement('canvas');
-        miniMap.width = 240; miniMap.height = 240;
-        miniMap.style.cssText = 'position:absolute;bottom:12px;left:12px;width:130px;'
-            + 'height:130px;pointer-events:none;z-index:6;border-radius:50%;'
-            + 'background:rgba(15,25,40,0.55);border:1.5px solid rgba(255,255,255,0.4);'
-            + 'box-shadow:0 2px 8px rgba(0,0,0,0.5);';
+        // Mini-carte : vraie carte Leaflet (tuiles OSM/OpenTopo) + perimetre
+        // de visibilite + points visibles + overlay canvas pour FOV/Nord.
+        var miniMap = document.createElement('div');
+        miniMap.style.cssText = 'position:absolute;bottom:12px;left:12px;width:170px;'
+            + 'height:170px;z-index:6;border-radius:14px;overflow:hidden;'
+            + 'box-shadow:0 3px 12px rgba(0,0,0,0.6);'
+            + 'border:2px solid rgba(255,255,255,0.55);';
+        var miniLeafDiv = document.createElement('div');
+        miniLeafDiv.style.cssText = 'position:absolute;inset:0;background:#202833;';
+        var miniOverlay = document.createElement('canvas');
+        miniOverlay.width = 340; miniOverlay.height = 340;
+        miniOverlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
+            + 'pointer-events:none;';
+        miniMap.appendChild(miniLeafDiv);
+        miniMap.appendChild(miniOverlay);
         // Bandeau de calage par perspective (visible seulement en mode calage).
         // left:155px pour ne pas recouvrir la mini-carte (toujours visible).
         var calibPane = document.createElement('div');
@@ -1159,6 +1167,8 @@
         ov.appendChild(miniMap);
         var fe = document.fullscreenElement || document.webkitFullscreenElement;
         (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
+        // Init Leaflet une fois le conteneur dans le DOM (sinon size=0)
+        setTimeout(function() { if (!dead) initMiniMap(); }, 30);
 
         var rawHeading = 0, heading = 0, pitch = 0, haveHeading = false;
         var stream = null, raf = 0, dead = false;
@@ -1208,12 +1218,51 @@
         }
         sizeCanvas();
         function glyph(g, x, y, kind, col, rr) {
+            // Halo : grand cercle pale derriere pour decoller du fond.
+            g.fillStyle = 'rgba(0,0,0,0.45)';
+            g.beginPath(); g.arc(x, y, rr + 4, 0, 2 * Math.PI); g.fill();
+            // Forme distinctive : triangle = sommet, losange = patrimoine,
+            // disque = cible perso. Contour blanc epais pour lisibilite.
             g.beginPath();
-            if (kind === 'peak') { g.moveTo(x, y - rr); g.lineTo(x - rr, y + rr * 0.7); g.lineTo(x + rr, y + rr * 0.7); g.closePath(); }
-            else if (kind === 'patri') { g.moveTo(x, y - rr); g.lineTo(x + rr, y); g.lineTo(x, y + rr); g.lineTo(x - rr, y); g.closePath(); }
-            else g.arc(x, y, rr, 0, 2 * Math.PI);
+            if (kind === 'peak') {
+                g.moveTo(x, y - rr); g.lineTo(x - rr, y + rr * 0.75);
+                g.lineTo(x + rr, y + rr * 0.75); g.closePath();
+            } else if (kind === 'patri') {
+                g.moveTo(x, y - rr); g.lineTo(x + rr, y);
+                g.lineTo(x, y + rr); g.lineTo(x - rr, y); g.closePath();
+            } else g.arc(x, y, rr, 0, 2 * Math.PI);
             g.fillStyle = col; g.fill();
-            g.strokeStyle = '#fff'; g.lineWidth = 1.6; g.stroke();
+            g.strokeStyle = '#fff'; g.lineWidth = 2.6; g.stroke();
+            g.strokeStyle = 'rgba(0,0,0,0.55)'; g.lineWidth = 1; g.stroke();
+        }
+        // Pastille label : rectangle arrondi sombre + filet colore + texte blanc
+        function labelChip(g, x, y, text, kindCol, font) {
+            g.font = font;
+            var tw = g.measureText(text).width;
+            var pad = 7, hh = 19;
+            var bx = x + 9, by = y - hh / 2;
+            // Reste dans l'ecran horizontalement
+            if (bx + tw + pad * 2 > g.canvas.width - 4) bx = x - tw - pad * 2 - 9;
+            // Fond fonce semi-opaque
+            g.fillStyle = 'rgba(20,28,40,0.82)';
+            roundRect(g, bx, by, tw + pad * 2, hh, 9);
+            g.fill();
+            // Filet a gauche de la couleur du kind
+            g.fillStyle = kindCol;
+            g.fillRect(bx, by, 3, hh);
+            // Texte blanc
+            g.fillStyle = '#fff';
+            g.textAlign = 'left'; g.textBaseline = 'middle';
+            g.fillText(text, bx + pad, by + hh / 2);
+        }
+        function roundRect(g, x, y, w, h, r) {
+            g.beginPath();
+            g.moveTo(x + r, y);
+            g.arcTo(x + w, y, x + w, y + h, r);
+            g.arcTo(x + w, y + h, x, y + h, r);
+            g.arcTo(x, y + h, x, y, r);
+            g.arcTo(x, y, x + w, y, r);
+            g.closePath();
         }
         // Superposition de la silhouette du relief calcule (skyline MNT)
         // sur le flux camera : permet de comparer visuellement l'horizon
@@ -1347,59 +1396,132 @@
             }
             g.textAlign = 'left';
             var rects = [];
+            // Glyphes + tige d'ancrage + pastille label
+            // La tige relie le marqueur a la silhouette synthetique au meme
+            // azimut : l'utilisateur voit precisement quel relief porte le
+            // marqueur, meme quand le rendu Relief est masque.
             items.slice().sort(_vsByDist).forEach(function(it) {
                 var a = ((it.bearing - heading + 540) % 360) - 180;
                 if (Math.abs(a) > hfov / 2) return;
                 var x = cx + f * Math.tan(a * Math.PI / 180);
                 var y = cyH - f * Math.tan((it.ang - pitch) * Math.PI / 180);
-                y = Math.max(8, Math.min(H - 8, y));
+                y = Math.max(8, Math.min(H - 12, y));
                 var col = _vsPtCol(it.kind === 'patri' ? 'patri'
                     : it.kind === 'peak' ? 'peak' : 'target', it.dist, R);
-                var rr = Math.max(4, 7 - 3 * Math.min(1, it.dist / R));
+                var rr = Math.max(7, 11 - 4 * Math.min(1, it.dist / R));
+                // Tige d'ancrage : du marqueur vers la ligne d'horizon (ou
+                // vers le sol du relief au meme azimut). Plus epaisse en
+                // premier plan, en pointille pour les elements lointains.
+                var stemY = cyH + f * Math.tan(-pitch * Math.PI / 180); // ligne d'horizon
+                // Si on a la skyline du relief pour cet azimut, l'utiliser
+                if (res.rayProf && res.rayProf.length) {
+                    var nearest = null, bd = 999;
+                    for (var ri = 0; ri < res.rayProf.length; ri++) {
+                        var diff = Math.abs(((res.rayProf[ri].bearing - it.bearing + 540) % 360) - 180);
+                        if (diff < bd) { bd = diff; nearest = res.rayProf[ri]; }
+                    }
+                    if (nearest && nearest.sky && nearest.sky.ang > it.ang - 2) {
+                        stemY = cyH - f * Math.tan((nearest.sky.ang - pitch) * Math.PI / 180);
+                    }
+                }
+                if (stemY > y + 3) {
+                    var farT = Math.min(1, it.dist / R);
+                    g.strokeStyle = 'rgba(255,255,255,' + (0.85 - 0.4 * farT) + ')';
+                    g.lineWidth = farT > 0.6 ? 1.4 : 2;
+                    if (farT > 0.6) g.setLineDash([4, 3]); else g.setLineDash([]);
+                    g.beginPath();
+                    g.moveTo(x, y + rr * 0.7);
+                    g.lineTo(x, Math.min(H - 4, stemY));
+                    g.stroke();
+                    g.setLineDash([]);
+                }
                 glyph(g, x, y, it.kind, col, rr);
-                _vsPlaceLabel(g, rects, x, y,
-                    it.name + ' · ' + dTxt(it.dist),
-                    '12px Segoe UI', '#fff', W, H);
+                labelChip(g, x, y, it.name + ' · ' + dTxt(it.dist), col, '600 12px Segoe UI');
             });
             drawMiniMap();
         }
-        // Mini-carte (boussole radar). Convention NORD-EN-HAUT du canvas :
-        // - cercle plein = limite du rayon viewshed
-        // - triangle rouge en haut = Nord geographique (fixe)
-        // - secteur jaune = FOV de la camera, oriente sur heading -> tu
-        //   fais tourner le tel jusqu'a aligner ce secteur sur le nord
-        //   rouge pour pointer le nord, puis "Calibrer / Pointer Nord".
-        // - points colores = sommets / patrimoine / cibles visibles
-        // - triangle violet dashed = azimut cible en mode calage perspective.
+        // -------- Mini-carte Leaflet + overlay --------
+        // Le fond Leaflet (tuiles OSM/OpenTopo, perimetre du viewshed et
+        // points visibles) est dessine UNE FOIS a l'init. L'overlay canvas
+        // ne porte que le secteur FOV + le marqueur Nord (mis a jour a chaque
+        // frame). Le tout est nord-en-haut (carte non rotative).
+        var miniLMap = null, miniLayers = null;
+        function initMiniMap() {
+            if (typeof L === 'undefined' || !L.map) return;
+            try {
+                miniLMap = L.map(miniLeafDiv, {
+                    zoomControl: false, attributionControl: false,
+                    dragging: false, scrollWheelZoom: false,
+                    doubleClickZoom: false, touchZoom: false, boxZoom: false,
+                    keyboard: false, tap: false, fadeAnimation: false,
+                    zoomAnimation: false, inertia: false
+                });
+                // Ajuste le zoom pour que le rayon du viewshed remplisse ~80%
+                // du conteneur (170 px de cote -> ~68 px de demi-largeur utile).
+                var radM = res.radiusM || 1000;
+                var lat = res.lat;
+                var mPerPx = (radM * 1.15) / 70; // un poil plus large que le radius
+                var zCalc = Math.log2(156543.03 * Math.cos(lat * Math.PI / 180) / mPerPx);
+                var z = Math.max(8, Math.min(17, Math.round(zCalc)));
+                miniLMap.setView([res.lat, res.lon], z);
+                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19, crossOrigin: true
+                }).addTo(miniLMap);
+                miniLayers = L.layerGroup().addTo(miniLMap);
+                // Perimetre du viewshed (cercle radius radiusM)
+                L.circle([res.lat, res.lon], {
+                    radius: radM, color: '#4eafff', weight: 1.5,
+                    fillColor: '#4eafff', fillOpacity: 0.04, dashArray: '4,3'
+                }).addTo(miniLayers);
+                // Echantillon de points visibles (limites a ~400 pour la perf)
+                if (res.visPts && res.visPts.length) {
+                    var step = Math.max(1, Math.ceil(res.visPts.length / 400));
+                    for (var i = 0; i < res.visPts.length; i += step) {
+                        var vp = res.visPts[i];
+                        L.circleMarker([vp.lat, vp.lon], {
+                            radius: 1.2, color: '#7cbf6b', fillColor: '#7cbf6b',
+                            fillOpacity: 0.7, weight: 0,
+                            interactive: false
+                        }).addTo(miniLayers);
+                    }
+                }
+                // Items visibles (sommets / patrimoine / cibles) avec lat/lon
+                items.forEach(function(it) {
+                    if (it.lat == null || it.lon == null) return;
+                    var col = (it.kind === 'patri') ? '#ff66b3'
+                        : (it.kind === 'peak') ? '#ffd24a' : '#88c0d0';
+                    L.circleMarker([it.lat, it.lon], {
+                        radius: 3.5, color: '#000', fillColor: col,
+                        fillOpacity: 1, weight: 1, interactive: false
+                    }).addTo(miniLayers);
+                });
+                // Observateur (par-dessus)
+                L.circleMarker([res.lat, res.lon], {
+                    radius: 5.5, color: '#fff', fillColor: '#4eafff',
+                    fillOpacity: 1, weight: 2.2, interactive: false
+                }).addTo(miniLayers);
+                // Force un repaint apres apparition (sinon tuiles grises)
+                setTimeout(function() {
+                    try { miniLMap.invalidateSize(); } catch(_e) {}
+                }, 120);
+            } catch(_e) {}
+        }
+        // Overlay canvas : FOV + Nord + (en mode calage) trait perspective
         function drawMiniMap() {
-            var ctx = miniMap.getContext('2d');
-            var W = miniMap.width, H = miniMap.height;
+            var ctx = miniOverlay.getContext('2d');
+            var W = miniOverlay.width, H = miniOverlay.height;
             ctx.clearRect(0, 0, W, H);
             var mcx = W / 2, mcy = H / 2;
+            // Centre de la carte = position observateur (toujours centre du div).
+            // On represente la portee comme un cercle "rayon FOV" pour le
+            // secteur jaune (rayon = ~70% du demi-cote = la limite viewshed).
             var R = Math.min(mcx, mcy) - 12;
-            var radM = res.radiusM || 1;
-            // Fond radar : degrade radial centre clair -> bord sombre
-            var grd = ctx.createRadialGradient(mcx, mcy, 0, mcx, mcy, R);
-            grd.addColorStop(0, 'rgba(90,150,220,0.20)');
-            grd.addColorStop(1, 'rgba(15,25,40,0)');
-            ctx.fillStyle = grd;
-            ctx.beginPath(); ctx.arc(mcx, mcy, R, 0, 2 * Math.PI); ctx.fill();
-            // Anneaux concentriques (1/3 et 2/3 du rayon viewshed)
-            ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-            ctx.lineWidth = 1.4;
-            for (var ri = 1; ri < 3; ri++) {
-                ctx.beginPath();
-                ctx.arc(mcx, mcy, R * ri / 3, 0, 2 * Math.PI);
-                ctx.stroke();
-            }
-            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-            ctx.beginPath(); ctx.arc(mcx, mcy, R, 0, 2 * Math.PI); ctx.stroke();
-            // Cible perspective (en mode calage) : trait pointille vers calibAz
+            // Cible perspective (mode calage) : segment pointille violet
             if (calibAz != null) {
                 var ta = calibAz * Math.PI / 180;
                 ctx.strokeStyle = 'rgba(168,58,138,0.95)';
-                ctx.setLineDash([6, 4]);
-                ctx.lineWidth = 2.5;
+                ctx.setLineDash([8, 5]);
+                ctx.lineWidth = 3;
                 ctx.beginPath();
                 ctx.moveTo(mcx, mcy);
                 ctx.lineTo(mcx + (R - 6) * Math.sin(ta),
@@ -1407,15 +1529,13 @@
                 ctx.stroke();
                 ctx.setLineDash([]);
             }
-            // Secteur de champ de vision (FOV) oriente sur heading actuel.
-            // En convention canvas : x=sin(az), y=-cos(az), donc l'angle dans
-            // le repere canvas = (az - 90 deg) en radians.
+            // Secteur de champ de vision
             if (haveHeading) {
                 var hd = heading * Math.PI / 180;
                 var halfFov = (hfov / 2) * Math.PI / 180;
-                ctx.fillStyle = 'rgba(255,200,80,0.42)';
+                ctx.fillStyle = 'rgba(255,200,80,0.32)';
                 ctx.strokeStyle = 'rgba(255,200,80,0.95)';
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 2.5;
                 ctx.beginPath();
                 ctx.moveTo(mcx, mcy);
                 ctx.arc(mcx, mcy, R - 4,
@@ -1423,51 +1543,37 @@
                         hd + halfFov - Math.PI / 2);
                 ctx.closePath();
                 ctx.fill(); ctx.stroke();
-                // Axe central du regard (ligne plus marquee)
-                ctx.strokeStyle = 'rgba(255,235,140,1)';
-                ctx.lineWidth = 2.5;
+                // Axe central du regard
+                ctx.strokeStyle = 'rgba(255,240,120,1)';
+                ctx.lineWidth = 3;
                 ctx.beginPath();
                 ctx.moveTo(mcx, mcy);
                 ctx.lineTo(mcx + (R - 4) * Math.sin(hd),
                            mcy - (R - 4) * Math.cos(hd));
                 ctx.stroke();
             }
-            // Points : sommets / patrimoine / cibles visibles dans le viewshed
-            items.forEach(function(it) {
-                if (it.dist > radM) return;
-                var rr = (it.dist / radM) * R;
-                var br = it.bearing * Math.PI / 180;
-                var px = mcx + rr * Math.sin(br);
-                var py = mcy - rr * Math.cos(br);
-                var col = (it.kind === 'patri') ? '#ff80c0'
-                    : (it.kind === 'peak') ? '#ffe066' : '#88c0d0';
-                ctx.fillStyle = col;
-                ctx.beginPath(); ctx.arc(px, py, 3, 0, 2 * Math.PI); ctx.fill();
-                ctx.strokeStyle = 'rgba(0,0,0,0.65)';
-                ctx.lineWidth = 0.8; ctx.stroke();
-            });
-            // Observateur au centre (cercle bleu)
-            ctx.fillStyle = '#4eafff';
-            ctx.beginPath(); ctx.arc(mcx, mcy, 6, 0, 2 * Math.PI); ctx.fill();
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-            // Marqueur Nord (triangle rouge en haut + lettre N)
-            ctx.fillStyle = '#ff5252';
+            // Marqueur Nord (triangle rouge en haut + N)
+            ctx.fillStyle = '#ff3a3a';
             ctx.beginPath();
-            ctx.moveTo(mcx, 4);
-            ctx.lineTo(mcx - 9, 22);
-            ctx.lineTo(mcx + 9, 22);
+            ctx.moveTo(mcx, 6);
+            ctx.lineTo(mcx - 11, 28);
+            ctx.lineTo(mcx + 11, 28);
             ctx.closePath(); ctx.fill();
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.8; ctx.stroke();
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 16px Segoe UI';
+            ctx.font = 'bold 18px Segoe UI';
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText('N', mcx, 38);
-            // Echelle (rayon en km en bas de la mini-carte)
-            ctx.font = '600 11px Segoe UI';
-            ctx.fillStyle = 'rgba(255,255,255,0.75)';
-            var rkm = radM >= 1000 ? (radM / 1000).toFixed(radM >= 10000 ? 0 : 1) + ' km'
-                : Math.round(radM) + ' m';
-            ctx.fillText('R = ' + rkm, mcx, H - 8);
+            ctx.fillText('N', mcx, 46);
+            // Echelle en bas
+            ctx.font = '700 13px Segoe UI';
+            var radM2 = res.radiusM || 1;
+            var rkm = radM2 >= 1000
+                ? (radM2 / 1000).toFixed(radM2 >= 10000 ? 0 : 1) + ' km'
+                : Math.round(radM2) + ' m';
+            ctx.fillStyle = 'rgba(0,0,0,0.65)';
+            ctx.fillRect(mcx - 38, H - 22, 76, 16);
+            ctx.fillStyle = '#fff';
+            ctx.fillText('R = ' + rkm, mcx, H - 14);
         }
         function schedule() { if (!raf && !dead) raf = requestAnimationFrame(draw); }
         function refreshList() {
@@ -2058,6 +2164,7 @@
             try { if (onOri._rel) window.removeEventListener('deviceorientation', onOri._rel, true); } catch(_e) {}
             if (xrSession) { try { xrSession.end(); } catch(_e) {} xrSession = null; }
             try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
+            try { if (miniLMap) { miniLMap.remove(); miniLMap = null; } } catch(_e) {}
             ov.remove();
         }
         hud.querySelector('#pwaCamX').onclick = close;
