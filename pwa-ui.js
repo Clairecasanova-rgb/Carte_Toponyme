@@ -1143,6 +1143,7 @@
         // Mini-carte : vraie carte Leaflet (tuiles OSM/OpenTopo) + perimetre
         // de visibilite + points visibles + overlay canvas pour FOV/Nord.
         var miniMap = document.createElement('div');
+        miniMap.title = 'Tape un point que tu vois pour caler le cap dessus';
         miniMap.style.cssText = 'position:absolute;bottom:12px;left:12px;width:170px;'
             + 'height:170px;z-index:6;border-radius:14px;overflow:hidden;'
             + 'box-shadow:0 3px 12px rgba(0,0,0,0.6);'
@@ -1453,9 +1454,10 @@
                     zoomControl: false, attributionControl: false,
                     dragging: false, scrollWheelZoom: false,
                     doubleClickZoom: false, touchZoom: false, boxZoom: false,
-                    keyboard: false, tap: false, fadeAnimation: false,
+                    keyboard: false, fadeAnimation: false,
                     zoomAnimation: false, inertia: false
                 });
+                miniLeafDiv.style.cursor = 'crosshair';
                 // Ajuste le zoom pour que le rayon du viewshed remplisse ~80%
                 // du conteneur (170 px de cote -> ~68 px de demi-largeur utile).
                 var radM = res.radiusM || 1000;
@@ -1504,6 +1506,42 @@
                 setTimeout(function() {
                     try { miniLMap.invalidateSize(); } catch(_e) {}
                 }, 120);
+                // Tap-to-calibrate : l'utilisateur tape un point qu'il voit
+                // dans la camera -> on cale le cap dessus en deduisant
+                // l'offset capteur (le seul vrai inconnu : on a deja la
+                // direction objective (lat/lon -> bearing) et la direction
+                // capteur (rawHeading)).
+                miniLMap.on('click', function(e) {
+                    if (calibAz != null) {
+                        showToast('Valide d\'abord le calage perspective', 3500);
+                        return;
+                    }
+                    if (!haveHeading) {
+                        showToast('Pas de cap detecte. Autoriser la boussole.', 4000);
+                        return;
+                    }
+                    var ll = e.latlng;
+                    var bear = _vsBearing(res.lat, res.lon, ll.lat, ll.lng);
+                    var distM = _vsDist(res.lat, res.lon, ll.lat, ll.lng);
+                    headingOffset = ((bear - rawHeading + 540) % 360) - 180;
+                    saveOff(); applyOffset();
+                    smX = null; smY = null; lastShownCap = null; tick();
+                    showToast('Cap cale : ' + Math.round(bear) + '°'
+                        + ' · ' + (distM > 1000
+                            ? (distM / 1000).toFixed(1) + ' km'
+                            : Math.round(distM) + ' m'), 3500);
+                    // Pulse de confirmation a l'endroit tape
+                    var puls = L.circleMarker(ll, {
+                        radius: 5, color: '#ff8c00', fillColor: '#ffae3a',
+                        fillOpacity: 0.95, weight: 2.5, interactive: false
+                    }).addTo(miniLayers);
+                    setTimeout(function() {
+                        try { puls.setStyle({ radius: 16, weight: 1, fillOpacity: 0.15 }); } catch(_e){}
+                    }, 60);
+                    setTimeout(function() {
+                        try { miniLayers.removeLayer(puls); } catch(_e){}
+                    }, 1400);
+                });
             } catch(_e) {}
         }
         // Overlay canvas : FOV + Nord + (en mode calage) trait perspective
