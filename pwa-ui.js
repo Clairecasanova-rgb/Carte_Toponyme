@@ -1394,8 +1394,11 @@
             g.arcTo(x, y, x + w, y, r);
             g.closePath();
         }
-        // Pastille label moderne : gradient sombre + pastille kind + nom + sous-texte distance
-        function labelChip(g, x, y, name, distTxt, kindCol, kind) {
+        // Pastille label moderne : gradient sombre + pastille kind + nom + sous-texte distance.
+        // Si `rects` est passe, on tente plusieurs positions (droite, gauche, droite-haut,
+        // gauche-haut, droite-bas, gauche-bas) et on rejette si toutes overlapent un
+        // rect deja place. Retourne true si dessine, false si abandonne.
+        function labelChip(g, x, y, name, distTxt, kindCol, kind, rects) {
             var fNa = '600 12.5px system-ui, -apple-system, "Segoe UI", sans-serif';
             var fSu = '500 11px system-ui, sans-serif';
             g.font = fNa;
@@ -1404,21 +1407,49 @@
             var sw2 = g.measureText('· ' + distTxt).width;
             var pad = 10, hh = 23, gap = 11;
             var totalW = pad + 9 + gap + nw + 5 + sw2 + pad;
-            var bx = x + 13, by = y - hh / 2;
-            if (bx + totalW > g.canvas.width - 4) bx = x - totalW - 13;
-            // Fond degradé subtile
+            var W = g.canvas.width, H = g.canvas.height;
+            // Candidates : droite, gauche, haut-droite, haut-gauche, bas-droite, bas-gauche
+            var candidates = [
+                { bx: x + 13,            by: y - hh / 2 },
+                { bx: x - totalW - 13,   by: y - hh / 2 },
+                { bx: x + 13,            by: y - hh - 6 },
+                { bx: x - totalW - 13,   by: y - hh - 6 },
+                { bx: x + 13,            by: y + 6 },
+                { bx: x - totalW - 13,   by: y + 6 }
+            ];
+            function intersects(a, b) {
+                return !(a.bx + a.w < b.bx || b.bx + b.w < a.bx
+                       || a.by + a.h < b.by || b.by + b.h < a.by);
+            }
+            var chosen = null;
+            for (var ci = 0; ci < candidates.length; ci++) {
+                var c = candidates[ci];
+                if (c.bx < 2 || c.bx + totalW > W - 2) continue;
+                if (c.by < 38 || c.by + hh > H - 6) continue;
+                var rect = { bx: c.bx, by: c.by, w: totalW, h: hh };
+                var clash = false;
+                if (rects) {
+                    for (var ri = 0; ri < rects.length; ri++) {
+                        if (intersects(rect, rects[ri])) { clash = true; break; }
+                    }
+                }
+                if (!clash) { chosen = rect; break; }
+            }
+            if (!chosen) return false;
+            if (rects) rects.push(chosen);
+            var bx = chosen.bx, by = chosen.by;
+            // Fond degrade
             var grd = g.createLinearGradient(bx, by, bx, by + hh);
             grd.addColorStop(0, 'rgba(22,30,42,0.93)');
             grd.addColorStop(1, 'rgba(32,40,52,0.86)');
             g.fillStyle = grd;
             roundRect(g, bx, by, totalW, hh, 12);
             g.fill();
-            // Filet interieur clair
             g.strokeStyle = 'rgba(255,255,255,0.18)';
             g.lineWidth = 1;
             roundRect(g, bx + 0.5, by + 0.5, totalW - 1, hh - 1, 11.5);
             g.stroke();
-            // Pastille couleur kind a gauche (mini-glyphe rond)
+            // Pastille kind
             g.fillStyle = kindCol;
             g.beginPath();
             g.arc(bx + pad, by + hh / 2, 4.5, 0, 2 * Math.PI);
@@ -1430,15 +1461,15 @@
             g.beginPath();
             g.arc(bx + pad, by + hh / 2, 4.5, 0, 2 * Math.PI);
             g.stroke();
-            // Texte name
+            // Texte
             g.font = fNa;
             g.fillStyle = '#fff';
             g.textAlign = 'left'; g.textBaseline = 'middle';
             g.fillText(name, bx + pad + 9 + gap, by + hh / 2 + 0.5);
-            // Sous-texte distance, gris clair
             g.font = fSu;
             g.fillStyle = 'rgba(225,235,245,0.78)';
             g.fillText('· ' + distTxt, bx + pad + 9 + gap + nw + 5, by + hh / 2 + 0.5);
+            return true;
         }
         // Superposition de la silhouette du relief calcule (skyline MNT)
         // sur le flux camera : permet de comparer visuellement l'horizon
@@ -1600,12 +1631,14 @@
                 }
             }
             g.textAlign = 'left';
-            var rects = [];
-            // Glyphes + tige d'ancrage + pastille label
-            // La tige relie le marqueur a la silhouette synthetique au meme
-            // azimut : l'utilisateur voit precisement quel relief porte le
-            // marqueur, meme quand le rendu Relief est masque.
-            items.slice().sort(_vsByDist).forEach(function(it) {
+            // ----- Phase 1 : projeter chaque item en pixel + scorer -----
+            // Score = priorite d'affichage. On veut afficher en priorite :
+            // (a) les elements PROCHES (parallaxe -> ils sont les plus discriminants)
+            // (b) les elements proches du CENTRE de l'ecran (axe du regard)
+            // (c) les sommets et patrimoine plutot que les cibles perso
+            // (a moins que la cible soit tres proche).
+            var visible = [];
+            items.forEach(function(it) {
                 var a = ((it.bearing - heading + 540) % 360) - 180;
                 if (Math.abs(a) > hfov / 2) return;
                 var x = cx + f * Math.tan(a * Math.PI / 180);
@@ -1614,11 +1647,45 @@
                 var col = _vsPtCol(it.kind === 'patri' ? 'patri'
                     : it.kind === 'peak' ? 'peak' : 'target', it.dist, R);
                 var rr = Math.max(7, 11 - 4 * Math.min(1, it.dist / R));
-                // Tige d'ancrage : du marqueur vers la ligne d'horizon (ou
-                // vers le sol du relief au meme azimut). Plus epaisse en
-                // premier plan, en pointille pour les elements lointains.
-                var stemY = cyH + f * Math.tan(-pitch * Math.PI / 180); // ligne d'horizon
-                // Si on a la skyline du relief pour cet azimut, l'utiliser
+                var distScore = 1 - Math.min(1, it.dist / R);            // 1 proche, 0 loin
+                var centerScore = 1 - Math.abs(a) / (hfov / 2);          // 1 centre, 0 bord
+                var kindScore = (it.kind === 'cible') ? 0.95
+                              : (it.kind === 'patri') ? 1.0
+                              : 0.85;
+                var score = distScore * 0.55 + centerScore * 0.35 + kindScore * 0.10;
+                visible.push({ it: it, x: x, y: y, rr: rr, col: col, score: score, a: a });
+            });
+            // ----- Phase 2 : clustering icones (icones trop proches en pixels) -----
+            // 2 icones a moins de (rr1 + rr2) px de distance euclid -> on garde
+            // la plus prioritaire, on agrege l'autre dans son cluster.
+            visible.sort(function(p, q) { return q.score - p.score; });
+            var kept = [];
+            visible.forEach(function(p) {
+                for (var i = 0; i < kept.length; i++) {
+                    var k = kept[i];
+                    var dx = k.x - p.x, dy = k.y - p.y;
+                    var minD = k.rr + p.rr + 2;
+                    if (dx * dx + dy * dy < minD * minD) {
+                        k.cluster = (k.cluster || 0) + 1;
+                        k.clusterItems = k.clusterItems || [];
+                        k.clusterItems.push(p.it);
+                        return;
+                    }
+                }
+                kept.push(p);
+            });
+            // ----- Phase 3 : determiner combien d'icones / labels afficher -----
+            // Beaucoup de points -> on tronque pour preserver la lisibilite.
+            // Le seuil depend du FOV / taille ecran.
+            var MAX_LABELS = Math.max(8, Math.min(18, Math.round(W / 60)));
+            var rects = [];
+            // ----- Phase 4 : rendu (du loin au pres pour z-order correct) -----
+            kept.slice().sort(function(p, q) {
+                return q.it.dist - p.it.dist;
+            }).forEach(function(p) {
+                var it = p.it, x = p.x, y = p.y, rr = p.rr, col = p.col;
+                // Tige d'ancrage vers la skyline (ou ligne d'horizon)
+                var stemY = cyH + f * Math.tan(-pitch * Math.PI / 180);
                 if (res.rayProf && res.rayProf.length) {
                     var nearest = null, bd = 999;
                     for (var ri = 0; ri < res.rayProf.length; ri++) {
@@ -1641,7 +1708,32 @@
                     g.setLineDash([]);
                 }
                 drawIcon(g, x, y, it.kind, col, rr, it);
-                labelChip(g, x, y, it.name, dTxt(it.dist), col, it.kind);
+                // Badge cluster "+N" si plusieurs items agreges
+                if (p.cluster) {
+                    var bn = '+' + p.cluster;
+                    g.save();
+                    g.fillStyle = '#fff';
+                    g.strokeStyle = 'rgba(0,0,0,0.6)';
+                    g.lineWidth = 1.2;
+                    g.beginPath();
+                    g.arc(x + rr * 0.7, y - rr * 0.7, 8, 0, 2 * Math.PI);
+                    g.fill(); g.stroke();
+                    g.fillStyle = '#1a2435';
+                    g.font = '700 10px system-ui, sans-serif';
+                    g.textAlign = 'center'; g.textBaseline = 'middle';
+                    g.fillText(bn, x + rr * 0.7, y - rr * 0.7);
+                    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+                    g.restore();
+                }
+            });
+            // Labels : ordre de priorite (le plus pertinent gagne la place)
+            var labeled = 0;
+            kept.forEach(function(p) {
+                if (labeled >= MAX_LABELS) return;
+                if (labelChip(g, p.x, p.y, p.it.name, dTxt(p.it.dist),
+                              p.col, p.it.kind, rects)) {
+                    labeled++;
+                }
             });
             drawMiniMap();
         }
