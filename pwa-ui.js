@@ -1128,6 +1128,16 @@
             + '<button id="pwaCamList" style="background:rgba(255,255,255,0.18);color:#fff;'
             + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Liste</button>'
+            + '<button id="pwaCamPhoto" title="Prendre une photo de la vue" '
+            + 'style="background:#fff;color:#1a2530;border:none;border-radius:50%;'
+            + 'width:36px;height:36px;cursor:pointer;padding:0;'
+            + 'display:inline-flex;align-items:center;justify-content:center;'
+            + 'box-shadow:0 2px 6px rgba(0,0,0,0.4);">'
+            + '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" '
+            + 'stroke="currentColor" stroke-width="2" stroke-linejoin="round">'
+            + '<path d="M 4 7 L 8 7 L 9.5 5 L 14.5 5 L 16 7 L 20 7 Q 21 7 21 8 L 21 18 '
+            + 'Q 21 19 20 19 L 4 19 Q 3 19 3 18 L 3 8 Q 3 7 4 7 Z"/>'
+            + '<circle cx="12" cy="13" r="3.5"/></svg></button>'
             + '<button id="pwaCamX" style="background:#f0ebe3;color:#5a3a1a;border:none;'
             + 'border-radius:6px;padding:6px 12px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>';
         var manual = document.createElement('div');
@@ -2111,6 +2121,127 @@
             list.style.display = listOpen ? 'block' : 'none';
             if (listOpen) refreshList();
         };
+        // Capture photo : compose le flux camera + l'overlay marqueurs +
+        // bandeau d'info (cap, position, date). Partage natif si dispo,
+        // sinon telechargement.
+        function takePhoto() {
+            var W = canvas.width, H = canvas.height;
+            if (W < 50 || H < 50) { showToast('Camera non prete', 3000); return; }
+            var photo = document.createElement('canvas');
+            photo.width = W; photo.height = H;
+            var pctx = photo.getContext('2d');
+            // 1. Fond : frame video (object-fit:cover -> crop conservatif)
+            var hasVideo = video && video.videoWidth > 0 && !xrSession;
+            if (hasVideo) {
+                try {
+                    var vw = video.videoWidth, vh = video.videoHeight;
+                    var aV = vw / vh, aC = W / H;
+                    var sx, sy, sw, sh;
+                    if (aV > aC) {
+                        sh = vh; sw = vh * aC; sx = (vw - sw) / 2; sy = 0;
+                    } else {
+                        sw = vw; sh = vw / aC; sx = 0; sy = (vh - sh) / 2;
+                    }
+                    pctx.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
+                } catch(_e) {
+                    pctx.fillStyle = '#0a1420'; pctx.fillRect(0, 0, W, H);
+                }
+            } else {
+                pctx.fillStyle = '#0a1420'; pctx.fillRect(0, 0, W, H);
+                if (xrSession) {
+                    pctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    pctx.font = '600 14px system-ui,sans-serif';
+                    pctx.textAlign = 'center'; pctx.textBaseline = 'middle';
+                    pctx.fillText('Mode AR : flux camera non capturable',
+                        W / 2, H / 2);
+                }
+            }
+            // 2. Overlay marqueurs / silhouette / FOV
+            pctx.drawImage(canvas, 0, 0);
+            // 3. Mini-map en bas-gauche (juste le canvas overlay du radar)
+            try {
+                var mmW = 130, mmH = 130, mmX = 16, mmY = H - mmH - 16;
+                pctx.save();
+                pctx.fillStyle = 'rgba(15,25,40,0.6)';
+                roundRect(pctx, mmX, mmY, mmW, mmH, 12); pctx.fill();
+                pctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                pctx.lineWidth = 1.5; pctx.stroke();
+                pctx.drawImage(miniOverlay, mmX, mmY, mmW, mmH);
+                pctx.restore();
+            } catch(_e) {}
+            // 4. Bandeau info en bas (cap + position + date)
+            pctx.save();
+            var bandH = 38;
+            var grdB = pctx.createLinearGradient(0, H - bandH, 0, H);
+            grdB.addColorStop(0, 'rgba(0,0,0,0)');
+            grdB.addColorStop(0.4, 'rgba(0,0,0,0.55)');
+            grdB.addColorStop(1, 'rgba(0,0,0,0.78)');
+            pctx.fillStyle = grdB;
+            pctx.fillRect(0, H - bandH, W, bandH);
+            pctx.fillStyle = '#fff';
+            pctx.font = '700 14px system-ui, -apple-system, "Segoe UI", sans-serif';
+            pctx.textAlign = 'right'; pctx.textBaseline = 'bottom';
+            var capTxt = 'Cap ' + Math.round(heading) + '° ' + card(heading);
+            pctx.fillText(capTxt, W - 12, H - 18);
+            pctx.font = '500 11px system-ui, sans-serif';
+            pctx.fillStyle = 'rgba(225,235,245,0.85)';
+            var dat = new Date().toLocaleString('fr-FR',
+                { dateStyle: 'short', timeStyle: 'short' });
+            var pos = (res.lat || 0).toFixed(5) + ', ' + (res.lon || 0).toFixed(5);
+            pctx.fillText(pos + '  ·  ' + dat, W - 12, H - 4);
+            pctx.restore();
+            // 5. Flash visuel (feedback)
+            var flash = document.createElement('div');
+            flash.style.cssText = 'position:absolute;inset:0;background:#fff;'
+                + 'pointer-events:none;z-index:99;opacity:0.92;'
+                + 'transition:opacity 0.35s ease-out;';
+            ov.appendChild(flash);
+            requestAnimationFrame(function() {
+                flash.style.opacity = '0';
+                setTimeout(function() { try { flash.remove(); } catch(_e) {} }, 400);
+            });
+            // 6. Export blob -> partage natif ou telechargement
+            try {
+                photo.toBlob(function(blob) {
+                    if (!blob) { showToast('Capture echouee', 4000); return; }
+                    var stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    var filename = 'vue-camera-' + stamp + '.png';
+                    var tryShare = function() {
+                        if (!(navigator.share && navigator.canShare)) return false;
+                        try {
+                            var file = new File([blob], filename, { type: 'image/png' });
+                            if (!navigator.canShare({ files: [file] })) return false;
+                            navigator.share({
+                                files: [file],
+                                title: 'Vue camera',
+                                text: capTxt + '\n' + pos
+                            }).then(function() {
+                                showToast('Photo partagee', 3000);
+                            }).catch(function() {
+                                doDownload(blob, filename);
+                            });
+                            return true;
+                        } catch(_e) { return false; }
+                    };
+                    if (!tryShare()) doDownload(blob, filename);
+                }, 'image/png', 0.95);
+            } catch(_e) {
+                showToast('Capture impossible (' + (_e && _e.message || _e) + ')', 5000);
+            }
+            function doDownload(blob, fn) {
+                try {
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url; a.download = fn;
+                    document.body.appendChild(a); a.click();
+                    setTimeout(function() {
+                        try { a.remove(); URL.revokeObjectURL(url); } catch(_e) {}
+                    }, 1000);
+                    showToast('Photo enregistree : ' + fn, 4000);
+                } catch(_e) { showToast('Telechargement impossible', 4000); }
+            }
+        }
+        hud.querySelector('#pwaCamPhoto').onclick = takePhoto;
         function nudge(d) {
             headingOffset = ((headingOffset + d + 540) % 360) - 180;
             saveOff(); applyOffset(); tick();
