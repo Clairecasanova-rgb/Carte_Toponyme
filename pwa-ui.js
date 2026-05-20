@@ -1144,18 +1144,38 @@
         // de visibilite + points visibles + overlay canvas pour FOV/Nord.
         var miniMap = document.createElement('div');
         miniMap.title = 'Tape un point que tu vois pour caler le cap dessus';
-        miniMap.style.cssText = 'position:absolute;bottom:12px;left:12px;width:170px;'
-            + 'height:170px;z-index:6;border-radius:14px;overflow:hidden;'
+        miniMap.style.cssText = 'position:absolute;bottom:12px;left:12px;width:180px;'
+            + 'height:180px;z-index:6;border-radius:14px;overflow:hidden;'
             + 'box-shadow:0 3px 12px rgba(0,0,0,0.6);'
             + 'border:2px solid rgba(255,255,255,0.55);';
         var miniLeafDiv = document.createElement('div');
         miniLeafDiv.style.cssText = 'position:absolute;inset:0;background:#202833;';
         var miniOverlay = document.createElement('canvas');
-        miniOverlay.width = 340; miniOverlay.height = 340;
+        miniOverlay.width = 360; miniOverlay.height = 360;
         miniOverlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
             + 'pointer-events:none;';
+        // Boutons +/- pour zoomer/dezoomer dans la mini-carte (le drag reste
+        // bloque pour garder l'observateur au centre).
+        var zoomCtrl = document.createElement('div');
+        zoomCtrl.style.cssText = 'position:absolute;top:6px;right:6px;display:flex;'
+            + 'flex-direction:column;gap:2px;z-index:7;';
+        function makeZb(txt) {
+            var b = document.createElement('button');
+            b.textContent = txt;
+            b.style.cssText = 'width:28px;height:28px;border:1px solid rgba(255,255,255,0.4);'
+                + 'background:rgba(20,28,40,0.82);color:#fff;cursor:pointer;'
+                + 'border-radius:5px;font:bold 18px system-ui,sans-serif;'
+                + 'line-height:1;padding:0;display:flex;align-items:center;'
+                + 'justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.5);';
+            return b;
+        }
+        var zInBtn = makeZb('+');
+        var zOutBtn = makeZb('−');
+        zoomCtrl.appendChild(zInBtn);
+        zoomCtrl.appendChild(zOutBtn);
         miniMap.appendChild(miniLeafDiv);
         miniMap.appendChild(miniOverlay);
+        miniMap.appendChild(zoomCtrl);
         // Bandeau de calage par perspective (visible seulement en mode calage).
         // left:155px pour ne pas recouvrir la mini-carte (toujours visible).
         var calibPane = document.createElement('div');
@@ -1562,19 +1582,29 @@
             try {
                 miniLMap = L.map(miniLeafDiv, {
                     zoomControl: false, attributionControl: false,
-                    dragging: false, scrollWheelZoom: false,
-                    doubleClickZoom: false, touchZoom: false, boxZoom: false,
-                    keyboard: false, fadeAnimation: false,
-                    zoomAnimation: false, inertia: false
+                    // Pas de drag (l'observateur doit rester au centre pour
+                    // que le secteur FOV soit aligne sur sa position) mais
+                    // les zooms sont autorises -- en mode 'center' (pinch
+                    // et molette zooment autour du centre, donc l'observateur
+                    // ne sort jamais du milieu).
+                    dragging: false,
+                    scrollWheelZoom: 'center',
+                    touchZoom: 'center',
+                    doubleClickZoom: 'center',
+                    boxZoom: false, keyboard: false,
+                    fadeAnimation: false, zoomAnimation: true,
+                    inertia: false, minZoom: 5, maxZoom: 19
                 });
                 miniLeafDiv.style.cursor = 'crosshair';
-                // Ajuste le zoom pour que le rayon du viewshed remplisse ~80%
-                // du conteneur (170 px de cote -> ~68 px de demi-largeur utile).
+                // Zoom initial : centre sur l'utilisateur de maniere prononcee
+                // (on prend la moitie du rayon comme reference -> l'observateur
+                // est dominant et son environnement proche est lisible).
+                // L'utilisateur peut dezoomer pour voir la portee complete.
                 var radM = res.radiusM || 1000;
                 var lat = res.lat;
-                var mPerPx = (radM * 1.15) / 70; // un poil plus large que le radius
+                var mPerPx = (radM * 0.45) / 70;
                 var zCalc = Math.log2(156543.03 * Math.cos(lat * Math.PI / 180) / mPerPx);
-                var z = Math.max(8, Math.min(17, Math.round(zCalc)));
+                var z = Math.max(8, Math.min(18, Math.round(zCalc)));
                 miniLMap.setView([res.lat, res.lon], z);
                 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, crossOrigin: true
@@ -1621,6 +1651,19 @@
                 // l'offset capteur (le seul vrai inconnu : on a deja la
                 // direction objective (lat/lon -> bearing) et la direction
                 // capteur (rawHeading)).
+                // Boutons +/- : zoom autour du centre (pas de pan)
+                zInBtn.onclick = function(ev) {
+                    ev.stopPropagation(); miniLMap.zoomIn();
+                };
+                zOutBtn.onclick = function(ev) {
+                    ev.stopPropagation(); miniLMap.zoomOut();
+                };
+                // Garantit que l'observateur reste au centre apres tout zoom
+                // (Leaflet peut decentrer subtilement apres invalidateSize).
+                miniLMap.on('zoomend', function() {
+                    miniLMap.setView([res.lat, res.lon], miniLMap.getZoom(),
+                        { animate: false });
+                });
                 miniLMap.on('click', function(e) {
                     if (calibAz != null) {
                         showToast('Valide d\'abord le calage perspective', 3500);
