@@ -1241,73 +1241,147 @@
         // Icones SVG (Path2D) : units centrees sur (0,0), echelle ~20px.
         // Genere a partir de chemins SVG, plus reconnaissables et propres
         // que les triangles/losanges canvas. Scale = rr / 10 a l'utilisation.
-        var ICON_PATHS = (function() {
-            // Sommet : pic montagneux avec calotte neigeuse
-            var peak = new Path2D();
-            peak.moveTo(-10, 8); peak.lineTo(-3, -2); peak.lineTo(0, -10);
-            peak.lineTo(3, -2); peak.lineTo(10, 8); peak.closePath();
-            // Patrimoine : tour / monument crenele simplifie
-            var patri = new Path2D();
-            patri.moveTo(-8, 8); patri.lineTo(-8, -3); patri.lineTo(-5, -3);
-            patri.lineTo(-5, -7); patri.lineTo(-3, -7); patri.lineTo(-3, -5);
-            patri.lineTo(0, -5); patri.lineTo(0, -7); patri.lineTo(3, -7);
-            patri.lineTo(3, -5); patri.lineTo(5, -5); patri.lineTo(5, -7);
-            patri.lineTo(8, -7); patri.lineTo(8, 8); patri.closePath();
-            // Cible perso : epingle de carte type Google Maps
-            var cible = new Path2D('M 0 -10 C -5 -10 -8 -7 -8 -3 '
-                + 'C -8 2 0 10 0 10 C 0 10 8 2 8 -3 C 8 -7 5 -10 0 -10 Z');
-            // Cercle interieur de la cible
-            var cibleHole = new Path2D();
-            cibleHole.arc(0, -3, 2.4, 0, 2 * Math.PI);
-            return { peak: peak, patri: patri, cible: cible, cibleHole: cibleHole };
-        })();
-        function drawIcon(g, x, y, kind, col, rr) {
-            // Halo sombre derriere pour decoller du fond, plus diffuse
+        // Pin teardrop partage par toutes les categories. Centre bulbe : (0,-8)
+        // rayon utile ~7. Le pictogramme blanc est dessine par-dessus.
+        var PIN_PATH = new Path2D(
+            'M 0 13 C 0 13 -10 -3 -10 -9 C -10 -14.5 -5.5 -17 0 -17 '
+          + 'C 5.5 -17 10 -14.5 10 -9 C 10 -3 0 13 0 13 Z');
+        var PIN_SHADOW = new Path2D();
+        PIN_SHADOW.ellipse(0, 14, 6, 2, 0, 0, 2 * Math.PI);
+        // Palette terre/sable
+        // [topGradient, bottomGradient]
+        var PIN_COLORS = {
+            peak:    ['#d47540', '#8a4220'],   // brun sienne
+            patri:   ['#eebd55', '#a07820'],   // ocre
+            cible:   ['#6a83a0', '#2e4256']    // ardoise
+        };
+        // 9 pictogrammes : sommet + 7 patrimoine + cible.
+        // Chaque entree : white = Path2D fill blanc, dark = Path2D fill couleur kind
+        // (pour les ouvertures, meurtrieres, etc.)
+        function P(d) { return new Path2D(d); }
+        var PICTOS = {
+            peak: {
+                white: P('M -6 -2 L 0 -13 L 6 -2 Z'),
+                dark:  P('M -1.6 -7 L 0 -13 L 1.6 -7 L 1.2 -6 L -1.2 -6 Z')
+            },
+            'patri-tour': {
+                white: P('M -4 -3 L 4 -3 L 4 -1.5 L -4 -1.5 Z'
+                    + ' M -3 -11 L 3 -11 L 3 -3 L -3 -3 Z'
+                    + ' M -4 -12.5 L 4 -12.5 L 4 -10.9 L -4 -10.9 Z'
+                    + ' M -3.6 -14 L -2 -14 L -2 -12.5 L -3.6 -12.5 Z'
+                    + ' M -0.8 -14 L 0.8 -14 L 0.8 -12.5 L -0.8 -12.5 Z'
+                    + ' M 2 -14 L 3.6 -14 L 3.6 -12.5 L 2 -12.5 Z'),
+                dark:  P('M -0.6 -7 L 0.6 -7 L 0.6 -5 L -0.6 -5 Z')
+            },
+            'patri-chapelle': {
+                white: P('M -5.5 -7 L 5.5 -7 L 5.5 -0.5 L -5.5 -0.5 Z'
+                    + ' M -5.5 -7 L 0 -11 L 5.5 -7 Z'
+                    + ' M -0.7 -15 L 0.7 -15 L 0.7 -10.5 L -0.7 -10.5 Z'
+                    + ' M -2 -13.5 L 2 -13.5 L 2 -12.1 L -2 -12.1 Z')
+            },
+            'patri-fort': {
+                white: P('M -6 -1 L -6 -8 L -4.5 -8 L -4.5 -10 L -2.5 -10 '
+                    + 'L -2.5 -8 L -1 -8 L -1 -12 L 1 -12 L 1 -8 L 2.5 -8 '
+                    + 'L 2.5 -10 L 4.5 -10 L 4.5 -8 L 6 -8 L 6 -1 Z'),
+                dark:  P('M -0.9 -4 L 0.9 -4 L 0.9 -1 L -0.9 -1 Z')
+            },
+            'patri-mega': {
+                white: P('M -6.5 -2 L 6.5 -2 L 6.5 -0.5 L -6.5 -0.5 Z'
+                    + ' M -5 -9 L -2 -9 L -2 -2 L -5 -2 Z'
+                    + ' M 2 -9 L 5 -9 L 5 -2 L 2 -2 Z'
+                    + ' M -6.5 -9 L 6.5 -11 L 6.5 -9 L -6.5 -7 Z')
+            },
+            'patri-grotte': {
+                white: P('M -7 -1 Q -7 -14 0 -14 Q 7 -14 7 -1 Z'),
+                dark:  P('M -3.5 -1 Q -3.5 -10 0 -10 Q 3.5 -10 3.5 -1 Z')
+            },
+            'patri-antique': {
+                white: P('M -6 -11 L 0 -14 L 6 -11 Z'
+                    + ' M -6 -11 L 6 -11 L 6 -9.5 L -6 -9.5 Z'
+                    + ' M -5 -9.5 L -3.4 -9.5 L -3.4 -1.5 L -5 -1.5 Z'
+                    + ' M -0.8 -9.5 L 0.8 -9.5 L 0.8 -1.5 L -0.8 -1.5 Z'
+                    + ' M 3.4 -9.5 L 5 -9.5 L 5 -1.5 L 3.4 -1.5 Z'
+                    + ' M -6 -1.5 L 6 -1.5 L 6 -0.1 L -6 -0.1 Z')
+            },
+            'patri-fouille': {
+                // Cas special : dessine avec une rotation -30deg dans drawIcon.
+                rotated: true,
+                white: P('M -1.6 -14 L 1.6 -14 L 1.6 -12.6 L -1.6 -12.6 Z'
+                    + ' M -0.7 -12.6 L 0.7 -12.6 L 0.7 -6.6 L -0.7 -6.6 Z'
+                    + ' M -3.2 -6.5 L 3.2 -6.5 L 0 -1 Z')
+            },
+            cible: {
+                white: P('M 0 -4 A 4 4 0 1 1 0 -12 A 4 4 0 1 1 0 -4 Z'),
+                dark:  P('M 0 -6.3 A 1.7 1.7 0 1 1 0 -9.7 A 1.7 1.7 0 1 1 0 -6.3 Z')
+            }
+        };
+        // Detection de la sous-categorie patrimoine depuis le nom de l'element.
+        // Ordre important : la PREMIERE regle qui matche gagne.
+        // Insensible casse + accents (NFD strip).
+        function _patriIconKind(nom) {
+            if (!nom) return 'patri-fouille';
+            var n = String(nom).toLowerCase();
+            try { n = n.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch(_e) {}
+            if (/\b(stantar|menhir|dolmen|alignement|filitosa|cauria|petra pinzuta)/.test(n)) return 'patri-mega';
+            if (/\b(grotte|balma|abri[- ]sous[- ]roche|abri rocheux)/.test(n)) return 'patri-grotte';
+            if (/\b(tour|torra|torre|vedetta)\b/.test(n)) return 'patri-tour';
+            if (/\b(castel|castello|castellu|castiglio|fort|fortin|citadelle)/.test(n)) return 'patri-fort';
+            if (/\b(romain|antique|aleria|mariana|paleo)/.test(n)) return 'patri-antique';
+            if (/\b(chiesa|ghjesgia|eglise|chapelle|monastere|couvent|san |santa|sant'|saint|abbaye|ermitage)/.test(n)) return 'patri-chapelle';
+            return 'patri-fouille';
+        }
+        function drawIcon(g, x, y, kind, col, rr, item) {
+            // Resolve la cle exacte du picto + couleur du pin
+            var pinKind = (kind === 'cible' || kind === 'target') ? 'cible'
+                        : (kind === 'peak') ? 'peak' : 'patri';
+            var pictoKey = kind;
+            if (kind === 'patri') pictoKey = _patriIconKind(item && item.name);
+            else if (kind === 'cible' || kind === 'target') pictoKey = 'cible';
+            else pictoKey = 'peak';
+            var picto = PICTOS[pictoKey] || PICTOS['patri-fouille'];
+            var pinPair = PIN_COLORS[pinKind] || PIN_COLORS.cible;
+            // Halo sombre derriere
             g.save();
             g.fillStyle = 'rgba(0,0,0,0.45)';
             g.beginPath(); g.arc(x, y, rr + 5, 0, 2 * Math.PI); g.fill();
-            g.fillStyle = 'rgba(0,0,0,0.25)';
-            g.beginPath(); g.arc(x, y, rr + 8, 0, 2 * Math.PI); g.fill();
+            g.fillStyle = 'rgba(0,0,0,0.22)';
+            g.beginPath(); g.arc(x, y, rr + 9, 0, 2 * Math.PI); g.fill();
             g.restore();
+            // Pin teardrop avec degrade + ombre portee
             g.save();
             g.translate(x, y);
-            var s = rr / 9;
+            var s = rr / 10;
             g.scale(s, s);
-            var path = ICON_PATHS[kind] || ICON_PATHS.cible;
-            // Ombre portee subtile
-            g.shadowColor = 'rgba(0,0,0,0.4)';
-            g.shadowBlur = 2 / s;
-            g.shadowOffsetY = 1 / s;
-            g.fillStyle = col;
-            g.fill(path);
-            g.shadowColor = 'transparent';
-            // Contour blanc epais + filet sombre exterieur
+            // Ombre au sol (ellipse)
+            g.fillStyle = 'rgba(0,0,0,0.45)';
+            g.fill(PIN_SHADOW);
+            // Pin avec degrade
+            var grd = g.createLinearGradient(0, -17, 0, 13);
+            grd.addColorStop(0, pinPair[0]);
+            grd.addColorStop(1, pinPair[1]);
+            g.fillStyle = grd;
+            g.fill(PIN_PATH);
             g.lineJoin = 'round';
             g.strokeStyle = '#fff';
-            g.lineWidth = 2 / s;
-            g.stroke(path);
-            g.strokeStyle = 'rgba(0,0,0,0.6)';
-            g.lineWidth = 0.7 / s;
-            g.stroke(path);
-            // Detail interne selon kind
-            if (kind === 'peak') {
-                // Calotte neigeuse
-                g.fillStyle = 'rgba(255,255,255,0.85)';
-                g.beginPath();
-                g.moveTo(-3, -2); g.lineTo(0, -10); g.lineTo(3, -2);
-                g.lineTo(2, -1); g.lineTo(-2, -1); g.closePath();
-                g.fill();
-            } else if (kind === 'cible' || kind === 'target') {
-                // Trou central de l'epingle
-                g.fillStyle = '#fff';
-                g.fill(ICON_PATHS.cibleHole);
-                g.strokeStyle = 'rgba(0,0,0,0.5)';
-                g.lineWidth = 0.6 / s;
-                g.stroke(ICON_PATHS.cibleHole);
+            g.lineWidth = 1.4 / s;
+            g.stroke(PIN_PATH);
+            g.strokeStyle = 'rgba(0,0,0,0.45)';
+            g.lineWidth = 0.5 / s;
+            g.stroke(PIN_PATH);
+            // Pictogramme blanc (+ optionnel dark pour les ouvertures)
+            if (picto.rotated) {
+                g.translate(0, -8);
+                g.rotate(-30 * Math.PI / 180);
+                g.translate(0, 8);
+            }
+            g.fillStyle = '#fff';
+            if (picto.white) g.fill(picto.white);
+            if (picto.dark) {
+                g.fillStyle = pinPair[1];
+                g.fill(picto.dark);
             }
             g.restore();
         }
-        // Garde l'ancien nom comme alias pour le code existant
         function glyph(g, x, y, kind, col, rr) {
             drawIcon(g, x, y, kind, col, rr);
         }
@@ -1566,7 +1640,7 @@
                     g.stroke();
                     g.setLineDash([]);
                 }
-                glyph(g, x, y, it.kind, col, rr);
+                drawIcon(g, x, y, it.kind, col, rr, it);
                 labelChip(g, x, y, it.name, dTxt(it.dist), col, it.kind);
             });
             drawMiniMap();
