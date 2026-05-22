@@ -1610,6 +1610,17 @@
         // Methode PeakLens-like, calage manuel : on ajuste +/-1deg ou
         // Calibrer jusqu'a ce que la silhouette epouse le relief reel.
         var showRelief = false;
+        // Reglages de calage du relief, memorises et reutilises : zoom de la
+        // silhouette (<1 = dezoome, pour coller a un champ camera plus large)
+        // et decalage vertical simple (fraction de la hauteur, monte/descend
+        // toute la silhouette d'un bloc pour aligner l'horizon).
+        var reliefZoom = 1, reliefVOff = 0;
+        try {
+            var _rz = parseFloat(localStorage.getItem('pwaVScamReliefZoom'));
+            if (isFinite(_rz) && _rz >= 0.4 && _rz <= 1.8) reliefZoom = _rz;
+            var _rv = parseFloat(localStorage.getItem('pwaVScamReliefVOff'));
+            if (isFinite(_rv)) reliefVOff = Math.max(-0.35, Math.min(0.35, _rv));
+        } catch(_e) {}
         // Mode "calage par perspective figee" : silhouette dessinee comme
         // si heading == calibAz (donc immobile a l'ecran quand l'utilisateur
         // pivote). Il oriente physiquement le tel pour superposer, et tape
@@ -1624,19 +1635,24 @@
             var refPitch = (calibAz != null) ? 0 : pitch;
             var rp = res.rayProf;
             var hasBands = !!(rp[0] && rp[0].bandMax && res.bandOut);
-            // Filtre les rayons dans le FOV + projecte chaque bande
+            // Zoom + decalage vertical de la silhouette (reglages de calage).
+            var fR = f * reliefZoom;
+            var vOff = reliefVOff * H;
+            // Filtre les rayons dans le FOV + projecte chaque bande. La plage
+            // angulaire collectee s'elargit quand on dezoome (reliefZoom < 1)
+            // pour que la silhouette compressee remplisse quand meme l'ecran.
             var inFov = [];
             for (var r = 0; r < rp.length; r++) {
                 var a = ((rp[r].bearing - anchor + 540) % 360) - 180;
-                if (Math.abs(a) > hfov / 2 + 2) continue;
-                var x = cx + f * Math.tan(a * Math.PI / 180);
+                if (Math.abs(a) > hfov / 2 / reliefZoom + 2) continue;
+                var x = cx + fR * Math.tan(a * Math.PI / 180);
                 inFov.push({ x: x, a: a, ray: rp[r] });
             }
             if (inFov.length < 2) return;
             inFov.sort(function(p, q) { return p.a - q.a; });
             function yFromAng(ang) {
                 if (ang == null || ang <= -89) return H + 4;
-                var y = cyH - f * Math.tan((ang - refPitch) * Math.PI / 180);
+                var y = cyH - fR * Math.tan((ang - refPitch) * Math.PI / 180) + vOff;
                 return Math.max(-1500, Math.min(H + 8, y));
             }
             if (hasBands) {
@@ -2633,6 +2649,14 @@
                 + 'value="' + calibAz + '" style="flex:1;">'
                 + '<button id="pwaCamCalibR" title="Tourner la silhouette vers la droite" '
                 + 'style="' + btnCss + '">►</button></div>'
+                + '<div style="display:flex;align-items:center;gap:8px;font-size:12px;'
+                + 'margin-bottom:7px;"><span style="width:88px;">Hauteur</span>'
+                + '<input type="range" id="pwaCamCalibV" min="-35" max="35" step="1" '
+                + 'value="' + Math.round(reliefVOff * 100) + '" style="flex:1;"></div>'
+                + '<div style="display:flex;align-items:center;gap:8px;font-size:12px;'
+                + 'margin-bottom:10px;"><span style="width:88px;">Zoom relief</span>'
+                + '<input type="range" id="pwaCamCalibZ" min="40" max="180" step="1" '
+                + 'value="' + Math.round(reliefZoom * 100) + '" style="flex:1;"></div>'
                 + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
                 + '<button id="pwaCamCalibX" style="background:rgba(255,255,255,0.18);'
                 + 'color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:6px;'
@@ -2656,6 +2680,22 @@
             };
             calibPane.querySelector('#pwaCamCalibR').onclick = function() {
                 setCalibAz(calibAz + 5);
+            };
+            // Decalage vertical de la silhouette (alignement de l'horizon).
+            var vSl = calibPane.querySelector('#pwaCamCalibV');
+            if (vSl) vSl.oninput = function() {
+                reliefVOff = (parseInt(this.value, 10) || 0) / 100;
+                try { localStorage.setItem('pwaVScamReliefVOff',
+                    String(reliefVOff)); } catch(_e) {}
+                schedule();
+            };
+            // Zoom de la silhouette (la faire coller au champ camera reel).
+            var zSl = calibPane.querySelector('#pwaCamCalibZ');
+            if (zSl) zSl.oninput = function() {
+                reliefZoom = (parseInt(this.value, 10) || 100) / 100;
+                try { localStorage.setItem('pwaVScamReliefZoom',
+                    String(reliefZoom)); } catch(_e) {}
+                schedule();
             };
             // Etat visuel du bouton Relief : actif et verrouille en mode calage
             var b = hud.querySelector('#pwaCamRelief');
