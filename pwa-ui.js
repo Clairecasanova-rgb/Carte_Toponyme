@@ -1045,13 +1045,24 @@
              : nature === 'water' ? 'lac'
              : nature === 'river' ? 'river' : 'peak';
     }
-    // Couleur / glyphe d'un repere OSM sur la carte planimetrique 2D
-    // (pastilles _vsLayer). Masque -> gris ; sinon une couleur par categorie.
+    // Eclaircit une couleur hex (#rrggbb) vers un gris clair : version
+    // "estompee" d'une teinte de categorie.
+    function _vsPale(hex) {
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        function m(c) { return Math.round(c + (205 - c) * 0.45); }
+        return 'rgb(' + m(r) + ',' + m(g) + ',' + m(b) + ')';
+    }
+    // Couleur d'un repere OSM sur la carte planimetrique 2D (pastilles
+    // _vsLayer). Une couleur par categorie ; hors champ de vision (masque)
+    // -> meme teinte mais PALE, pour rester reconnaissable (au lieu d'un
+    // gris uniforme qui effacait la categorie).
     function _vsPeakDotCol(p) {
-        if (!p || !p.visible) return '#9aa3a3';
-        var k = _vsKind(p.nature);
-        return k === 'col' ? '#6f5f96' : k === 'village' ? '#b5342b'
-             : k === 'lac' ? '#2f7fa0' : k === 'river' ? '#2f9a90' : '#8a5a2b';
+        var k = _vsKind(p && p.nature);
+        var full = k === 'col' ? '#6f5f96' : k === 'village' ? '#b5342b'
+                 : k === 'lac' ? '#2f7fa0' : k === 'river' ? '#2f9a90' : '#8a5a2b';
+        return (p && p.visible) ? full : _vsPale(full);
     }
     function _vsPeakGlyph(nature) {
         var k = _vsKind(nature);
