@@ -1044,6 +1044,19 @@
              : nature === 'village' ? 'village'
              : nature === 'water' ? 'lac' : 'peak';
     }
+    // Couleur / glyphe d'un repere OSM sur la carte planimetrique 2D
+    // (pastilles _vsLayer). Masque -> gris ; sinon une couleur par categorie.
+    function _vsPeakDotCol(p) {
+        if (!p || !p.visible) return '#9aa3a3';
+        var k = _vsKind(p.nature);
+        return k === 'col' ? '#6f5f96' : k === 'village' ? '#b5342b'
+             : k === 'lac' ? '#2f7fa0' : '#8a5a2b';
+    }
+    function _vsPeakGlyph(nature) {
+        var k = _vsKind(nature);
+        return k === 'col' ? '∨' : k === 'village' ? '⌂'
+             : k === 'lac' ? '≈' : '▲';
+    }
     function _vsPtCol(kind, dist, R) {
         var t = Math.max(0, Math.min(1, (dist || 0) / (R || 1)));
         function mix(a, b) { return Math.round(a + (b - a) * t); }
@@ -1635,24 +1648,21 @@
             var refPitch = (calibAz != null) ? 0 : pitch;
             var rp = res.rayProf;
             var hasBands = !!(rp[0] && rp[0].bandMax && res.bandOut);
-            // Zoom + decalage vertical de la silhouette (reglages de calage).
-            var fR = f * reliefZoom;
-            var vOff = reliefVOff * H;
-            // Filtre les rayons dans le FOV + projecte chaque bande. La plage
-            // angulaire collectee s'elargit quand on dezoome (reliefZoom < 1)
-            // pour que la silhouette compressee remplisse quand meme l'ecran.
+            // f et cyH integrent deja le calage (zoom + decalage vertical).
+            // La plage angulaire collectee s'elargit quand on dezoome
+            // (reliefZoom < 1) pour que la silhouette remplisse l'ecran.
             var inFov = [];
             for (var r = 0; r < rp.length; r++) {
                 var a = ((rp[r].bearing - anchor + 540) % 360) - 180;
                 if (Math.abs(a) > hfov / 2 / reliefZoom + 2) continue;
-                var x = cx + fR * Math.tan(a * Math.PI / 180);
+                var x = cx + f * Math.tan(a * Math.PI / 180);
                 inFov.push({ x: x, a: a, ray: rp[r] });
             }
             if (inFov.length < 2) return;
             inFov.sort(function(p, q) { return p.a - q.a; });
             function yFromAng(ang) {
                 if (ang == null || ang <= -89) return H + 4;
-                var y = cyH - fR * Math.tan((ang - refPitch) * Math.PI / 180) + vOff;
+                var y = cyH - f * Math.tan((ang - refPitch) * Math.PI / 180);
                 return Math.max(-1500, Math.min(H + 8, y));
             }
             if (hasBands) {
@@ -1756,12 +1766,18 @@
             if (dead) return;
             var W = canvas.width, H = canvas.height, g = canvas.getContext('2d');
             g.clearRect(0, 0, W, H);
-            var f = (W / 2) / Math.tan((hfov / 2) * Math.PI / 180);
+            // f, cyW et halfFov integrent le calage du relief (zoom + decalage
+            // vertical) : la silhouette ET les marqueurs / horizon / reperes
+            // cardinaux le suivent. cyH reste le vrai centre ecran (reticule).
+            // reliefZoom=1 + reliefVOff=0 -> projection identique au defaut.
+            var f = ((W / 2) / Math.tan((hfov / 2) * Math.PI / 180)) * reliefZoom;
             var cx = W / 2, cyH = H / 2;
+            var cyW = cyH + reliefVOff * H;
+            var halfFov = (hfov / 2) / reliefZoom;
             // Silhouette MNT en premier (sous les marqueurs et l'horizon)
-            drawRelief(g, W, H, f, cx, cyH);
+            drawRelief(g, W, H, f, cx, cyW);
             // horizon + reticule + cap
-            var hy = cyH + f * Math.tan(pitch * Math.PI / 180);
+            var hy = cyW + f * Math.tan(pitch * Math.PI / 180);
             g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 1;
             g.beginPath(); g.moveTo(0, hy); g.lineTo(W, hy); g.stroke();
             g.strokeStyle = 'rgba(255,255,255,0.6)';
@@ -1771,7 +1787,7 @@
             g.font = 'bold 13px Segoe UI'; g.textAlign = 'center';
             for (var cdir = 0; cdir < 360; cdir += 45) {
                 var ca = ((cdir - heading + 540) % 360) - 180;
-                if (Math.abs(ca) <= hfov / 2) {
+                if (Math.abs(ca) <= halfFov) {
                     var cxp = cx + f * Math.tan(ca * Math.PI / 180);
                     g.fillStyle = 'rgba(255,255,255,0.75)';
                     g.fillText(card(cdir), cxp, 60);
@@ -1789,14 +1805,14 @@
             var visible = [];
             items.forEach(function(it) {
                 var a = ((it.bearing - heading + 540) % 360) - 180;
-                if (Math.abs(a) > hfov / 2) return;
+                if (Math.abs(a) > halfFov) return;
                 var x = cx + f * Math.tan(a * Math.PI / 180);
-                var y = cyH - f * Math.tan((it.ang - pitch) * Math.PI / 180);
+                var y = cyW - f * Math.tan((it.ang - pitch) * Math.PI / 180);
                 y = Math.max(8, Math.min(H - 12, y));
                 var col = _vsPtCol(it.kind, it.dist, R);
                 var rr = Math.max(7, 11 - 4 * Math.min(1, it.dist / R));
                 var distScore = 1 - Math.min(1, it.dist / R);            // 1 proche, 0 loin
-                var centerScore = 1 - Math.abs(a) / (hfov / 2);          // 1 centre, 0 bord
+                var centerScore = 1 - Math.abs(a) / halfFov;             // 1 centre, 0 bord
                 var kindScore = (it.kind === 'cible') ? 0.95
                               : (it.kind === 'patri') ? 1.0
                               : 0.85;
@@ -1833,7 +1849,7 @@
             }).forEach(function(p) {
                 var it = p.it, x = p.x, y = p.y, rr = p.rr, col = p.col;
                 // Tige d'ancrage vers la skyline (ou ligne d'horizon)
-                var stemY = cyH + f * Math.tan(-pitch * Math.PI / 180);
+                var stemY = cyW + f * Math.tan(-pitch * Math.PI / 180);
                 if (res.rayProf && res.rayProf.length) {
                     var nearest = null, bd = 999;
                     for (var ri = 0; ri < res.rayProf.length; ri++) {
@@ -1841,7 +1857,7 @@
                         if (diff < bd) { bd = diff; nearest = res.rayProf[ri]; }
                     }
                     if (nearest && nearest.sky && nearest.sky.ang > it.ang - 2) {
-                        stemY = cyH - f * Math.tan((nearest.sky.ang - pitch) * Math.PI / 180);
+                        stemY = cyW - f * Math.tan((nearest.sky.ang - pitch) * Math.PI / 180);
                     }
                 }
                 if (stemY > y + 3) {
@@ -2111,6 +2127,62 @@
             ctx.fillText('R = ' + rkm, mcx, H - 14);
         }
         function schedule() { if (!raf && !dead) raf = requestAnimationFrame(draw); }
+        // Carte de detail d'un repere, ouverte en tapant une ligne de la liste.
+        function showItemDetail(it) {
+            if (!it) return;
+            var ex = ov.querySelector('#pwaCamItemDetail');
+            if (ex) ex.remove();
+            var KL = { peak: 'Sommet', col: 'Col / brèche', village: 'Village',
+                lac: 'Lac', patri: 'Patrimoine', cible: 'Point personnel' };
+            var kc = _vsPtCol(it.kind, it.dist, R);
+            var crd = ['N','NE','E','SE','S','SO','O','NO']
+                [Math.round((((it.bearing % 360) + 360) % 360) / 45) % 8];
+            var d = document.createElement('div');
+            d.id = 'pwaCamItemDetail';
+            d.style.cssText = 'position:absolute;left:50%;top:50%;'
+                + 'transform:translate(-50%,-50%);z-index:16;'
+                + 'background:rgba(20,26,34,0.97);color:#fff;border-radius:12px;'
+                + 'padding:14px 16px;font:13px Segoe UI;min-width:248px;max-width:86vw;'
+                + 'box-shadow:0 6px 26px rgba(0,0,0,0.6);';
+            function row(l, v) {
+                return '<div style="display:flex;justify-content:space-between;'
+                    + 'gap:16px;padding:3px 0;"><span style="opacity:0.62;">' + l
+                    + '</span><span style="font-weight:600;text-align:right;">' + v
+                    + '</span></div>';
+            }
+            var h = '<div style="display:flex;align-items:center;gap:8px;'
+                + 'margin-bottom:8px;"><span style="color:' + kc
+                + ';font-size:17px;line-height:1;">●</span>'
+                + '<span style="flex:1;font-weight:700;font-size:15px;">'
+                + escapeHtml(it.name) + '</span>'
+                + '<button id="pwaCamItemX" style="background:none;border:none;'
+                + 'color:#fff;font-size:21px;cursor:pointer;line-height:1;'
+                + 'padding:0 2px;">×</button></div>';
+            h += row('Type', KL[it.kind] || it.kind);
+            h += row('Distance', dTxt(it.dist));
+            h += row('Direction', Math.round(((it.bearing % 360) + 360) % 360)
+                + '° (' + crd + ')');
+            if (it.elev != null) h += row('Altitude', it.elev + ' m');
+            if (it.ang != null) h += row('Hauteur vue',
+                (it.ang > 0 ? '+' : '') + it.ang.toFixed(1) + '°');
+            if (it.lat != null && it.lon != null) h += row('Coordonnées',
+                it.lat.toFixed(5) + ', ' + it.lon.toFixed(5));
+            h += '<button id="pwaCamItemAim" style="width:100%;margin-top:11px;'
+                + 'background:#fff;color:#1a2530;border:none;border-radius:7px;'
+                + 'padding:9px;cursor:pointer;font:700 12px Segoe UI;">'
+                + 'Caler le cap sur ce repère</button>';
+            d.innerHTML = h;
+            ov.appendChild(d);
+            d.querySelector('#pwaCamItemX').onclick = function() { d.remove(); };
+            d.querySelector('#pwaCamItemAim').onclick = function() {
+                if (!haveHeading) { showToast('Pas de cap detecte.', 3000); return; }
+                headingOffset = ((it.bearing - rawHeading + 540) % 360) - 180;
+                saveOff(); applyOffset();
+                smX = null; smY = null; lastShownCap = null; tick();
+                showToast('Cap calé sur ' + it.name, 3000);
+                d.remove();
+            };
+        }
         function refreshList() {
             var inFov = items.filter(function(it) {
                 var a = Math.abs(((it.bearing - heading + 540) % 360) - 180);
@@ -2124,19 +2196,26 @@
                        col: '∨', village: '⌂', lac: '≈' };
             list.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">Dans la '
                 + 'direction (cap ' + Math.round(heading) + '° ' + card(heading) + ') — '
-                + inFov.length + ' element(s)</div>'
-                + (inFov.length ? inFov.map(function(it) {
+                + inFov.length + ' element(s)'
+                + (inFov.length ? ' · touche une ligne pour le détail' : '') + '</div>'
+                + (inFov.length ? inFov.map(function(it, idx) {
                     var off = Math.round(it._off);
                     var ar = off < -1 ? ('‹ ' + (-off) + '°')
                         : off > 1 ? (off + '° ›') : '◉ face';
-                    return '<div style="display:flex;gap:8px;align-items:center;'
-                        + 'padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.12);">'
+                    return '<div data-li="' + idx + '" style="display:flex;gap:8px;'
+                        + 'align-items:center;padding:6px 0;cursor:pointer;'
+                        + 'border-bottom:1px solid rgba(255,255,255,0.12);">'
                         + '<span style="width:54px;color:#cfd8dc;">' + ar + '</span>'
                         + '<span style="width:14px;color:' + _vsPtCol(it.kind, it.dist, R) + ';">'
                         + (gl[it.kind] || '●') + '</span>'
                         + '<span style="flex:1;">' + escapeHtml(it.name) + '</span>'
-                        + '<span style="color:#b0bec5;">' + dTxt(it.dist) + '</span></div>';
+                        + '<span style="color:#b0bec5;">' + dTxt(it.dist) + ' ›</span></div>';
                 }).join('') : '<div style="opacity:0.7;">Rien de visible dans cette direction.</div>');
+            list.querySelectorAll('[data-li]').forEach(function(rw) {
+                rw.onclick = function() {
+                    showItemDetail(inFov[parseInt(rw.dataset.li, 10)]);
+                };
+            });
         }
         var listOpen = false;
         function tick() { schedule(); if (listOpen) refreshList(); }
@@ -2657,7 +2736,12 @@
                 + 'margin-bottom:10px;"><span style="width:88px;">Zoom relief</span>'
                 + '<input type="range" id="pwaCamCalibZ" min="40" max="180" step="1" '
                 + 'value="' + Math.round(reliefZoom * 100) + '" style="flex:1;"></div>'
-                + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+                + '<div style="display:flex;gap:8px;justify-content:flex-end;'
+                + 'flex-wrap:wrap;">'
+                + '<button id="pwaCamCalibRst" style="background:rgba(255,255,255,0.15);'
+                + 'color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:6px;'
+                + 'padding:8px 12px;cursor:pointer;font:600 12px Segoe UI;'
+                + 'margin-right:auto;">Réinitialiser</button>'
                 + '<button id="pwaCamCalibX" style="background:rgba(255,255,255,0.18);'
                 + 'color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:6px;'
                 + 'padding:8px 14px;cursor:pointer;font:600 12px Segoe UI;">'
@@ -2696,6 +2780,17 @@
                 try { localStorage.setItem('pwaVScamReliefZoom',
                     String(reliefZoom)); } catch(_e) {}
                 schedule();
+            };
+            // Reinitialiser le calage du relief : zoom 100 %, decalage 0,
+            // retour a la vue par defaut. Reconstruit le panneau.
+            calibPane.querySelector('#pwaCamCalibRst').onclick = function() {
+                reliefZoom = 1; reliefVOff = 0;
+                try {
+                    localStorage.removeItem('pwaVScamReliefZoom');
+                    localStorage.removeItem('pwaVScamReliefVOff');
+                } catch(_e) {}
+                enterCalib(calibAz);
+                showToast('Calage du relief reinitialise', 2500);
             };
             // Etat visuel du bouton Relief : actif et verrouille en mode calage
             var b = hud.querySelector('#pwaCamRelief');
@@ -3598,8 +3693,8 @@
                     pk.forEach(function(p) {
                         L.circleMarker([p.lat, p.lon], {
                             radius: 4, weight: 2, color: '#fff',
-                            fillColor: p.visible ? '#8a5a2b' : '#9aa3a3', fillOpacity: 1
-                        }).bindPopup('▲ ' + escapeHtml(p.name)
+                            fillColor: _vsPeakDotCol(p), fillOpacity: 1
+                        }).bindPopup(_vsPeakGlyph(p.nature) + ' ' + escapeHtml(p.name)
                             + (p.elev ? '<br>' + p.elev + ' m' : '')
                             + '<br>' + (p.visible ? 'VISIBLE' : 'masque')
                             + ' · ' + Math.round(p.dist) + ' m').addTo(_vsLayer);
@@ -4729,8 +4824,8 @@
         (v.peaks || []).forEach(function(p) {
             L.circleMarker([p.lat, p.lon], {
                 radius: 4, weight: 2, color: '#fff',
-                fillColor: p.visible ? '#8a5a2b' : '#9aa3a3', fillOpacity: 1
-            }).bindPopup('▲ ' + escapeHtml(p.name) + (p.elev ? '<br>' + p.elev + ' m' : '')
+                fillColor: _vsPeakDotCol(p), fillOpacity: 1
+            }).bindPopup(_vsPeakGlyph(p.nature) + ' ' + escapeHtml(p.name) + (p.elev ? '<br>' + p.elev + ' m' : '')
                 + '<br>' + (p.visible ? 'VISIBLE' : 'masque') + ' · '
                 + Math.round(p.dist) + ' m').addTo(g);
         });
