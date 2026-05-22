@@ -1053,8 +1053,8 @@
             return 'rgb(' + mix(214, 200) + ',' + mix(20, 165) + ',' + mix(120, 190) + ')';
         if (kind === 'col')       // violet ardoise
             return 'rgb(' + mix(111, 170) + ',' + mix(97, 160) + ',' + mix(150, 196) + ')';
-        if (kind === 'village')   // terracotta
-            return 'rgb(' + mix(176, 206) + ',' + mix(78, 150) + ',' + mix(42, 120) + ')';
+        if (kind === 'village')   // rouge brique
+            return 'rgb(' + mix(190, 212) + ',' + mix(56, 150) + ',' + mix(46, 142) + ')';
         if (kind === 'lac')       // bleu
             return 'rgb(' + mix(47, 150) + ',' + mix(127, 186) + ',' + mix(176, 212) + ')';
         return 'rgb(' + mix(20, 150) + ',' + mix(150, 182) + ',' + mix(60, 172) + ')';
@@ -1357,7 +1357,7 @@
             patri:   ['#eebd55', '#a07820'],   // ocre
             cible:   ['#6a83a0', '#2e4256'],   // ardoise
             col:     ['#9a86c8', '#5f5286'],   // violet ardoise
-            village: ['#cc7a4a', '#8f4824'],   // terracotta
+            village: ['#d9544a', '#9c2e25'],   // rouge brique
             lac:     ['#5aa8d8', '#2c6f9e']    // bleu
         };
         // 9 pictogrammes : sommet + 7 patrimoine + cible.
@@ -1436,12 +1436,10 @@
             col: {
                 white: P('M -6 -14 L 6 -14 L 0 -8 Z M -6 -2 L 6 -2 L 0 -8 Z')
             },
-            // Village / hameau : maison + campanile (toit pointu a droite)
+            // Village / hameau : maison simple (toit + porte)
             village: {
-                white: P('M -7 -1 L -7 -7 L -2.5 -11 L 2 -7 L 2 -1 Z'
-                    + ' M 2 -1 L 2 -12.5 L 6 -12.5 L 6 -1 Z'
-                    + ' M 1.4 -12.5 L 4 -15 L 6.6 -12.5 Z'),
-                dark:  P('M -3.3 -1 L -1.3 -1 L -1.3 -4.6 L -3.3 -4.6 Z')
+                white: P('M -6.5 -1 L -6.5 -7 L 0 -13 L 6.5 -7 L 6.5 -1 Z'),
+                dark:  P('M -1.9 -1 L 1.9 -1 L 1.9 -5.4 L -1.9 -5.4 Z')
             },
             // Lac / plan d'eau : goutte
             lac: {
@@ -1891,7 +1889,7 @@
                 var col = (it.kind === 'patri') ? '#ff66b3'
                     : (it.kind === 'peak') ? '#ffd24a'
                     : (it.kind === 'col') ? '#b9a6e0'
-                    : (it.kind === 'village') ? '#e89a5e'
+                    : (it.kind === 'village') ? '#e8685a'
                     : (it.kind === 'lac') ? '#5ac8ee' : '#88c0d0';
                 var mk = L.circleMarker([it.lat, it.lon], {
                     radius: 3.5, color: '#000', fillColor: col,
@@ -2273,7 +2271,7 @@
         var CAT_DEFS = [
             { k: 'peak',    label: 'Sommets',        gl: '▲', col: '#d47540' },
             { k: 'col',     label: 'Cols / brèches', gl: '∨', col: '#9a86c8' },
-            { k: 'village', label: 'Villages',       gl: '⌂', col: '#cc7a4a' },
+            { k: 'village', label: 'Villages',       gl: '⌂', col: '#d9544a' },
             { k: 'lac',     label: 'Lacs',           gl: '≈', col: '#5aa8d8' },
             { k: 'patri',   label: 'Patrimoine',     gl: '◆', col: '#e0458f' },
             { k: 'cible',   label: 'Mes points',     gl: '●', col: '#2e9e54' }
@@ -3067,8 +3065,7 @@
     // Noms de montagnes/sommets dans le rayon, projetes sur la vue tangentielle.
     // Reperes identifiables visibles depuis le point de vue, via OpenStreetMap
     // (API Overpass, sans cle, bien couverte sur la Corse) :
-    //  - sommets et volcans (natural=peak/volcano), NOMMES ou etiquetes par
-    //    altitude ("Sommet 1240 m") -> couvre aussi les reliefs mineurs ;
+    //  - sommets et volcans (natural=peak/volcano), UNIQUEMENT NOMMES ;
     //  - cols et breches (natural=saddle, mountain_pass) ;
     //  - villages et hameaux (place=town/village/hamlet) ;
     //  - lacs et plans d'eau nommes (natural=water).
@@ -3081,8 +3078,8 @@
         var bbox = s.toFixed(5) + ',' + w.toFixed(5) + ','
             + n.toFixed(5) + ',' + e.toFixed(5);
         var q = '[out:json][timeout:25];('
-            + 'node["natural"="peak"](' + bbox + ');'
-            + 'node["natural"="volcano"](' + bbox + ');'
+            + 'node["natural"="peak"]["name"](' + bbox + ');'
+            + 'node["natural"="volcano"]["name"](' + bbox + ');'
             + 'node["natural"="saddle"](' + bbox + ');'
             + 'node["mountain_pass"="yes"](' + bbox + ');'
             + 'node["place"~"^(town|village|hamlet)$"](' + bbox + ');'
@@ -3129,10 +3126,7 @@
                             if (!nm) return;
                         } else if (tg.natural === 'volcano' || tg.natural === 'peak') {
                             nature = (tg.natural === 'volcano') ? 'volcano' : 'peak';
-                            if (!nm && osmEle != null) {
-                                nm = 'Sommet ' + Math.round(osmEle) + ' m'; eleInName = true;
-                            }
-                            if (!nm) return;  // sommet sans nom ni altitude : non reperable
+                            if (!nm) return;  // sommet non nomme : ignore
                         } else { return; }
                         var d = _vsDist(res.lat, res.lon, lat, lon);
                         if (d < 25 || d > res.radiusM) return;       // hors rayon
