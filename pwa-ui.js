@@ -1111,6 +1111,7 @@
         canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
             + 'pointer-events:none;';
         var hud = document.createElement('div');
+        hud.id = 'pwaCamHud';
         hud.style.cssText = 'position:absolute;top:0;left:0;right:0;z-index:20;'
             + 'display:flex;align-items:center;gap:10px;padding:8px 12px;color:#fff;'
             + 'background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0));font:600 14px Segoe UI;';
@@ -1123,7 +1124,7 @@
             + '<button id="pwaCamPlus" title="Decaler +1deg" style="background:rgba(255,255,255,0.15);'
             + 'color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:6px;padding:4px 8px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">+1°</button>'
-            + '<span style="flex:1"></span>'
+            + '<span id="pwaCamHudSpacer" style="flex:1"></span>'
             + '<button id="pwaCamRelief" title="Superposer la silhouette du relief calcule" '
             + 'style="background:rgba(255,100,180,0.2);color:#fff;border:1px solid rgba(255,100,180,0.5);'
             + 'border-radius:6px;padding:6px 10px;cursor:pointer;font:600 12px Segoe UI;">Relief</button>'
@@ -1205,6 +1206,7 @@
         // Bandeau de calage par perspective (visible seulement en mode calage).
         // left:155px pour ne pas recouvrir la mini-carte (toujours visible).
         var calibPane = document.createElement('div');
+        calibPane.id = 'pwaCamCalibPane';
         calibPane.style.cssText = 'position:absolute;left:155px;right:0;bottom:0;'
             + 'background:linear-gradient(rgba(0,0,0,0),rgba(168,58,138,0.88));'
             + 'color:#fff;padding:14px 16px 16px;font:13px Segoe UI;display:none;'
@@ -1214,6 +1216,28 @@
         ov.appendChild(miniMap);
         var fe = document.fullscreenElement || document.webkitFullscreenElement;
         (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
+        // Masque les controles de la carte (recherche/loupe, boutons
+        // flottants, gestion rasters, badge en ligne, position, zoom
+        // Leaflet...) tant que la vue camera est ouverte : ils passaient
+        // PAR-DESSUS le flux camera et genaient la visibilite. Rend aussi le
+        // HUD adaptatif : il s'enroule et se compacte en portrait, pour que
+        // la vue camera soit utilisable telephone tenu a la verticale.
+        // Style retire a la fermeture (close()).
+        var camStyle = document.createElement('style');
+        camStyle.id = 'pwaCamStyle';
+        camStyle.textContent =
+            '#searchContainer,#floatingButtons,#lexiquePanel,#rasterMgrBtn,'
+          + '#panelToggle,#pwaStatusBadge,#pwaPosBtn,.leaflet-control-container'
+          + '{display:none !important;}'
+          + '#pwaCamHud{flex-wrap:wrap !important;}'
+          + '@media (orientation:portrait){'
+          + '#pwaCamHud{gap:6px !important;padding:6px 8px !important;}'
+          + '#pwaCamHud button:not(#pwaCamPhoto)'
+          + '{padding:5px 9px !important;font-size:11px !important;}'
+          + '#pwaCamHudSpacer{display:none !important;}'
+          + '#pwaCamCalibPane{left:0 !important;}'
+          + '}';
+        document.head.appendChild(camStyle);
         // Init Leaflet une fois le conteneur dans le DOM (sinon size=0)
         setTimeout(function() { if (!dead) initMiniMap(); }, 30);
         // Rafraichissement appele par l'enrichissement asynchrone (sommets
@@ -1901,7 +1925,13 @@
                 });
                 miniLMap.on('click', function(e) {
                     if (calibAz != null) {
-                        showToast('Valide d\'abord le calage perspective', 3500);
+                        // Mode calage : tape la mini-carte pour deplacer la
+                        // silhouette sur cette direction (autre point de vue).
+                        var cb = _vsBearing(res.lat, res.lon,
+                            e.latlng.lat, e.latlng.lng);
+                        setCalibAz(cb);
+                        showToast('Silhouette deplacee : azimut '
+                            + Math.round(cb) + '°', 2500);
                         return;
                     }
                     if (!haveHeading) {
@@ -2456,23 +2486,52 @@
                     showRelief ? 'rgba(255,100,180,0.65)' : 'rgba(255,100,180,0.2)';
             }
         }
+        // Carte des points cardinaux pour un azimut.
+        function _calibAzStr(a) {
+            return Math.round(a) + '° '
+                + ['N','NE','E','SE','S','SO','O','NO'][Math.round(a / 45) % 8];
+        }
+        // Deplace la silhouette de calage : change l'azimut fige (calibAz)
+        // pour que l'utilisateur puisse choisir un autre point de vue et
+        // caler sur un relief plus reconnaissable. Met a jour l'affichage
+        // (azimut + curseur) puis redessine. Appele par les fleches, le
+        // curseur du panneau, et le tap sur la mini-carte.
+        function setCalibAz(az) {
+            if (calibAz == null) return;
+            calibAz = ((Math.round(az) % 360) + 360) % 360;
+            var azEl = calibPane.querySelector('#pwaCamCalibAz');
+            if (azEl) azEl.textContent = _calibAzStr(calibAz);
+            var sl = calibPane.querySelector('#pwaCamCalibSl');
+            if (sl && parseInt(sl.value, 10) !== calibAz) sl.value = String(calibAz);
+            schedule();
+        }
         // Entre dans le mode calage silhouette : la silhouette du relief
-        // calcule est figee a l'azimut az ; l'utilisateur tourne le
+        // calcule est figee a l'azimut calibAz ; l'utilisateur tourne le
         // telephone pour la faire coincider avec le relief reel, puis valide.
-        // Appele a l'ouverture (opts.calibAz) ou depuis le modal Calibrer.
+        // La silhouette est DEPLACABLE (curseur / fleches / tap mini-carte)
+        // pour choisir un autre point de vue de calage. Appele a l'ouverture
+        // (opts.calibAz) ou depuis le modal Calibrer.
         function enterCalib(az) {
             calibAz = ((az % 360) + 360) % 360;
             showRelief = true;
             calibPane.style.display = 'block';
-            var azStr = Math.round(calibAz) + '° '
-                + ['N','NE','E','SE','S','SO','O','NO']
-                  [Math.round(((calibAz % 360) / 45)) % 8];
+            var btnCss = 'background:rgba(255,255,255,0.2);color:#fff;'
+                + 'border:1px solid rgba(255,255,255,0.45);border-radius:6px;'
+                + 'padding:4px 12px;cursor:pointer;font:700 15px Segoe UI;line-height:1;';
             calibPane.innerHTML = '<div style="font-weight:700;font-size:14px;'
-                + 'margin-bottom:6px;">Calage sur la perspective (azimut ' + azStr + ')</div>'
-                + '<div style="font-size:12px;opacity:0.95;margin-bottom:10px;">'
-                + 'La silhouette rose est figee au centre. Tourne le téléphone pour '
-                + 'que le RELIEF REEL derriere la camera epouse cette silhouette, '
-                + 'puis valide.</div>'
+                + 'margin-bottom:6px;">Calage sur la perspective — azimut '
+                + '<span id="pwaCamCalibAz">' + _calibAzStr(calibAz) + '</span></div>'
+                + '<div style="font-size:12px;opacity:0.95;margin-bottom:8px;">'
+                + 'Tourne le téléphone pour que le RELIEF REEL epouse la '
+                + 'silhouette rose. Deplace la silhouette (curseur, fleches ou '
+                + 'tape la mini-carte) pour caler sur un relief plus reconnaissable.</div>'
+                + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">'
+                + '<button id="pwaCamCalibL" title="Tourner la silhouette vers la gauche" '
+                + 'style="' + btnCss + '">◄</button>'
+                + '<input type="range" id="pwaCamCalibSl" min="0" max="359" step="1" '
+                + 'value="' + calibAz + '" style="flex:1;">'
+                + '<button id="pwaCamCalibR" title="Tourner la silhouette vers la droite" '
+                + 'style="' + btnCss + '">►</button></div>'
                 + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
                 + '<button id="pwaCamCalibX" style="background:rgba(255,255,255,0.18);'
                 + 'color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:6px;'
@@ -2488,6 +2547,14 @@
                 headingOffset = ((target - rawHeading + 540) % 360) - 180;
                 saveOff(); applyOffset(); tick();
                 exitCalib();
+            };
+            var sl = calibPane.querySelector('#pwaCamCalibSl');
+            if (sl) sl.oninput = function() { setCalibAz(parseInt(this.value, 10) || 0); };
+            calibPane.querySelector('#pwaCamCalibL').onclick = function() {
+                setCalibAz(calibAz - 5);
+            };
+            calibPane.querySelector('#pwaCamCalibR').onclick = function() {
+                setCalibAz(calibAz + 5);
             };
             // Etat visuel du bouton Relief : actif et verrouille en mode calage
             var b = hud.querySelector('#pwaCamRelief');
@@ -2788,6 +2855,7 @@
             try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
             try { if (miniLMap) { miniLMap.remove(); miniLMap = null; } } catch(_e) {}
             try { res._setCamItems = null; } catch(_e) {}
+            try { camStyle.remove(); } catch(_e) {}
             ov.remove();
         }
         hud.querySelector('#pwaCamX').onclick = close;
