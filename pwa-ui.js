@@ -2947,8 +2947,13 @@
     }
 
     // Noms de montagnes/sommets dans le rayon, projetes sur la vue tangentielle.
-    // Source : OpenStreetMap (natural=peak / volcano) via l'API Overpass —
-    // base de reference des sommets nommes, sans cle, bien couverte sur la Corse.
+    // Reperes identifiables visibles depuis le point de vue, via OpenStreetMap
+    // (API Overpass, sans cle, bien couverte sur la Corse) :
+    //  - sommets et volcans (natural=peak/volcano), NOMMES ou etiquetes par
+    //    altitude ("Sommet 1240 m") -> couvre aussi les reliefs mineurs ;
+    //  - cols et breches (natural=saddle, mountain_pass) ;
+    //  - villages et hameaux (place=town/village/hamlet) ;
+    //  - lacs et plans d'eau nommes (natural=water).
     // Reseau requis (deja le cas pour l'altimetrie). Echec silencieux.
     function _vsFetchPeaks(res, done) {
         function fin(arr) { res.peaks = arr || []; if (done) done(res.peaks); }
@@ -2958,9 +2963,14 @@
         var bbox = s.toFixed(5) + ',' + w.toFixed(5) + ','
             + n.toFixed(5) + ',' + e.toFixed(5);
         var q = '[out:json][timeout:25];('
-            + 'node["natural"="peak"]["name"](' + bbox + ');'
-            + 'node["natural"="volcano"]["name"](' + bbox + ');'
-            + ');out body;';
+            + 'node["natural"="peak"](' + bbox + ');'
+            + 'node["natural"="volcano"](' + bbox + ');'
+            + 'node["natural"="saddle"](' + bbox + ');'
+            + 'node["mountain_pass"="yes"](' + bbox + ');'
+            + 'node["place"~"^(town|village|hamlet)$"](' + bbox + ');'
+            + 'node["natural"="water"]["name"](' + bbox + ');'
+            + 'way["natural"="water"]["name"](' + bbox + ');'
+            + ');out center;';
         function tryHost(idx) {
             if (idx >= VS_OVERPASS.length) { fin([]); return; }
             var ac = (typeof AbortController === 'function') ? new AbortController() : null;
@@ -2974,50 +2984,87 @@
                     var els = (j && j.elements) || [];
                     var cand = [];
                     els.forEach(function(el) {
-                        if (el.type !== 'node' || el.lat == null) return;
                         var tg = el.tags || {};
-                        var nm = tg.name;
-                        if (!nm) return;
-                        var d = _vsDist(res.lat, res.lon, el.lat, el.lon);
-                        if (d < 25 || d > res.radiusM) return;  // hors rayon
-                        if (!res.full) {                        // hors secteur
-                            var pb = _vsBearing(res.lat, res.lon, el.lat, el.lon);
+                        // Noeud : coords directes ; way : centre (out center).
+                        var lat = (el.lat != null) ? el.lat
+                            : (el.center ? el.center.lat : null);
+                        var lon = (el.lon != null) ? el.lon
+                            : (el.center ? el.center.lon : null);
+                        if (lat == null || lon == null) return;
+                        var osmEle = parseFloat(tg.ele);
+                        if (!isFinite(osmEle)) osmEle = null;
+                        // Nature + libelle auto-descriptif. eleInName = true
+                        // quand l'altitude est deja dans le nom (-> on ne la
+                        // re-affichera pas via le champ elev).
+                        var nature, nm = tg.name, eleInName = false;
+                        if (tg.place) {
+                            nature = 'village';
+                            if (!nm) return;
+                        } else if (tg.natural === 'water') {
+                            nature = 'water';
+                            if (!nm) return;
+                        } else if (tg.natural === 'saddle' || tg.mountain_pass === 'yes') {
+                            nature = 'col';
+                            if (!nm && osmEle != null) {
+                                nm = 'Col ' + Math.round(osmEle) + ' m'; eleInName = true;
+                            }
+                            if (!nm) return;
+                        } else if (tg.natural === 'volcano' || tg.natural === 'peak') {
+                            nature = (tg.natural === 'volcano') ? 'volcano' : 'peak';
+                            if (!nm && osmEle != null) {
+                                nm = 'Sommet ' + Math.round(osmEle) + ' m'; eleInName = true;
+                            }
+                            if (!nm) return;  // sommet sans nom ni altitude : non reperable
+                        } else { return; }
+                        var d = _vsDist(res.lat, res.lon, lat, lon);
+                        if (d < 25 || d > res.radiusM) return;       // hors rayon
+                        if (!res.full) {                              // hors secteur
+                            var pb = _vsBearing(res.lat, res.lon, lat, lon);
                             var dd = Math.abs(((pb - res.azC + 540) % 360) - 180);
                             if (dd > res.azW / 2) return;
                         }
-                        cand.push({ name: String(nm), lat: el.lat, lon: el.lon,
-                                    dist: d, nature: tg.natural || 'peak' });
+                        cand.push({ name: String(nm), lat: lat, lon: lon, dist: d,
+                                    nature: nature, osmEle: osmEle, eleInName: eleInName });
                     });
                     cand.sort(function(a, c) { return a.dist - c.dist; });
-                    cand = cand.slice(0, 60);
+                    cand = cand.slice(0, 150);
                     if (!cand.length) { fin([]); return; }
                     onCand(cand);
                 }).catch(function() { clearTimeout(to); tryHost(idx + 1); });
         }
         function onCand(cand) {
-                _vsFetchElev(cand.map(function(p) { return [p.lat, p.lon]; }))
-                    .then(function(pe) {
-                        var obsTot = res.obsElev + res.obsH;
-                        var nR = res.nRays, N = res.N, st = res.stepM;
-                        var gate = Math.max(res.rayStep || 2, 1.5);
-                        var out = cand.map(function(p, i) {
-                            var pz = pe[i] - _vsCurv(p.dist);
-                            var pang = Math.atan2(pz - obsTot, p.dist) * 180 / Math.PI;
-                            var pbear = _vsBearing(res.lat, res.lon, p.lat, p.lon);
-                            var best = null, bd = 999, r;
-                            for (r = 0; r < nR; r++) {
-                                var diff = Math.abs(((rp[r].bearing - pbear + 540) % 360) - 180);
-                                if (diff < bd) { bd = diff; best = rp[r]; }
-                            }
-                            var ki = Math.min(N - 1, Math.max(0, Math.round(p.dist / st) - 1));
-                            var blk = (best && best.maxAng[ki] != null) ? best.maxAng[ki] : -90;
-                            return { name: p.name, lat: p.lat, lon: p.lon, dist: p.dist,
-                                     nature: p.nature, bearing: pbear, ang: pang,
-                                     elev: Math.round(pe[i]),
-                                     visible: (bd <= gate) && (pang >= blk + 0.05) };
-                        });
-                        fin(out);
-                    }).catch(function() { fin([]); });
+            // Altimetrie : on reutilise l'altitude OSM quand elle existe (la
+            // plupart des sommets/cols) et on n'interroge l'IGN que pour les
+            // points qui n'en ont pas -> limite les requetes (risque de 429).
+            var needIdx = [], needPts = [];
+            cand.forEach(function(p, i) {
+                if (p.osmEle == null) { needIdx.push(i); needPts.push([p.lat, p.lon]); }
+            });
+            var elevP = needPts.length ? _vsFetchElev(needPts) : Promise.resolve([]);
+            elevP.then(function(fetched) {
+                var pe = cand.map(function(p) { return p.osmEle; });
+                needIdx.forEach(function(ci, k) { pe[ci] = fetched[k]; });
+                var obsTot = res.obsElev + res.obsH;
+                var nR = res.nRays, N = res.N, st = res.stepM;
+                var gate = Math.max(res.rayStep || 2, 1.5);
+                var out = cand.map(function(p, i) {
+                    var pz = pe[i] - _vsCurv(p.dist);
+                    var pang = Math.atan2(pz - obsTot, p.dist) * 180 / Math.PI;
+                    var pbear = _vsBearing(res.lat, res.lon, p.lat, p.lon);
+                    var best = null, bd = 999, r;
+                    for (r = 0; r < nR; r++) {
+                        var diff = Math.abs(((rp[r].bearing - pbear + 540) % 360) - 180);
+                        if (diff < bd) { bd = diff; best = rp[r]; }
+                    }
+                    var ki = Math.min(N - 1, Math.max(0, Math.round(p.dist / st) - 1));
+                    var blk = (best && best.maxAng[ki] != null) ? best.maxAng[ki] : -90;
+                    return { name: p.name, lat: p.lat, lon: p.lon, dist: p.dist,
+                             nature: p.nature, bearing: pbear, ang: pang,
+                             elev: (p.eleInName || !isFinite(pe[i])) ? null : Math.round(pe[i]),
+                             visible: (bd <= gate) && (pang >= blk + 0.05) };
+                });
+                fin(out);
+            }).catch(function() { fin([]); });
         }
         tryHost(0);
     }
@@ -3427,7 +3474,7 @@
                         if (typeof res._setCamItems === 'function') res._setCamItems();
                     }
                     var msg = [];
-                    if (pk && pk.length) msg.push(pk.length + ' sommet(s)');
+                    if (pk && pk.length) msg.push(pk.length + ' repere(s) (sommets, cols, villages, lacs)');
                     if (pa && pa.length) msg.push(pa.length + ' patrimoine');
                     if (msg.length) showToast(msg.join(' · ') + ' ajoutes a la vue.', 4500);
                 });
@@ -4020,7 +4067,7 @@
             '</div>' +
             '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance. '
             + (res.targets ? res.targets.length : 0) + ' point(s) proche(s) · ' + nVis + ' visible(s)'
-            + ((res.peaks && res.peaks.length) ? ' · ' + res.peaks.length + ' sommet(s) nomme(s)' : '') + '.</div>' +
+            + ((res.peaks && res.peaks.length) ? ' · ' + res.peaks.length + ' repere(s) (sommets, cols, villages, lacs)' : '') + '.</div>' +
             (res.perspectiveURL ? '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
             '<button id="pwaVSmCyl" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#8b4513;color:#fff;">Panoramique</button>' +
             '<button id="pwaVSmPersp" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#f0ebe3;color:#5a3a1a;">Perspective</button>' +
