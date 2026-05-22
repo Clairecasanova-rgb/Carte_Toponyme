@@ -2313,30 +2313,15 @@
                 flash.style.opacity = '0';
                 setTimeout(function() { try { flash.remove(); } catch(_e) {} }, 400);
             });
-            // 6. Export blob -> partage natif ou telechargement
+            // 6. Export blob -> enregistrement direct du fichier (pas de
+            // volet de partage : l'utilisateur veut simplement enregistrer
+            // la photo, le partage se fait ensuite depuis la galerie).
             try {
                 photo.toBlob(function(blob) {
                     if (!blob) { showToast('Capture echouee', 4000); return; }
                     var stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
                     var filename = 'vue-camera-' + stamp + '.png';
-                    var tryShare = function() {
-                        if (!(navigator.share && navigator.canShare)) return false;
-                        try {
-                            var file = new File([blob], filename, { type: 'image/png' });
-                            if (!navigator.canShare({ files: [file] })) return false;
-                            navigator.share({
-                                files: [file],
-                                title: 'Vue camera',
-                                text: capTxt + '\n' + pos
-                            }).then(function() {
-                                showToast('Photo partagee', 3000);
-                            }).catch(function() {
-                                doDownload(blob, filename);
-                            });
-                            return true;
-                        } catch(_e) { return false; }
-                    };
-                    if (!tryShare()) doDownload(blob, filename);
+                    doDownload(blob, filename);
                 }, 'image/png', 0.95);
             } catch(_e) {
                 showToast('Capture impossible (' + (_e && _e.message || _e) + ')', 5000);
