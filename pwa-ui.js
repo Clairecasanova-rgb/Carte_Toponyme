@@ -3326,6 +3326,22 @@
                         cand.push({ name: String(nm), lat: lat, lon: lon, dist: d,
                                     nature: nature, osmEle: osmEle, eleInName: eleInName });
                     });
+                    // Un meme cours d'eau / plan d'eau est souvent decoupe en
+                    // plusieurs troncons OSM portant le meme nom -> on ne garde,
+                    // par nom, que le point le plus proche : un seul marqueur
+                    // (qu'il soit visible ou masque).
+                    var bestWater = {};
+                    cand.forEach(function(c) {
+                        if (c.nature !== 'river' && c.nature !== 'water') return;
+                        var key = c.nature + '|' + c.name.toLowerCase();
+                        if (!bestWater[key] || c.dist < bestWater[key].dist) {
+                            bestWater[key] = c;
+                        }
+                    });
+                    cand = cand.filter(function(c) {
+                        if (c.nature !== 'river' && c.nature !== 'water') return true;
+                        return bestWater[c.nature + '|' + c.name.toLowerCase()] === c;
+                    });
                     cand.sort(function(a, c) { return a.dist - c.dist; });
                     cand = cand.slice(0, 150);
                     if (!cand.length) { fin([]); return; }
