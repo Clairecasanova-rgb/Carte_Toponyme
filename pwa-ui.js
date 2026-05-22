@@ -1042,7 +1042,8 @@
     function _vsKind(nature) {
         return nature === 'col' ? 'col'
              : nature === 'village' ? 'village'
-             : nature === 'water' ? 'lac' : 'peak';
+             : nature === 'water' ? 'lac'
+             : nature === 'river' ? 'river' : 'peak';
     }
     // Couleur / glyphe d'un repere OSM sur la carte planimetrique 2D
     // (pastilles _vsLayer). Masque -> gris ; sinon une couleur par categorie.
@@ -1050,12 +1051,12 @@
         if (!p || !p.visible) return '#9aa3a3';
         var k = _vsKind(p.nature);
         return k === 'col' ? '#6f5f96' : k === 'village' ? '#b5342b'
-             : k === 'lac' ? '#2f7fa0' : '#8a5a2b';
+             : k === 'lac' ? '#2f7fa0' : k === 'river' ? '#2f9a90' : '#8a5a2b';
     }
     function _vsPeakGlyph(nature) {
         var k = _vsKind(nature);
         return k === 'col' ? '∨' : k === 'village' ? '⌂'
-             : k === 'lac' ? '≈' : '▲';
+             : k === 'lac' ? '≈' : k === 'river' ? '~' : '▲';
     }
     function _vsPtCol(kind, dist, R) {
         var t = Math.max(0, Math.min(1, (dist || 0) / (R || 1)));
@@ -1070,6 +1071,8 @@
             return 'rgb(' + mix(190, 212) + ',' + mix(56, 150) + ',' + mix(46, 142) + ')';
         if (kind === 'lac')       // bleu
             return 'rgb(' + mix(47, 150) + ',' + mix(127, 186) + ',' + mix(176, 212) + ')';
+        if (kind === 'river')     // turquoise
+            return 'rgb(' + mix(38, 150) + ',' + mix(150, 200) + ',' + mix(150, 198) + ')';
         return 'rgb(' + mix(20, 150) + ',' + mix(150, 182) + ',' + mix(60, 172) + ')';
     }
     function _vsPtR(dist, R) {
@@ -1106,7 +1109,7 @@
         // (sommets / cols / villages / lacs / patrimoine / mes points).
         // Etat memorise en localStorage. catShow[k] === false -> masque.
         var catShow = { peak: true, col: true, village: true, lac: true,
-                        patri: true, cible: true };
+                        river: true, patri: true, cible: true };
         try {
             var _cs = JSON.parse(localStorage.getItem('pwaVScamCats') || '{}');
             Object.keys(catShow).forEach(function(k) {
@@ -1136,7 +1139,7 @@
         // Compte les elements visibles par categorie, INDEPENDAMMENT du filtre
         // (pour afficher "Sommets 12" meme si la categorie est masquee).
         function catCounts() {
-            var c = { peak: 0, col: 0, village: 0, lac: 0, patri: 0, cible: 0 };
+            var c = { peak: 0, col: 0, village: 0, lac: 0, river: 0, patri: 0, cible: 0 };
             (res.peaks || []).forEach(function(p) { if (p.visible) c[_vsKind(p.nature)]++; });
             (res.patrimoine || []).forEach(function(p) { if (p.visible) c.patri++; });
             (res.targets || []).forEach(function(t) { if (t.visible) c.cible++; });
@@ -1371,7 +1374,8 @@
             cible:   ['#6a83a0', '#2e4256'],   // ardoise
             col:     ['#9a86c8', '#5f5286'],   // violet ardoise
             village: ['#d9544a', '#9c2e25'],   // rouge brique
-            lac:     ['#5aa8d8', '#2c6f9e']    // bleu
+            lac:     ['#5aa8d8', '#2c6f9e'],   // bleu
+            river:   ['#48bcbc', '#1c7575']    // turquoise
         };
         // 9 pictogrammes : sommet + 7 patrimoine + cible.
         // Chaque entree : white = Path2D fill blanc, dark = Path2D fill couleur kind
@@ -1458,6 +1462,11 @@
             lac: {
                 white: P('M 0 -15 C -3 -11 -6 -8 -6 -5 C -6 -0.5 6 -0.5 6 -5 '
                     + 'C 6 -8 3 -11 0 -15 Z')
+            },
+            // Riviere / cours d'eau : ruban ondule (le flot)
+            river: {
+                white: P('M -8 -8 C -6 -11.5 -2 -11.5 0 -8 C 2 -4.5 6 -4.5 8 -8 '
+                    + 'L 8 -5.5 C 6 -2 2 -2 0 -5.5 C -2 -9 -6 -9 -8 -5.5 Z')
             }
         };
         // Detection de la sous-categorie patrimoine depuis le nom de l'element.
@@ -1483,6 +1492,7 @@
             else if (kind === 'col') { pinKind = 'col'; pictoKey = 'col'; }
             else if (kind === 'village') { pinKind = 'village'; pictoKey = 'village'; }
             else if (kind === 'lac') { pinKind = 'lac'; pictoKey = 'lac'; }
+            else if (kind === 'river') { pinKind = 'river'; pictoKey = 'river'; }
             else { pinKind = 'peak'; pictoKey = 'peak'; }
             var picto = PICTOS[pictoKey] || PICTOS['patri-fouille'];
             var pinPair = PIN_COLORS[pinKind] || PIN_COLORS.cible;
@@ -1922,7 +1932,8 @@
                     : (it.kind === 'peak') ? '#ffd24a'
                     : (it.kind === 'col') ? '#b9a6e0'
                     : (it.kind === 'village') ? '#e8685a'
-                    : (it.kind === 'lac') ? '#5ac8ee' : '#88c0d0';
+                    : (it.kind === 'lac') ? '#5ac8ee'
+                    : (it.kind === 'river') ? '#5fd6cc' : '#88c0d0';
                 var mk = L.circleMarker([it.lat, it.lon], {
                     radius: 3.5, color: '#000', fillColor: col,
                     fillOpacity: 1, weight: 1, interactive: false
@@ -2193,7 +2204,7 @@
                 return Math.abs(a._off) - Math.abs(b._off) || a.dist - b.dist;
             });
             var gl = { peak: '▲', patri: '◆', cible: '●',
-                       col: '∨', village: '⌂', lac: '≈' };
+                       col: '∨', village: '⌂', lac: '≈', river: '~' };
             list.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">Dans la '
                 + 'direction (cap ' + Math.round(heading) + '° ' + card(heading) + ') — '
                 + inFov.length + ' element(s)'
@@ -2368,6 +2379,7 @@
             { k: 'col',     label: 'Cols / brèches', gl: '∨', col: '#9a86c8' },
             { k: 'village', label: 'Villages',       gl: '⌂', col: '#d9544a' },
             { k: 'lac',     label: 'Lacs',           gl: '≈', col: '#5aa8d8' },
+            { k: 'river',   label: 'Rivières',       gl: '~', col: '#48bcbc' },
             { k: 'patri',   label: 'Patrimoine',     gl: '◆', col: '#e0458f' },
             { k: 'cible',   label: 'Mes points',     gl: '●', col: '#2e9e54' }
         ];
@@ -2813,7 +2825,7 @@
                 it._cof = ((it.bearing - rawHeading + 540) % 360) - 180; return it;
             }).sort(function(a, b) { return Math.abs(a._cof) - Math.abs(b._cof) || a.dist - b.dist; });
             var gl = { peak: '▲', patri: '◆', cible: '●',
-                       col: '∨', village: '⌂', lac: '≈' };
+                       col: '∨', village: '⌂', lac: '≈', river: '~' };
             // Azimut solaire courant (formule NOAA simplifiee, ~0.5 deg)
             // Permet de caler le cap meme sans repere identifie : il suffit
             // de pointer le soleil (ou sa direction sous nuages legers).
@@ -3203,7 +3215,9 @@
     //  - sommets et volcans (natural=peak/volcano), UNIQUEMENT NOMMES ;
     //  - cols et breches (natural=saddle, mountain_pass) ;
     //  - villages et hameaux (place=town/village/hamlet) ;
-    //  - lacs et plans d'eau nommes (natural=water).
+    //  - lacs et plans d'eau nommes (natural=water) ;
+    //  - rivieres et cours d'eau nommes (waterway), marques au point de la
+    //    ligne le plus proche de l'observateur.
     // Reseau requis (deja le cas pour l'altimetrie). Echec silencieux.
     function _vsFetchPeaks(res, done) {
         function fin(arr) { res.peaks = arr || []; if (done) done(res.peaks); }
@@ -3220,7 +3234,34 @@
             + 'node["place"~"^(town|village|hamlet)$"](' + bbox + ');'
             + 'node["natural"="water"]["name"](' + bbox + ');'
             + 'way["natural"="water"]["name"](' + bbox + ');'
-            + ');out center;';
+            + 'way["waterway"~"^(river|stream|canal)$"]["name"](' + bbox + ');'
+            + ');out geom;';
+        // Point de la polyligne le plus proche de l'observateur (espace
+        // planaire local) -> situe un cours d'eau lineaire par son point
+        // le plus proche. centroid() -> point representatif d'une surface.
+        function nearestOnLine(geom) {
+            if (!geom || geom.length < 2) {
+                return (geom && geom[0]) ? [geom[0].lat, geom[0].lon] : null;
+            }
+            var cl = Math.cos(res.lat * Math.PI / 180);
+            var best = null, bd2 = Infinity;
+            for (var i = 0; i + 1 < geom.length; i++) {
+                var ax = (geom[i].lon - res.lon) * cl, ay = geom[i].lat - res.lat;
+                var bx = (geom[i + 1].lon - res.lon) * cl, by = geom[i + 1].lat - res.lat;
+                var dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+                var t = l2 > 0 ? -(ax * dx + ay * dy) / l2 : 0;
+                t = Math.max(0, Math.min(1, t));
+                var px = ax + t * dx, py = ay + t * dy, d2 = px * px + py * py;
+                if (d2 < bd2) { bd2 = d2; best = [res.lat + py, res.lon + px / cl]; }
+            }
+            return best;
+        }
+        function centroid(geom) {
+            if (!geom || !geom.length) return null;
+            var sla = 0, slo = 0;
+            for (var i = 0; i < geom.length; i++) { sla += geom[i].lat; slo += geom[i].lon; }
+            return [sla / geom.length, slo / geom.length];
+        };
         function tryHost(idx) {
             if (idx >= VS_OVERPASS.length) { fin([]); return; }
             var ac = (typeof AbortController === 'function') ? new AbortController() : null;
@@ -3235,34 +3276,35 @@
                     var cand = [];
                     els.forEach(function(el) {
                         var tg = el.tags || {};
-                        // Noeud : coords directes ; way : centre (out center).
-                        var lat = (el.lat != null) ? el.lat
-                            : (el.center ? el.center.lat : null);
-                        var lon = (el.lon != null) ? el.lon
-                            : (el.center ? el.center.lon : null);
-                        if (lat == null || lon == null) return;
+                        var nature, nm = tg.name, eleInName = false;
+                        // Nature de l'element.
+                        if (tg.waterway) nature = 'river';
+                        else if (tg.place) nature = 'village';
+                        else if (tg.natural === 'water') nature = 'water';
+                        else if (tg.natural === 'saddle' || tg.mountain_pass === 'yes') nature = 'col';
+                        else if (tg.natural === 'volcano') nature = 'volcano';
+                        else if (tg.natural === 'peak') nature = 'peak';
+                        else return;
+                        // Position : noeud -> coords ; cours d'eau -> point le
+                        // plus proche de la ligne ; surface -> centroide.
+                        var pt;
+                        if (el.type === 'node') pt = [el.lat, el.lon];
+                        else if (nature === 'river') pt = nearestOnLine(el.geometry);
+                        else pt = centroid(el.geometry);
+                        if (!pt || pt[0] == null || pt[1] == null) return;
+                        var lat = pt[0], lon = pt[1];
                         var osmEle = parseFloat(tg.ele);
                         if (!isFinite(osmEle)) osmEle = null;
-                        // Nature + libelle auto-descriptif. eleInName = true
-                        // quand l'altitude est deja dans le nom (-> on ne la
-                        // re-affichera pas via le champ elev).
-                        var nature, nm = tg.name, eleInName = false;
-                        if (tg.place) {
-                            nature = 'village';
-                            if (!nm) return;
-                        } else if (tg.natural === 'water') {
-                            nature = 'water';
-                            if (!nm) return;
-                        } else if (tg.natural === 'saddle' || tg.mountain_pass === 'yes') {
-                            nature = 'col';
+                        // Libelle : col non nomme -> "Col <alt> m" ; les autres
+                        // exigent un nom (eleInName : altitude deja dans le nom).
+                        if (nature === 'col') {
                             if (!nm && osmEle != null) {
                                 nm = 'Col ' + Math.round(osmEle) + ' m'; eleInName = true;
                             }
                             if (!nm) return;
-                        } else if (tg.natural === 'volcano' || tg.natural === 'peak') {
-                            nature = (tg.natural === 'volcano') ? 'volcano' : 'peak';
-                            if (!nm) return;  // sommet non nomme : ignore
-                        } else { return; }
+                        } else if (!nm) {
+                            return;  // sommet / village / eau non nomme : ignore
+                        }
                         var d = _vsDist(res.lat, res.lon, lat, lon);
                         if (d < 25 || d > res.radiusM) return;       // hors rayon
                         if (!res.full) {                              // hors secteur
@@ -3721,7 +3763,7 @@
                         if (typeof res._setCamItems === 'function') res._setCamItems();
                     }
                     var msg = [];
-                    if (pk && pk.length) msg.push(pk.length + ' repere(s) (sommets, cols, villages, lacs)');
+                    if (pk && pk.length) msg.push(pk.length + ' repere(s) (sommets, cols, villages, lacs, rivieres)');
                     if (pa && pa.length) msg.push(pa.length + ' patrimoine');
                     if (msg.length) showToast(msg.join(' · ') + ' ajoutes a la vue.', 4500);
                 });
@@ -4316,7 +4358,7 @@
             '</div>' +
             '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance. '
             + (res.targets ? res.targets.length : 0) + ' point(s) proche(s) · ' + nVis + ' visible(s)'
-            + ((res.peaks && res.peaks.length) ? ' · ' + res.peaks.length + ' repere(s) (sommets, cols, villages, lacs)' : '') + '.</div>' +
+            + ((res.peaks && res.peaks.length) ? ' · ' + res.peaks.length + ' repere(s) (sommets, cols, villages, lacs, rivieres)' : '') + '.</div>' +
             (res.perspectiveURL ? '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
             '<button id="pwaVSmCyl" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#8b4513;color:#fff;">Panoramique</button>' +
             '<button id="pwaVSmPersp" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#f0ebe3;color:#5a3a1a;">Perspective</button>' +
