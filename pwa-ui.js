@@ -776,7 +776,7 @@
     function _vsCalibrateByWalk(ov, onAligned) {
         var ph = document.createElement('div');
         ph.style.cssText = 'position:absolute;inset:46px 0 0 0;background:rgba(0,0,0,0.85);'
-            + 'color:#fff;padding:18px;font:14px Segoe UI;z-index:5;display:flex;'
+            + 'color:#fff;padding:18px;font:14px Segoe UI;z-index:12;display:flex;'
             + 'flex-direction:column;align-items:center;justify-content:flex-start;'
             + 'gap:8px;overflow:auto;';
         ph.innerHTML = '<div style="font-weight:700;font-size:15px;">'
@@ -1069,18 +1069,29 @@
     function _vsCameraView(res, opts) {
         opts = opts || {};
         var items = [];
-        (res.peaks || []).forEach(function(p) {
-            if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
-                dist: p.dist, kind: 'peak', elev: p.elev, lat: p.lat, lon: p.lon });
-        });
-        (res.patrimoine || []).forEach(function(p) {
-            if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
-                dist: p.dist, kind: 'patri', lat: p.lat, lon: p.lon });
-        });
-        (res.targets || []).forEach(function(t) {
-            if (t.visible) items.push({ name: t.name, bearing: t.bearing, ang: t.ang,
-                dist: t.dist, kind: 'cible', lat: t.lat, lon: t.lon });
-        });
+        // Construit (ou reconstruit) la liste des elements visibles depuis
+        // res, EN PLACE (items.length = 0). Les sommets OSM et le patrimoine
+        // arrivent en ASYNCHRONE apres le calcul : si la vue camera s'ouvre
+        // tot (mode auto-cam depuis le GPS), res.peaks / res.patrimoine sont
+        // encore vides -> on rafraichit via res._setCamItems quand ils
+        // arrivent. La boucle de rendu lit items a chaque frame, donc muter
+        // le tableau en place suffit a mettre l'overlay AR a jour.
+        function buildItems() {
+            items.length = 0;
+            (res.peaks || []).forEach(function(p) {
+                if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
+                    dist: p.dist, kind: 'peak', elev: p.elev, lat: p.lat, lon: p.lon });
+            });
+            (res.patrimoine || []).forEach(function(p) {
+                if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
+                    dist: p.dist, kind: 'patri', lat: p.lat, lon: p.lon });
+            });
+            (res.targets || []).forEach(function(t) {
+                if (t.visible) items.push({ name: t.name, bearing: t.bearing, ang: t.ang,
+                    dist: t.dist, kind: 'cible', lat: t.lat, lon: t.lon });
+            });
+        }
+        buildItems();
         var R = res.radiusM || 1;
         function dTxt(d) {
             return d >= 1000 ? (d / 1000).toFixed(d >= 10000 ? 0 : 1) + ' km'
@@ -1100,7 +1111,7 @@
         canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
             + 'pointer-events:none;';
         var hud = document.createElement('div');
-        hud.style.cssText = 'position:absolute;top:0;left:0;right:0;'
+        hud.style.cssText = 'position:absolute;top:0;left:0;right:0;z-index:20;'
             + 'display:flex;align-items:center;gap:10px;padding:8px 12px;color:#fff;'
             + 'background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0));font:600 14px Segoe UI;';
         hud.innerHTML = '<span id="pwaCamCap">Cap —</span>'
@@ -1142,20 +1153,25 @@
             + 'border-radius:6px;padding:6px 12px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>';
         var manual = document.createElement('div');
         manual.style.cssText = 'position:absolute;top:46px;left:0;right:0;display:none;'
-            + 'padding:6px 12px;color:#fff;background:rgba(0,0,0,0.4);font:600 11px Segoe UI;';
+            + 'z-index:10;padding:6px 12px;color:#fff;background:rgba(0,0,0,0.4);'
+            + 'font:600 11px Segoe UI;';
         manual.innerHTML = 'Boussole indisponible — direction manuelle : '
             + '<span id="pwaCamMv">0</span>°<br>'
             + '<input type="range" id="pwaCamM" min="0" max="359" value="0" style="width:100%;">';
         var list = document.createElement('div');
         list.style.cssText = 'position:absolute;left:0;right:0;bottom:0;max-height:42vh;'
-            + 'overflow-y:auto;background:rgba(0,0,0,0.62);color:#fff;padding:8px 10px;'
-            + 'font:13px Segoe UI;display:none;';
+            + 'z-index:10;overflow-y:auto;background:rgba(0,0,0,0.62);color:#fff;'
+            + 'padding:8px 10px;font:13px Segoe UI;display:none;';
         // Mini-carte : vraie carte Leaflet (tuiles OSM/OpenTopo) + perimetre
         // de visibilite + points visibles + overlay canvas pour FOV/Nord.
         var miniMap = document.createElement('div');
         miniMap.title = 'Tape un point que tu vois pour caler le cap dessus';
+        // z-index:3 : la mini-carte reste au-dessus du flux camera/overlay
+        // mais PASSE DERRIERE tous les panneaux/menus (manual 10, list 10,
+        // calibPane 4, modal Calibrer 12, marche GPS 12, hud 20) pour ne
+        // pas gener leur lecture quand ils sont ouverts.
         miniMap.style.cssText = 'position:absolute;bottom:12px;left:12px;width:180px;'
-            + 'height:180px;z-index:6;border-radius:14px;overflow:hidden;'
+            + 'height:180px;z-index:3;border-radius:14px;overflow:hidden;'
             + 'box-shadow:0 3px 12px rgba(0,0,0,0.6);'
             + 'border:2px solid rgba(255,255,255,0.55);';
         var miniLeafDiv = document.createElement('div');
@@ -1200,6 +1216,15 @@
         (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
         // Init Leaflet une fois le conteneur dans le DOM (sinon size=0)
         setTimeout(function() { if (!dead) initMiniMap(); }, 30);
+        // Rafraichissement appele par l'enrichissement asynchrone (sommets
+        // OSM + patrimoine) quand il arrive APRES l'ouverture de la vue
+        // (cas auto-cam) : rebatit items + marqueurs mini-carte + overlay AR.
+        res._setCamItems = function() {
+            if (dead) return;
+            buildItems();
+            placeMiniItems();
+            tick();
+        };
 
         var rawHeading = 0, heading = 0, pitch = 0, haveHeading = false;
         var stream = null, raf = 0, dead = false;
@@ -1765,12 +1790,38 @@
         // points visibles) est dessine UNE FOIS a l'init. L'overlay canvas
         // ne porte que le secteur FOV + le marqueur Nord (mis a jour a chaque
         // frame). Le tout est nord-en-haut (carte non rotative).
-        var miniLMap = null, miniLayers = null;
+        var miniLMap = null, miniLayers = null, miniItemMarkers = [], obsMarker = null;
+        // (Re)place les marqueurs des items sur la mini-carte. Appele a
+        // l'init puis a chaque rafraichissement (res._setCamItems), d'ou la
+        // suppression prealable des marqueurs precedents.
+        function placeMiniItems() {
+            if (!miniLayers) return;
+            miniItemMarkers.forEach(function(mk) {
+                try { miniLayers.removeLayer(mk); } catch(_e) {}
+            });
+            miniItemMarkers.length = 0;
+            items.forEach(function(it) {
+                if (it.lat == null || it.lon == null) return;
+                var col = (it.kind === 'patri') ? '#ff66b3'
+                    : (it.kind === 'peak') ? '#ffd24a' : '#88c0d0';
+                var mk = L.circleMarker([it.lat, it.lon], {
+                    radius: 3.5, color: '#000', fillColor: col,
+                    fillOpacity: 1, weight: 1, interactive: false
+                }).addTo(miniLayers);
+                miniItemMarkers.push(mk);
+            });
+            if (obsMarker) { try { obsMarker.bringToFront(); } catch(_e) {} }
+        }
         function initMiniMap() {
             if (typeof L === 'undefined' || !L.map) return;
             try {
                 miniLMap = L.map(miniLeafDiv, {
                     zoomControl: false, attributionControl: false,
+                    // Rendu canvas des vecteurs (cercles, visPts, marqueurs)
+                    // au lieu du SVG par defaut : indispensable pour pouvoir
+                    // rasteriser le champ de visibilite 2D dans la photo
+                    // (takePhoto compose ce <canvas>, pas du SVG).
+                    preferCanvas: true,
                     // Pas de drag (l'observateur doit rester au centre pour
                     // que le secteur FOV soit aligne sur sa position) mais
                     // les zooms sont autorises -- en mode 'center' (pinch
@@ -1816,21 +1867,16 @@
                         }).addTo(miniLayers);
                     }
                 }
-                // Items visibles (sommets / patrimoine / cibles) avec lat/lon
-                items.forEach(function(it) {
-                    if (it.lat == null || it.lon == null) return;
-                    var col = (it.kind === 'patri') ? '#ff66b3'
-                        : (it.kind === 'peak') ? '#ffd24a' : '#88c0d0';
-                    L.circleMarker([it.lat, it.lon], {
-                        radius: 3.5, color: '#000', fillColor: col,
-                        fillOpacity: 1, weight: 1, interactive: false
-                    }).addTo(miniLayers);
-                });
-                // Observateur (par-dessus)
-                L.circleMarker([res.lat, res.lon], {
+                // Observateur d'abord, puis items par-dessus (placeMiniItems
+                // remet l'observateur au premier plan apres chaque ajout).
+                obsMarker = L.circleMarker([res.lat, res.lon], {
                     radius: 5.5, color: '#fff', fillColor: '#4eafff',
                     fillOpacity: 1, weight: 2.2, interactive: false
                 }).addTo(miniLayers);
+                // Items visibles (sommets / patrimoine / cibles) : places via
+                // placeMiniItems pour pouvoir etre rafraichis quand
+                // l'enrichissement asynchrone (OSM) arrive.
+                placeMiniItems();
                 // Force un repaint apres apparition (sinon tuiles grises)
                 setTimeout(function() {
                     try { miniLMap.invalidateSize(); } catch(_e) {}
@@ -2158,16 +2204,53 @@
             }
             // 2. Overlay marqueurs / silhouette / FOV
             pctx.drawImage(canvas, 0, 0);
-            // 3. Mini-map en bas-gauche (juste le canvas overlay du radar)
+            // 3. Mini-carte en bas-gauche : carte Leaflet complete (tuiles
+            //    OSM + champ de visibilite 2D + perimetre + marqueurs) +
+            //    overlay FOV/Nord. Leaflet ne dessine pas dans un canvas
+            //    unique : on rasterise le DOM (tuiles <img>, calque vecteur
+            //    <canvas> grace a preferCanvas) en placant chaque element
+            //    via son getBoundingClientRect relatif a la mini-carte.
             try {
                 var mmW = 130, mmH = 130, mmX = 16, mmY = H - mmH - 16;
+                var mapRect = miniMap.getBoundingClientRect();
+                var srcW = mapRect.width, srcH = mapRect.height;
                 pctx.save();
-                pctx.fillStyle = 'rgba(15,25,40,0.6)';
-                roundRect(pctx, mmX, mmY, mmW, mmH, 12); pctx.fill();
-                pctx.strokeStyle = 'rgba(255,255,255,0.5)';
-                pctx.lineWidth = 1.5; pctx.stroke();
+                roundRect(pctx, mmX, mmY, mmW, mmH, 12);
+                pctx.clip();
+                pctx.fillStyle = '#202833';
+                pctx.fillRect(mmX, mmY, mmW, mmH);
+                if (srcW > 2 && srcH > 2) {
+                    var sxf = mmW / srcW, syf = mmH / srcH;
+                    // Tuiles puis calque vecteur : querySelectorAll renvoie
+                    // dans l'ordre du DOM (tile-pane avant overlay-pane),
+                    // donc l'empilement z est preserve.
+                    var mmNodes = miniLeafDiv.querySelectorAll(
+                        'img.leaflet-tile, canvas');
+                    for (var mni = 0; mni < mmNodes.length; mni++) {
+                        var mnEl = mmNodes[mni];
+                        if (mnEl.tagName === 'IMG'
+                            && (!mnEl.complete || !mnEl.naturalWidth)) continue;
+                        if (mnEl.tagName === 'CANVAS'
+                            && (!mnEl.width || !mnEl.height)) continue;
+                        var mnR = mnEl.getBoundingClientRect();
+                        try {
+                            pctx.globalAlpha =
+                                parseFloat(mnEl.style.opacity || '1') || 1;
+                            pctx.drawImage(mnEl,
+                                mmX + (mnR.left - mapRect.left) * sxf,
+                                mmY + (mnR.top - mapRect.top) * syf,
+                                mnR.width * sxf, mnR.height * syf);
+                        } catch(_e) {}
+                    }
+                    pctx.globalAlpha = 1;
+                }
+                // Overlay FOV / Nord par-dessus la carte
                 pctx.drawImage(miniOverlay, mmX, mmY, mmW, mmH);
                 pctx.restore();
+                pctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                pctx.lineWidth = 1.5;
+                roundRect(pctx, mmX, mmY, mmW, mmH, 12);
+                pctx.stroke();
             } catch(_e) {}
             // 4. Bandeau info en bas (cap + position + date)
             pctx.save();
@@ -2373,7 +2456,13 @@
                     showRelief ? 'rgba(255,100,180,0.65)' : 'rgba(255,100,180,0.2)';
             }
         }
-        if (calibAz != null) {
+        // Entre dans le mode calage silhouette : la silhouette du relief
+        // calcule est figee a l'azimut az ; l'utilisateur tourne le
+        // telephone pour la faire coincider avec le relief reel, puis valide.
+        // Appele a l'ouverture (opts.calibAz) ou depuis le modal Calibrer.
+        function enterCalib(az) {
+            calibAz = ((az % 360) + 360) % 360;
+            showRelief = true;
             calibPane.style.display = 'block';
             var azStr = Math.round(calibAz) + '° '
                 + ['N','NE','E','SE','S','SO','O','NO']
@@ -2401,17 +2490,22 @@
                 exitCalib();
             };
             // Etat visuel du bouton Relief : actif et verrouille en mode calage
-            setTimeout(function() {
-                var b = hud.querySelector('#pwaCamRelief');
-                if (b) b.style.background = 'rgba(255,100,180,0.65)';
-            }, 0);
+            var b = hud.querySelector('#pwaCamRelief');
+            if (b) b.style.background = 'rgba(255,100,180,0.65)';
+            schedule();
         }
+        if (calibAz != null) enterCalib(calibAz);
         // Calibrage : choisir un element visible que l'utilisateur pointe au
         // centre de l'ecran -> on aligne le cap sur sa direction connue.
         hud.querySelector('#pwaCamCal').onclick = function() {
+            // Bascule : si le modal de calibrage est deja ouvert, le refermer
+            // au lieu d'en empiler un second a chaque clic.
+            var existing = ov.querySelector('#pwaCamCalModal');
+            if (existing) { existing.remove(); return; }
             var cm = document.createElement('div');
+            cm.id = 'pwaCamCalModal';
             cm.style.cssText = 'position:absolute;inset:46px 0 0 0;background:rgba(0,0,0,0.78);'
-                + 'color:#fff;padding:10px 12px;overflow:auto;font:13px Segoe UI;z-index:2;';
+                + 'color:#fff;padding:10px 12px;overflow:auto;font:13px Segoe UI;z-index:12;';
             var sorted = items.slice().map(function(it) {
                 it._cof = ((it.bearing - rawHeading + 540) % 360) - 180; return it;
             }).sort(function(a, b) { return Math.abs(a._cof) - Math.abs(b._cof) || a.dist - b.dist; });
@@ -2454,11 +2548,33 @@
                 + '(camera vers l\'avant) et marche en ligne droite. Le GPS deduit le cap '
                 + 'de la trajectoire — aucun repere ni soleil necessaire.'
                 + '</div></span></div>';
+            // Calage sur la silhouette du relief calcule : disponible des que
+            // la vue porte un viewshed (res.rayProf). Azimut = perspective de
+            // la vue (res.perspAz) si definie, sinon le cap courant.
+            var hasRelief = !!(res.rayProf && res.rayProf.length);
+            var calibViewAz = (typeof res.perspAz === 'number' && isFinite(res.perspAz))
+                ? ((res.perspAz % 360) + 360) % 360 : null;
+            var viewRow = '';
+            if (hasRelief) {
+                var vAzTxt = calibViewAz != null
+                    ? 'azimut ' + Math.round(calibViewAz) + '°'
+                    : 'cap actuel';
+                viewRow = '<div id="pwaCamCalView" class="pwaCamCalRow" '
+                    + 'style="display:flex;gap:8px;align-items:center;padding:10px 4px;'
+                    + 'background:rgba(232,69,143,0.12);border:1px solid rgba(232,69,143,0.45);'
+                    + 'border-radius:6px;margin-bottom:6px;cursor:pointer;">'
+                    + '<span style="width:14px;color:#e8458f;font-size:16px;">⛰</span>'
+                    + '<span style="flex:1;"><b>Caler sur la silhouette du relief</b>'
+                    + '<div style="font-size:11px;opacity:0.85;">Superpose la '
+                    + 'silhouette rose du relief calcule (' + vAzTxt + ') et tourne '
+                    + 'le téléphone pour la faire coincider avec le relief reel.'
+                    + '</div></span></div>';
+            }
             cm.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">'
                 + 'Calibrage du cap</div>'
                 + '<div style="font-size:11px;opacity:0.85;margin-bottom:8px;">'
-                + 'Quatre manieres au choix : repere identifie, Soleil, Nord, ou marche GPS.</div>'
-                + walkRow + northRow + sunRow
+                + 'Plusieurs manieres au choix selon ce dont tu disposes.</div>'
+                + viewRow + walkRow + northRow + sunRow
                 + (sorted.length ? '<div style="font-size:11px;opacity:0.7;margin:8px 0 4px;">'
                     + 'Reperes visibles (tries par proximite angulaire)</div>' : '')
                 + (sorted.length ? sorted.slice(0, 30).map(function(it, idx) {
@@ -2497,6 +2613,11 @@
             if (srow) srow.onclick = function() { alignTo(sun.az); };
             var wrow = cm.querySelector('#pwaCamCalWalk');
             if (wrow) wrow.onclick = function() { closeCal(); _vsCalibrateByWalk(ov, alignTo); };
+            var vrow = cm.querySelector('#pwaCamCalView');
+            if (vrow) vrow.onclick = function() {
+                closeCal();
+                enterCalib(calibViewAz != null ? calibViewAz : heading);
+            };
             cm.querySelectorAll('.pwaCamCalRow').forEach(function(rw) {
                 if (!rw.hasAttribute('data-i')) return;
                 rw.onclick = function() {
@@ -2666,6 +2787,7 @@
             if (xrSession) { try { xrSession.end(); } catch(_e) {} xrSession = null; }
             try { if (stream) stream.getTracks().forEach(function(t) { t.stop(); }); } catch(_e) {}
             try { if (miniLMap) { miniLMap.remove(); miniLMap = null; } } catch(_e) {}
+            try { res._setCamItems = null; } catch(_e) {}
             ov.remove();
         }
         hud.querySelector('#pwaCamX').onclick = close;
@@ -2920,18 +3042,18 @@
             + 'de visibilite</h2>'
             + '<div style="font-size:12px;color:#7a5a3a;margin-bottom:14px;">'
             + 'Tous les caps, distances et la vue AR sont calcules depuis ce point.</div>'
-            + '<button id="pwaVSorigMap" style="width:100%;background:#8b4513;color:#fff;'
-            + 'border:none;padding:11px 12px;border-radius:6px;cursor:pointer;font:600 13px '
-            + 'Segoe UI;margin-bottom:8px;text-align:left;">'
-            + '📍 Choisir un point sur la carte'
-            + '<div style="font-weight:400;font-size:11px;opacity:0.9;margin-top:2px;">'
+            + '<button id="pwaVSorigMap" style="width:100%;background:#ecdcbe;'
+            + 'color:#5a3a1a;border:1px solid #dcc596;padding:11px 12px;border-radius:6px;'
+            + 'cursor:pointer;font:600 13px Segoe UI;margin-bottom:8px;text-align:left;">'
+            + 'Choisir un point sur la carte'
+            + '<div style="font-weight:400;font-size:11px;color:#8a6a44;margin-top:2px;">'
             + 'Pour analyser depuis un site precis (sommet, chapelle, ruine…)</div>'
             + '</button>'
-            + '<button id="pwaVSorigGps" style="width:100%;background:#3a7d44;color:#fff;'
-            + 'border:none;padding:11px 12px;border-radius:6px;cursor:pointer;font:600 13px '
-            + 'Segoe UI;margin-bottom:8px;text-align:left;">'
-            + '⇢ Depuis ma position GPS'
-            + '<div style="font-weight:400;font-size:11px;opacity:0.9;margin-top:2px;">'
+            + '<button id="pwaVSorigGps" style="width:100%;background:#d9e8cb;'
+            + 'color:#3c5730;border:1px solid #bcd4a6;padding:11px 12px;border-radius:6px;'
+            + 'cursor:pointer;font:600 13px Segoe UI;margin-bottom:8px;text-align:left;">'
+            + 'Depuis ma position GPS'
+            + '<div style="font-weight:400;font-size:11px;color:#5e7350;margin-top:2px;">'
             + 'Pour une vue AR exacte la ou tu te trouves sur le terrain</div>'
             + '</button>'
             + '<div style="display:flex;justify-content:flex-end;">'
@@ -3231,6 +3353,9 @@
                             + ' · ' + Math.round(p.dist) + ' m').addTo(_vsLayer);
                     });
                 }
+                // Vue camera ouverte tot (auto-cam) : injecte les sommets
+                // des leur arrivee, sans attendre le patrimoine.
+                if (typeof res._setCamItems === 'function') res._setCamItems();
                 _vsFetchPatrimoine(res, function(pa) {
                     if (pa && pa.length && _vsLayer) {
                         pa.forEach(function(p) {
@@ -3246,6 +3371,7 @@
                         res.panoramaURL = _vsBuildPanorama(res);
                         res.perspectiveURL = _vsBuildPanoramaPerspective(res);
                         if (typeof res._setPano === 'function') res._setPano();
+                        if (typeof res._setCamItems === 'function') res._setCamItems();
                     }
                     var msg = [];
                     if (pk && pk.length) msg.push(pk.length + ' sommet(s)');
@@ -3942,6 +4068,14 @@
             }
             var _pu = _curPanoURL();
             if (_pu) dl(_pu, safe + (_vsMode === 'persp' ? '-perspective' : '-tangentielle') + '.png', false);
+            // Vue planimetrique associee (raster du champ de visibilite vu du
+            // dessus) : telechargee aussi quand elle existe. Leger differe
+            // pour ne pas declencher 3 telechargements sur la meme frame.
+            if (res.planiURL) {
+                setTimeout(function() {
+                    dl(res.planiURL, safe + '-planimetrique.png', false);
+                }, 150);
+            }
             var data = {
                 name: res.name, date: res.date, lat: res.lat, lon: res.lon,
                 obsH: res.obsH, obsElev: res.obsElev, radiusM: res.radiusM,
@@ -3952,7 +4086,9 @@
                                 { type: 'application/json' });
             var ju = URL.createObjectURL(blob);
             setTimeout(function() { dl(ju, safe + '.json', true); }, 300);
-            showToast('Telechargement : panorama PNG + donnees JSON.', 4000);
+            showToast('Telechargement : ' + (_vsMode === 'persp' ? 'perspective' : 'panorama')
+                + ' PNG' + (res.planiURL ? ' + vue planimetrique PNG' : '')
+                + ' + donnees JSON.', 4000);
         };
 
         // ---- Curseur synchronise panorama <-> mini-carte planimetrique ----
@@ -4007,7 +4143,7 @@
             var g = pano.getContext('2d');
             g.clearRect(0, 0, w, h); g.drawImage(pImg, 0, 0, w, h);
             if (az == null) return;
-            var x, crestY = null;
+            var x, crestY = null, crossY = null;
             var ci = reliefAt(az, dist);
             if (_vsMode === 'persp' && res.perspMeta) {
                 var P = res.perspMeta;
@@ -4019,6 +4155,13 @@
                         / Math.cos(a * Math.PI / 180);
                     crestY = Math.max(0, Math.min(h, pyi / P.H * h));
                 }
+                // Ligne horizontale du viseur : Y du pointeur reprojete en
+                // perspective (meme formule que la crete, avec vAng au lieu
+                // de l'angle de crete). Sans ca le viseur n'a qu'un axe.
+                if (vAng != null) {
+                    crossY = (P.cy - P.f * Math.tan(vAng * Math.PI / 180)
+                        / Math.cos(a * Math.PI / 180)) / P.H * h;
+                }
             } else {
                 var W0 = pm.W || pImg.naturalWidth || w;
                 var PADd = (pm.PAD || 34) / W0 * w;
@@ -4028,14 +4171,18 @@
                     crestY = Math.max(0, Math.min(h,
                         (pm.topA - ci.ang) / (pm.topA - pm.botA) * h));
                 }
+                if (vAng != null && pm.topA != null && pm.botA != null) {
+                    crossY = (pm.topA - vAng) / (pm.topA - pm.botA) * h;
+                }
             }
-            // Ligne curseur
+            // Viseur en croix : ligne verticale (azimut) + ligne horizontale
+            // (angle vertical), dans les deux modes panoramique et perspective.
             g.strokeStyle = 'rgba(192,57,43,0.85)'; g.lineWidth = 1.5;
             g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
-            if (vAng != null && _vsMode !== 'persp' && pm.topA != null && pm.botA != null) {
-                var y = (pm.topA - vAng) / (pm.topA - pm.botA) * h;
+            if (crossY != null) {
+                crossY = Math.max(0, Math.min(h, crossY));
                 g.strokeStyle = 'rgba(192,57,43,0.4)';
-                g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+                g.beginPath(); g.moveTo(0, crossY); g.lineTo(w, crossY); g.stroke();
             }
             // Pastille + distance, colorees par profondeur. La distance est
             // celle du point SURVOLE (dist, ex: mini-carte) si fournie ;
@@ -4100,7 +4247,13 @@
         }
         function onPano(ev) {
             if (!pReady) return;
-            if (ev.cancelable) ev.preventDefault();
+            // Mode agrandi panoramique : le panorama deborde en largeur et
+            // defile (touch-action:pan-x). On laisse passer le glissement
+            // tactile sans le capturer ; le viseur se pose au tap ou au
+            // survol souris. Hors de ce cas, on capture le geste comme avant.
+            var scrollMode = _vsEnlarged && _vsMode !== 'persp';
+            if (scrollMode && ev.type === 'touchmove') return;
+            if (ev.cancelable && !scrollMode) ev.preventDefault();
             var f = evtXY(pano, ev), fx = Math.max(0, Math.min(1, f[0])), fy = Math.max(0, Math.min(1, f[1]));
             if (_vsMode === 'persp' && res.perspMeta) {
                 var P = res.perspMeta, R2D = 180 / Math.PI;
@@ -4138,10 +4291,39 @@
         // Dimensionnement des 2 canvas (recalcule a l'agrandissement aussi).
         function fitPano() {
             if (!pReady) return;
-            var cap = _vsEnlarged ? pImg.naturalWidth * 2 : pImg.naturalWidth;
-            var cw = Math.min(pano.parentElement.clientWidth || 760, cap);
-            pano.width = Math.max(200, Math.round(cw));
-            pano.height = Math.round(pano.width * pImg.naturalHeight / pImg.naturalWidth);
+            var parent = pano.parentElement;
+            var ar = pImg.naturalWidth / Math.max(1, pImg.naturalHeight);
+            if (_vsEnlarged && _vsMode !== 'persp') {
+                // Agrandi + panoramique : rendu a une HAUTEUR confortable, le
+                // panorama deborde en largeur -> defilement horizontal. Sinon
+                // un panorama large force a la largeur de l'ecran est ecrase
+                // et illisible sur mobile.
+                var ph = Math.max(180, Math.round(Math.min(
+                    window.innerHeight * 0.40, 380)));
+                var pw = Math.round(ph * ar);
+                var capW = pImg.naturalWidth * 2;   // pas d'upscale au-dela de 2x
+                if (pw > capW) { pw = capW; ph = Math.round(pw / ar); }
+                pano.width = pw; pano.height = ph;
+                pano.style.width = pw + 'px';
+                pano.style.height = ph + 'px';
+                pano.style.touchAction = 'pan-x';
+                parent.style.overflowX = 'auto';
+                parent.style.overflowY = 'hidden';
+                parent.style.webkitOverflowScrolling = 'touch';
+                // Centre le defilement sur le milieu du panorama a l'ouverture.
+                parent.scrollLeft = Math.max(0, (pw - (parent.clientWidth || pw)) / 2);
+            } else {
+                // Normal, ou agrandi en perspective : ajuste a la largeur.
+                var cap = _vsEnlarged ? pImg.naturalWidth * 2 : pImg.naturalWidth;
+                var cw = Math.min(parent.clientWidth || 760, cap);
+                pano.width = Math.max(200, Math.round(cw));
+                pano.height = Math.round(pano.width / ar);
+                pano.style.width = '100%';
+                pano.style.height = '';
+                pano.style.touchAction = 'none';
+                parent.style.overflowX = '';
+                parent.style.overflowY = '';
+            }
             drawPano(null);
         }
         function fitMini() {
