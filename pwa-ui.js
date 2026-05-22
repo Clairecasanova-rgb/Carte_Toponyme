@@ -1037,6 +1037,13 @@
     // Couleur d'un point selon sa distance (effet de profondeur, meme echelle
     // que les reliefs/curseur) : proche = teinte vive de la categorie,
     // loin = estompe/pale. La forme garde l'identite (cercle/triangle/losange).
+    // Categorie d'affichage d'un repere OSM (res.peaks) selon sa nature :
+    // col / village / lac ont leur propre icone ; tout le reste = sommet.
+    function _vsKind(nature) {
+        return nature === 'col' ? 'col'
+             : nature === 'village' ? 'village'
+             : nature === 'water' ? 'lac' : 'peak';
+    }
     function _vsPtCol(kind, dist, R) {
         var t = Math.max(0, Math.min(1, (dist || 0) / (R || 1)));
         function mix(a, b) { return Math.round(a + (b - a) * t); }
@@ -1044,6 +1051,12 @@
             return 'rgb(' + mix(120, 172) + ',' + mix(70, 160) + ',' + mix(20, 150) + ')';
         if (kind === 'patri')
             return 'rgb(' + mix(214, 200) + ',' + mix(20, 165) + ',' + mix(120, 190) + ')';
+        if (kind === 'col')       // violet ardoise
+            return 'rgb(' + mix(111, 170) + ',' + mix(97, 160) + ',' + mix(150, 196) + ')';
+        if (kind === 'village')   // terracotta
+            return 'rgb(' + mix(176, 206) + ',' + mix(78, 150) + ',' + mix(42, 120) + ')';
+        if (kind === 'lac')       // bleu
+            return 'rgb(' + mix(47, 150) + ',' + mix(127, 186) + ',' + mix(176, 212) + ')';
         return 'rgb(' + mix(20, 150) + ',' + mix(150, 182) + ',' + mix(60, 172) + ')';
     }
     function _vsPtR(dist, R) {
@@ -1080,7 +1093,8 @@
             items.length = 0;
             (res.peaks || []).forEach(function(p) {
                 if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
-                    dist: p.dist, kind: 'peak', elev: p.elev, lat: p.lat, lon: p.lon });
+                    dist: p.dist, kind: _vsKind(p.nature), elev: p.elev,
+                    lat: p.lat, lon: p.lon });
             });
             (res.patrimoine || []).forEach(function(p) {
                 if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
@@ -1312,7 +1326,10 @@
         var PIN_COLORS = {
             peak:    ['#d47540', '#8a4220'],   // brun sienne
             patri:   ['#eebd55', '#a07820'],   // ocre
-            cible:   ['#6a83a0', '#2e4256']    // ardoise
+            cible:   ['#6a83a0', '#2e4256'],   // ardoise
+            col:     ['#9a86c8', '#5f5286'],   // violet ardoise
+            village: ['#cc7a4a', '#8f4824'],   // terracotta
+            lac:     ['#5aa8d8', '#2c6f9e']    // bleu
         };
         // 9 pictogrammes : sommet + 7 patrimoine + cible.
         // Chaque entree : white = Path2D fill blanc, dark = Path2D fill couleur kind
@@ -1385,6 +1402,22 @@
             cible: {
                 white: P('M 0 -4 A 4 4 0 1 1 0 -12 A 4 4 0 1 1 0 -4 Z'),
                 dark:  P('M 0 -6.3 A 1.7 1.7 0 1 1 0 -9.7 A 1.7 1.7 0 1 1 0 -6.3 Z')
+            },
+            // Col / breche : sablier (deux triangles joints au centre du bulbe)
+            col: {
+                white: P('M -6 -14 L 6 -14 L 0 -8 Z M -6 -2 L 6 -2 L 0 -8 Z')
+            },
+            // Village / hameau : maison + campanile (toit pointu a droite)
+            village: {
+                white: P('M -7 -1 L -7 -7 L -2.5 -11 L 2 -7 L 2 -1 Z'
+                    + ' M 2 -1 L 2 -12.5 L 6 -12.5 L 6 -1 Z'
+                    + ' M 1.4 -12.5 L 4 -15 L 6.6 -12.5 Z'),
+                dark:  P('M -3.3 -1 L -1.3 -1 L -1.3 -4.6 L -3.3 -4.6 Z')
+            },
+            // Lac / plan d'eau : goutte
+            lac: {
+                white: P('M 0 -15 C -3 -11 -6 -8 -6 -5 C -6 -0.5 6 -0.5 6 -5 '
+                    + 'C 6 -8 3 -11 0 -15 Z')
             }
         };
         // Detection de la sous-categorie patrimoine depuis le nom de l'element.
@@ -1404,12 +1437,13 @@
         }
         function drawIcon(g, x, y, kind, col, rr, item) {
             // Resolve la cle exacte du picto + couleur du pin
-            var pinKind = (kind === 'cible' || kind === 'target') ? 'cible'
-                        : (kind === 'peak') ? 'peak' : 'patri';
-            var pictoKey = kind;
-            if (kind === 'patri') pictoKey = _patriIconKind(item && item.name);
-            else if (kind === 'cible' || kind === 'target') pictoKey = 'cible';
-            else pictoKey = 'peak';
+            var pinKind, pictoKey;
+            if (kind === 'cible' || kind === 'target') { pinKind = 'cible'; pictoKey = 'cible'; }
+            else if (kind === 'patri') { pinKind = 'patri'; pictoKey = _patriIconKind(item && item.name); }
+            else if (kind === 'col') { pinKind = 'col'; pictoKey = 'col'; }
+            else if (kind === 'village') { pinKind = 'village'; pictoKey = 'village'; }
+            else if (kind === 'lac') { pinKind = 'lac'; pictoKey = 'lac'; }
+            else { pinKind = 'peak'; pictoKey = 'peak'; }
             var picto = PICTOS[pictoKey] || PICTOS['patri-fouille'];
             var pinPair = PIN_COLORS[pinKind] || PIN_COLORS.cible;
             // Halo sombre derriere
@@ -1716,8 +1750,7 @@
                 var x = cx + f * Math.tan(a * Math.PI / 180);
                 var y = cyH - f * Math.tan((it.ang - pitch) * Math.PI / 180);
                 y = Math.max(8, Math.min(H - 12, y));
-                var col = _vsPtCol(it.kind === 'patri' ? 'patri'
-                    : it.kind === 'peak' ? 'peak' : 'target', it.dist, R);
+                var col = _vsPtCol(it.kind, it.dist, R);
                 var rr = Math.max(7, 11 - 4 * Math.min(1, it.dist / R));
                 var distScore = 1 - Math.min(1, it.dist / R);            // 1 proche, 0 loin
                 var centerScore = 1 - Math.abs(a) / (hfov / 2);          // 1 centre, 0 bord
@@ -1827,7 +1860,10 @@
             items.forEach(function(it) {
                 if (it.lat == null || it.lon == null) return;
                 var col = (it.kind === 'patri') ? '#ff66b3'
-                    : (it.kind === 'peak') ? '#ffd24a' : '#88c0d0';
+                    : (it.kind === 'peak') ? '#ffd24a'
+                    : (it.kind === 'col') ? '#b9a6e0'
+                    : (it.kind === 'village') ? '#e89a5e'
+                    : (it.kind === 'lac') ? '#5ac8ee' : '#88c0d0';
                 var mk = L.circleMarker([it.lat, it.lon], {
                     radius: 3.5, color: '#000', fillColor: col,
                     fillOpacity: 1, weight: 1, interactive: false
@@ -2041,7 +2077,8 @@
             }).sort(function(a, b) {
                 return Math.abs(a._off) - Math.abs(b._off) || a.dist - b.dist;
             });
-            var gl = { peak: '▲', patri: '◆', cible: '●' };
+            var gl = { peak: '▲', patri: '◆', cible: '●',
+                       col: '∨', village: '⌂', lac: '≈' };
             list.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">Dans la '
                 + 'direction (cap ' + Math.round(heading) + '° ' + card(heading) + ') — '
                 + inFov.length + ' element(s)</div>'
@@ -2052,8 +2089,7 @@
                     return '<div style="display:flex;gap:8px;align-items:center;'
                         + 'padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.12);">'
                         + '<span style="width:54px;color:#cfd8dc;">' + ar + '</span>'
-                        + '<span style="width:14px;color:' + _vsPtCol(it.kind === 'patri' ? 'patri'
-                            : it.kind === 'peak' ? 'peak' : 'target', it.dist, R) + ';">'
+                        + '<span style="width:14px;color:' + _vsPtCol(it.kind, it.dist, R) + ';">'
                         + (gl[it.kind] || '●') + '</span>'
                         + '<span style="flex:1;">' + escapeHtml(it.name) + '</span>'
                         + '<span style="color:#b0bec5;">' + dTxt(it.dist) + '</span></div>';
@@ -2561,7 +2597,8 @@
             var sorted = items.slice().map(function(it) {
                 it._cof = ((it.bearing - rawHeading + 540) % 360) - 180; return it;
             }).sort(function(a, b) { return Math.abs(a._cof) - Math.abs(b._cof) || a.dist - b.dist; });
-            var gl = { peak: '▲', patri: '◆', cible: '●' };
+            var gl = { peak: '▲', patri: '◆', cible: '●',
+                       col: '∨', village: '⌂', lac: '≈' };
             // Azimut solaire courant (formule NOAA simplifiee, ~0.5 deg)
             // Permet de caler le cap meme sans repere identifie : il suffit
             // de pointer le soleil (ou sa direction sous nuages legers).
@@ -2630,8 +2667,7 @@
                 + (sorted.length ? '<div style="font-size:11px;opacity:0.7;margin:8px 0 4px;">'
                     + 'Reperes visibles (tries par proximite angulaire)</div>' : '')
                 + (sorted.length ? sorted.slice(0, 30).map(function(it, idx) {
-                    var col = _vsPtCol(it.kind === 'patri' ? 'patri'
-                        : it.kind === 'peak' ? 'peak' : 'target', it.dist, R);
+                    var col = _vsPtCol(it.kind, it.dist, R);
                     return '<div data-i="' + idx + '" class="pwaCamCalRow" '
                         + 'style="display:flex;gap:8px;align-items:center;padding:8px 4px;'
                         + 'border-bottom:1px solid rgba(255,255,255,0.12);cursor:pointer;">'
@@ -3710,7 +3746,7 @@
             ctx.beginPath();                                  // triangle (mont)
             ctx.moveTo(x, y - pr); ctx.lineTo(x - pr, y + pr * 0.66);
             ctx.lineTo(x + pr, y + pr * 0.66);
-            ctx.closePath(); ctx.fillStyle = _vsPtCol('peak', p.dist, R); ctx.fill();
+            ctx.closePath(); ctx.fillStyle = _vsPtCol(_vsKind(p.nature), p.dist, R); ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
             _vsPlaceLabel(ctx, lblRects, x, y,
                 p.name + (p.elev ? ' ' + p.elev + ' m' : ''),
@@ -3917,37 +3953,39 @@
             // champ de visibilite (les masques ne sont plus positionnes).
             if (!o.visible) return;
             var x = projX(a), y = projY(a, o.ang);
-            var col = _vsPtCol(kind === 'patri' ? 'patri' : kind === 'peak' ? 'peak' : 'target',
-                o.dist, R);
+            // Cible/perso = cercle vert ; patrimoine = losange rose ; sommet,
+            // col, village, lac = triangle, distingues par la couleur (_vsPtCol).
+            var isCible = (kind === 'target' || kind === 'cible');
+            var col = _vsPtCol(kind, o.dist, R);
             var rr = _vsPtR(o.dist, R);
-            ctx.strokeStyle = (kind === 'peak' ? 'rgba(138,90,43,0.4)'
-                : kind === 'patri' ? 'rgba(232,69,143,0.4)' : 'rgba(39,174,96,0.4)');
-            if (kind !== 'target') ctx.setLineDash(kind === 'patri' ? [2, 3] : [3, 3]);
+            ctx.strokeStyle = (kind === 'patri' ? 'rgba(232,69,143,0.4)'
+                : isCible ? 'rgba(39,174,96,0.4)' : 'rgba(138,90,43,0.4)');
+            if (!isCible) ctx.setLineDash(kind === 'patri' ? [2, 3] : [3, 3]);
             ctx.lineWidth = 1; ctx.beginPath();
             ctx.moveTo(x, y); ctx.lineTo(x, horizonY); ctx.stroke();
             ctx.setLineDash([]);
             ctx.beginPath();
-            if (kind === 'peak') {
-                ctx.moveTo(x, y - rr - 1); ctx.lineTo(x - rr - 1, y + rr * 0.66);
-                ctx.lineTo(x + rr + 1, y + rr * 0.66); ctx.closePath();
-            } else if (kind === 'patri') {
+            if (kind === 'patri') {
                 ctx.moveTo(x, y - rr); ctx.lineTo(x + rr, y);
                 ctx.lineTo(x, y + rr); ctx.lineTo(x - rr, y); ctx.closePath();
-            } else {
+            } else if (isCible) {
                 ctx.arc(x, y, rr, 0, 2 * Math.PI);
+            } else {
+                ctx.moveTo(x, y - rr - 1); ctx.lineTo(x - rr - 1, y + rr * 0.66);
+                ctx.lineTo(x + rr + 1, y + rr * 0.66); ctx.closePath();
             }
             ctx.fillStyle = col; ctx.fill();
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4; ctx.stroke();
             if (o.name) {
                 _vsPlaceLabel(ctx, lblRects, x, y,
-                    o.name + (kind === 'peak' && o.elev ? ' ' + o.elev + ' m' : ''),
-                    (kind === 'peak' ? 'italic ' : '') + '10px Segoe UI',
-                    kind === 'peak' ? '#5a3a1a' : kind === 'patri' ? '#c0317a' : '#1b2631',
+                    o.name + ((!isCible && kind !== 'patri' && o.elev) ? ' ' + o.elev + ' m' : ''),
+                    (isCible ? '' : 'italic ') + '10px Segoe UI',
+                    kind === 'patri' ? '#c0317a' : isCible ? '#1b2631' : '#5a3a1a',
                     W, H);
             }
         }
         (res.targets || []).slice().sort(_vsByDist).forEach(function(t) { drawPin(t, 'target'); });
-        (res.peaks || []).slice().sort(_vsByDist).forEach(function(p) { drawPin(p, 'peak'); });
+        (res.peaks || []).slice().sort(_vsByDist).forEach(function(p) { drawPin(p, _vsKind(p.nature)); });
         (res.patrimoine || []).slice().sort(_vsByDist).forEach(function(p) { drawPin(p, 'patri'); });
         // Legende
         ctx.fillStyle = 'rgba(255,255,255,0.78)'; ctx.fillRect(6, H - 30, 250, 24);
