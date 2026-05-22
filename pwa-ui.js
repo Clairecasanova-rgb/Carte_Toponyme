@@ -1089,21 +1089,45 @@
         // encore vides -> on rafraichit via res._setCamItems quand ils
         // arrivent. La boucle de rendu lit items a chaque frame, donc muter
         // le tableau en place suffit a mettre l'overlay AR a jour.
+        // Filtre par categorie : l'utilisateur choisit ce qu'il affiche
+        // (sommets / cols / villages / lacs / patrimoine / mes points).
+        // Etat memorise en localStorage. catShow[k] === false -> masque.
+        var catShow = { peak: true, col: true, village: true, lac: true,
+                        patri: true, cible: true };
+        try {
+            var _cs = JSON.parse(localStorage.getItem('pwaVScamCats') || '{}');
+            Object.keys(catShow).forEach(function(k) {
+                if (_cs[k] === false) catShow[k] = false;
+            });
+        } catch(_e) {}
         function buildItems() {
             items.length = 0;
             (res.peaks || []).forEach(function(p) {
-                if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
-                    dist: p.dist, kind: _vsKind(p.nature), elev: p.elev,
-                    lat: p.lat, lon: p.lon });
+                if (!p.visible) return;
+                var k = _vsKind(p.nature);
+                if (catShow[k] === false) return;
+                items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
+                    dist: p.dist, kind: k, elev: p.elev, lat: p.lat, lon: p.lon });
             });
             (res.patrimoine || []).forEach(function(p) {
-                if (p.visible) items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
+                if (!p.visible || catShow.patri === false) return;
+                items.push({ name: p.name, bearing: p.bearing, ang: p.ang,
                     dist: p.dist, kind: 'patri', lat: p.lat, lon: p.lon });
             });
             (res.targets || []).forEach(function(t) {
-                if (t.visible) items.push({ name: t.name, bearing: t.bearing, ang: t.ang,
+                if (!t.visible || catShow.cible === false) return;
+                items.push({ name: t.name, bearing: t.bearing, ang: t.ang,
                     dist: t.dist, kind: 'cible', lat: t.lat, lon: t.lon });
             });
+        }
+        // Compte les elements visibles par categorie, INDEPENDAMMENT du filtre
+        // (pour afficher "Sommets 12" meme si la categorie est masquee).
+        function catCounts() {
+            var c = { peak: 0, col: 0, village: 0, lac: 0, patri: 0, cible: 0 };
+            (res.peaks || []).forEach(function(p) { if (p.visible) c[_vsKind(p.nature)]++; });
+            (res.patrimoine || []).forEach(function(p) { if (p.visible) c.patri++; });
+            (res.targets || []).forEach(function(t) { if (t.visible) c.cible++; });
+            return c;
         }
         buildItems();
         var R = res.radiusM || 1;
@@ -1151,6 +1175,10 @@
             + '<button id="pwaCamXR" title="Mode AR stabilise (Android Chrome)" '
             + 'style="display:none;background:#1e3a5f;color:#fff;border:1px solid #3a6ea5;'
             + 'border-radius:6px;padding:6px 10px;cursor:pointer;font:600 12px Segoe UI;">AR</button>'
+            + '<button id="pwaCamCat" title="Choisir les categories de reperes affichees" '
+            + 'style="background:rgba(255,255,255,0.18);color:#fff;'
+            + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
+            + 'cursor:pointer;font:600 12px Segoe UI;">Filtres</button>'
             + '<button id="pwaCamList" style="background:rgba(255,255,255,0.18);color:#fff;'
             + 'border:1px solid rgba(255,255,255,0.4);border-radius:6px;padding:6px 10px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Liste</button>'
@@ -1261,6 +1289,7 @@
             if (dead) return;
             buildItems();
             placeMiniItems();
+            if (catPane && catPane.style.display !== 'none') renderCatPane();
             tick();
         };
 
@@ -2232,6 +2261,59 @@
             listOpen = !listOpen;
             list.style.display = listOpen ? 'block' : 'none';
             if (listOpen) refreshList();
+        };
+        // ----- Filtre par categorie (bouton "Filtres") -----
+        var catPane = document.createElement('div');
+        catPane.id = 'pwaCamCatPane';
+        catPane.style.cssText = 'position:absolute;top:48px;right:8px;z-index:14;'
+            + 'background:rgba(20,26,34,0.95);color:#fff;border-radius:10px;'
+            + 'padding:6px 6px 8px;font:13px Segoe UI;display:none;'
+            + 'box-shadow:0 4px 16px rgba(0,0,0,0.55);min-width:212px;';
+        ov.appendChild(catPane);
+        var CAT_DEFS = [
+            { k: 'peak',    label: 'Sommets',        gl: '▲', col: '#d47540' },
+            { k: 'col',     label: 'Cols / brèches', gl: '∨', col: '#9a86c8' },
+            { k: 'village', label: 'Villages',       gl: '⌂', col: '#cc7a4a' },
+            { k: 'lac',     label: 'Lacs',           gl: '≈', col: '#5aa8d8' },
+            { k: 'patri',   label: 'Patrimoine',     gl: '◆', col: '#e0458f' },
+            { k: 'cible',   label: 'Mes points',     gl: '●', col: '#2e9e54' }
+        ];
+        function renderCatPane() {
+            var cc = catCounts();
+            var h = '<div style="font-weight:700;font-size:12px;padding:3px 8px 6px;'
+                + 'opacity:0.9;">Repères affichés</div>';
+            CAT_DEFS.forEach(function(d) {
+                var on = catShow[d.k] !== false;
+                h += '<div data-cat="' + d.k + '" style="display:flex;align-items:center;'
+                    + 'gap:9px;padding:7px 8px;cursor:pointer;border-radius:6px;'
+                    + (on ? '' : 'opacity:0.45;') + '">'
+                    + '<span style="width:16px;text-align:center;font-size:14px;color:'
+                    + d.col + ';">' + d.gl + '</span>'
+                    + '<span style="flex:1;">' + d.label + '</span>'
+                    + '<span style="opacity:0.6;font-size:11px;min-width:18px;'
+                    + 'text-align:right;">' + (cc[d.k] || 0) + '</span>'
+                    + '<span style="width:34px;height:18px;border-radius:9px;display:block;'
+                    + 'position:relative;background:'
+                    + (on ? '#4caf50' : 'rgba(255,255,255,0.25)') + ';">'
+                    + '<span style="position:absolute;top:2px;width:14px;height:14px;'
+                    + 'border-radius:50%;background:#fff;'
+                    + (on ? 'right:2px;' : 'left:2px;') + '"></span></span></div>';
+            });
+            catPane.innerHTML = h;
+            catPane.querySelectorAll('[data-cat]').forEach(function(row) {
+                row.onclick = function() {
+                    var k = row.dataset.cat;
+                    catShow[k] = (catShow[k] === false);   // bascule
+                    try { localStorage.setItem('pwaVScamCats',
+                        JSON.stringify(catShow)); } catch(_e) {}
+                    buildItems(); placeMiniItems(); renderCatPane(); tick();
+                };
+            });
+        }
+        hud.querySelector('#pwaCamCat').onclick = function() {
+            var open = (catPane.style.display === 'none');
+            catPane.style.display = open ? 'block' : 'none';
+            if (open) renderCatPane();
         };
         // Capture photo : compose le flux camera + l'overlay marqueurs +
         // bandeau d'info (cap, position, date). Partage natif si dispo,
