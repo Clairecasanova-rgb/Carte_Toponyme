@@ -1245,7 +1245,11 @@
             + 'box-shadow:0 3px 12px rgba(0,0,0,0.6);'
             + 'border:2px solid rgba(255,255,255,0.55);';
         var miniLeafDiv = document.createElement('div');
-        miniLeafDiv.style.cssText = 'position:absolute;inset:0;background:#202833;';
+        // z-index:0 -> miniLeafDiv cree son propre contexte d'empilement, donc
+        // les panes Leaflet (tiles 200, overlay 400, marker 600, popup 700) ne
+        // debordent PAS au-dessus de miniOverlay (le secteur FOV / direction)
+        // ni des boutons zoom. Sinon le FOV est masque par les tuiles.
+        miniLeafDiv.style.cssText = 'position:absolute;inset:0;z-index:0;background:#202833;';
         var miniOverlay = document.createElement('canvas');
         miniOverlay.width = 360; miniOverlay.height = 360;
         miniOverlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
@@ -2594,6 +2598,7 @@
             if (xrSession) return { err: 'Affiner non dispo en mode AR (camera prise par ARCore)' };
             if (calibAz != null) return { err: 'Valide d\'abord le calage perspective' };
             if (!res.rayProf || !res.rayProf.length) return { err: 'Pas de viewshed' };
+            if (!res.rayProf[0].maxAng) return { err: 'Affiner indisponible sur une vue enregistree (donnees allegees)' };
             if (!video.videoWidth || !video.videoHeight) return { err: 'Camera pas prete' };
             var SW = 200, SH = 110;
             var tmp = document.createElement('canvas');
@@ -4437,6 +4442,24 @@
                 panoramaURL: res.panoramaURL, planiURL: res.planiURL,
                 perspectiveURL: res.perspectiveURL, perspMeta: res.perspMeta,
                 bounds: res.bounds, panoMeta: res.panoMeta,
+                // Donnees geometriques legeres -> la vue camera retrouve sa
+                // silhouette de relief et le champ de visibilite sur la
+                // mini-carte quand on "Revoir" + Camera une vue enregistree.
+                // On omet maxAng (gros tableau par cellule, non necessaire
+                // a l'affichage : reliefAt et drawRelief degradent vers sky).
+                bandOut: res.bandOut || [],
+                rayProf: (res.rayProf || []).map(function(r) {
+                    return { bearing: r.bearing, sky: r.sky, bandMax: r.bandMax };
+                }),
+                visPts: (function() {
+                    var vp = res.visPts || [];
+                    var step = Math.max(1, Math.ceil(vp.length / 600));
+                    var out = [];
+                    for (var i = 0; i < vp.length; i += step) {
+                        out.push({ lat: vp[i].lat, lon: vp[i].lon, d: vp[i].d });
+                    }
+                    return out;
+                })(),
                 targets: (res.targets || []).map(function(t) {
                     return { name: t.name, lat: t.lat, lon: t.lon,
                              dist: Math.round(t.dist), visible: t.visible };
