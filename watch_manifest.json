@@ -1,37 +1,9 @@
 {
   "cartes": [
     {
-      "base": "carte_polygones_2B273",
-      "file": "carte_polygones_2B273.watchmap",
-      "nom": "Scata",
-      "nfeat": 136,
-      "nperso": 9,
-      "bytes": 14858,
-      "bbox": [
-        42.413313,
-        9.388302,
-        42.432117,
-        9.420168
-      ]
-    },
-    {
-      "base": "carte_polygones_2B355",
-      "file": "carte_polygones_2B355.watchmap",
-      "nom": "Volpajola",
-      "nfeat": 281,
-      "nperso": 0,
-      "bytes": 33149,
-      "bbox": [
-        42.502204,
-        9.326226,
-        42.545646,
-        9.410534
-      ]
-    },
-    {
-      "base": "carte_polygones_6_communes",
-      "file": "carte_polygones_6_communes.watchmap",
-      "nom": "Biguglia, Brando, Corte, Omessa, Scata, Volpajola",
+      "base": "carte_polygones_2B043_27",
+      "file": "carte_polygones_2B043_27.watchmap",
+      "nom": "Jules",
       "nfeat": 1603,
       "nperso": 88,
       "bytes": 232996,
@@ -43,9 +15,9 @@
       ]
     },
     {
-      "base": "carte_polygones_7_communes",
-      "file": "carte_polygones_7_communes.watchmap",
-      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
+      "base": "Scata",
+      "file": "Scata.watchmap",
+      "nom": "7 communes",
       "nfeat": 2030,
       "nperso": 88,
       "bytes": 286716,
@@ -57,59 +29,101 @@
       ]
     },
     {
-      "base": "carte_polygones_7_communes_02",
-      "file": "carte_polygones_7_communes_02.watchmap",
-      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
-      "nfeat": 2030,
-      "nperso": 88,
-      "bytes": 286716,
+      "base": "Biguglia-Corte-2026",
+      "file": "Biguglia-Corte-2026.watchmap",
+      "nom": "4 communes",
+      "nfeat": 1045,
+      "nperso": 18,
+      "bytes": 167493,
       "bbox": [
-        42.127631,
-        8.936741,
-        42.851459,
-        9.532529
+        42.140536,
+        8.93722,
+        42.677244,
+        9.52606
       ]
     },
     {
-      "base": "carte_polygones_7_communes_03",
-      "file": "carte_polygones_7_communes_03.watchmap",
-      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
-      "nfeat": 2030,
-      "nperso": 88,
-      "bytes": 286716,
+      "base": "carte_polygones_2B162_07",
+      "file": "carte_polygones_2B162_07.watchmap",
+      "nom": "14 communes",
+      "nfeat": 3442,
+      "nperso": 12,
+      "bytes": 410483,
       "bbox": [
-        42.127631,
-        8.936741,
-        42.851459,
-        9.532529
+        41.704968,
+        9.029373,
+        42.570212,
+        9.434027
       ]
     },
     {
-      "base": "carte_polygones_7_communes_04",
-      "file": "carte_polygones_7_communes_04.watchmap",
-      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
-      "nfeat": 2030,
-      "nperso": 88,
-      "bytes": 286716,
-      "bbox": [
-        42.127631,
-        8.936741,
-        42.851459,
-        9.532529
-      ]
-    },
-    {
-      "base": "carte_polygones_7_communes_05",
-      "file": "carte_polygones_7_communes_05.watchmap",
-      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
-      "nfeat": 2030,
+      "base": "Barrettali6",
+      "file": "Barrettali6.watchmap",
+      "nom": "Barrettali",
+      "nfeat": 604,
       "nperso": 0,
-      "bytes": 278800,
+      "bytes": 74129,
       "bbox": [
-        42.127631,
-        8.936741,
-        42.851459,
-        9.532529
+        42.85303,
+        9.314556,
+        42.90117,
+        9.406684
+      ]
+    },
+    {
+      "base": "carte_polygones_5_communes_11",
+      "file": "carte_polygones_5_communes_11.watchmap",
+      "nom": "12 communes",
+      "nfeat": 2808,
+      "nperso": 202,
+      "bytes": 317492,
+      "bbox": [
+        42.296586,
+        9.164694,
+        42.496884,
+        9.344866
+      ]
+    },
+    {
+      "base": "Barrettali",
+      "file": "Barrettali.watchmap",
+      "nom": "Barrettali",
+      "nfeat": 604,
+      "nperso": 0,
+      "bytes": 74129,
+      "bbox": [
+        42.85303,
+        9.314556,
+        42.90117,
+        9.406684
+      ]
+    },
+    {
+      "base": "Quenza",
+      "file": "Quenza.watchmap",
+      "nom": "Quenza",
+      "nfeat": 374,
+      "nperso": 1,
+      "bytes": 69518,
+      "bbox": [
+        41.72902,
+        9.107278,
+        41.86503,
+        9.324222
+      ]
+    },
+    {
+      "base": "carte_polygones_2B162_11",
+      "file": "carte_polygones_2B162_11.watchmap",
+      "nom": "Commune 2B162_11",
+      "nfeat": 375,
+      "nperso": 12,
+      "bytes": 6170,
+      "bbox": [
+        41.799837,
+        9.146468,
+        42.493319,
+        9.405234
       ]
     }
   ]
