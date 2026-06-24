@@ -6,7 +6,7 @@
       "nom": "Jules",
       "nfeat": 1603,
       "nperso": 88,
-      "bytes": 232996,
+      "bytes": 234645,
       "bbox": [
         42.15583,
         8.936741,
@@ -20,7 +20,7 @@
       "nom": "7 communes",
       "nfeat": 2030,
       "nperso": 88,
-      "bytes": 286716,
+      "bytes": 288813,
       "bbox": [
         42.127631,
         8.936741,
@@ -34,7 +34,7 @@
       "nom": "4 communes",
       "nfeat": 1045,
       "nperso": 18,
-      "bytes": 167493,
+      "bytes": 168590,
       "bbox": [
         42.140536,
         8.93722,
@@ -48,7 +48,7 @@
       "nom": "14 communes",
       "nfeat": 3442,
       "nperso": 12,
-      "bytes": 410483,
+      "bytes": 414051,
       "bbox": [
         41.704968,
         9.029373,
@@ -62,7 +62,7 @@
       "nom": "Barrettali",
       "nfeat": 604,
       "nperso": 0,
-      "bytes": 74129,
+      "bytes": 74745,
       "bbox": [
         42.85303,
         9.314556,
@@ -76,7 +76,7 @@
       "nom": "12 communes",
       "nfeat": 2808,
       "nperso": 202,
-      "bytes": 317492,
+      "bytes": 320402,
       "bbox": [
         42.296586,
         9.164694,
@@ -90,7 +90,7 @@
       "nom": "Barrettali",
       "nfeat": 604,
       "nperso": 0,
-      "bytes": 74129,
+      "bytes": 74745,
       "bbox": [
         42.85303,
         9.314556,
@@ -104,7 +104,7 @@
       "nom": "Quenza",
       "nfeat": 374,
       "nperso": 1,
-      "bytes": 69518,
+      "bytes": 69900,
       "bbox": [
         41.72902,
         9.107278,
@@ -118,7 +118,7 @@
       "nom": "Commune 2B162_11",
       "nfeat": 375,
       "nperso": 12,
-      "bytes": 6170,
+      "bytes": 6555,
       "bbox": [
         41.799837,
         9.146468,
