@@ -20,8 +20,10 @@
 <script>
 const SUPABASE_URL = 'https://dhtpnxlliietxxxiaqfa.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRodHBueGxsaWlldHh4eGlhcWZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMjg0MTcsImV4cCI6MjA4MzkwNDQxN30.4oAlJpeyBc8Zsv4aTmP-1UKL8npFM0NYf3iPCiAE0Q4';
-let wid = null, last = 0;
+let wid = null, last = 0, wakeLock = null;
 const s = document.getElementById('s'), b = document.getElementById('b');
+async function acquireWake() { try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (wid && document.visibilityState === 'visible') acquireWake(); });
 async function push(lat, lon, acc) {
   try {
     const r = await fetch(SUPABASE_URL + '/rest/v1/watch_position', {
@@ -35,10 +37,11 @@ async function push(lat, lon, acc) {
   } catch (e) { s.textContent = 'Erreur reseau'; }
 }
 b.onclick = () => {
-  if (wid) { navigator.geolocation.clearWatch(wid); wid = null; b.textContent = 'Demarrer le partage'; s.textContent = 'Inactif'; return; }
+  if (wid) { navigator.geolocation.clearWatch(wid); wid = null; if (wakeLock) { wakeLock.release(); wakeLock = null; } b.textContent = 'Demarrer le partage'; s.textContent = 'Inactif'; return; }
   if (!navigator.geolocation) { s.textContent = 'Geolocalisation non supportee'; return; }
   b.textContent = 'Arreter';
   s.textContent = 'Acquisition GPS...';
+  acquireWake();
   wid = navigator.geolocation.watchPosition(
     p => { const now = Date.now(); if (now - last < 4000) return; last = now;
            push(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 0); },
