@@ -1,0 +1,116 @@
+{
+  "cartes": [
+    {
+      "base": "carte_polygones_2B273",
+      "file": "carte_polygones_2B273.watchmap",
+      "nom": "Scata",
+      "nfeat": 136,
+      "nperso": 9,
+      "bytes": 14858,
+      "bbox": [
+        42.413313,
+        9.388302,
+        42.432117,
+        9.420168
+      ]
+    },
+    {
+      "base": "carte_polygones_2B355",
+      "file": "carte_polygones_2B355.watchmap",
+      "nom": "Volpajola",
+      "nfeat": 281,
+      "nperso": 0,
+      "bytes": 33149,
+      "bbox": [
+        42.502204,
+        9.326226,
+        42.545646,
+        9.410534
+      ]
+    },
+    {
+      "base": "carte_polygones_6_communes",
+      "file": "carte_polygones_6_communes.watchmap",
+      "nom": "Biguglia, Brando, Corte, Omessa, Scata, Volpajola",
+      "nfeat": 1603,
+      "nperso": 88,
+      "bytes": 232996,
+      "bbox": [
+        42.15583,
+        8.936741,
+        42.84937,
+        9.532529
+      ]
+    },
+    {
+      "base": "carte_polygones_7_communes",
+      "file": "carte_polygones_7_communes.watchmap",
+      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
+      "nfeat": 2030,
+      "nperso": 88,
+      "bytes": 286716,
+      "bbox": [
+        42.127631,
+        8.936741,
+        42.851459,
+        9.532529
+      ]
+    },
+    {
+      "base": "carte_polygones_7_communes_02",
+      "file": "carte_polygones_7_communes_02.watchmap",
+      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
+      "nfeat": 2030,
+      "nperso": 88,
+      "bytes": 286716,
+      "bbox": [
+        42.127631,
+        8.936741,
+        42.851459,
+        9.532529
+      ]
+    },
+    {
+      "base": "carte_polygones_7_communes_03",
+      "file": "carte_polygones_7_communes_03.watchmap",
+      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
+      "nfeat": 2030,
+      "nperso": 88,
+      "bytes": 286716,
+      "bbox": [
+        42.127631,
+        8.936741,
+        42.851459,
+        9.532529
+      ]
+    },
+    {
+      "base": "carte_polygones_7_communes_04",
+      "file": "carte_polygones_7_communes_04.watchmap",
+      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
+      "nfeat": 2030,
+      "nperso": 88,
+      "bytes": 286716,
+      "bbox": [
+        42.127631,
+        8.936741,
+        42.851459,
+        9.532529
+      ]
+    },
+    {
+      "base": "carte_polygones_7_communes_05",
+      "file": "carte_polygones_7_communes_05.watchmap",
+      "nom": "Biguglia, Brando, Corte, Omessa, Piedicorte-di-Gaggio, Scata, Volpajola",
+      "nfeat": 2030,
+      "nperso": 0,
+      "bytes": 278800,
+      "bbox": [
+        42.127631,
+        8.936741,
+        42.851459,
+        9.532529
+      ]
+    }
+  ]
+}
