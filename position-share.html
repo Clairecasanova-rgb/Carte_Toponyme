@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partage position - montre</title>
+<style>
+  body { font-family: system-ui, sans-serif; text-align: center; padding: 24px; background:#1d2128; color:#eee; }
+  h2 { color:#88c0d0; }
+  #s { font-size: 1.1em; margin: 22px 0; min-height: 2.4em; }
+  button { font-size: 1.1em; padding: 14px 24px; border:0; border-radius:10px; background:#88c0d0; color:#1d2128; font-weight:bold; }
+  small { color:#888; }
+</style>
+</head>
+<body>
+  <h2>Partager ma position vers la montre</h2>
+  <p><small>Garde cette page ouverte pendant l'usage. La montre lit ta position en secours quand son GPS n'a pas de fix.</small></p>
+  <div id="s">Inactif</div>
+  <button id="b">Demarrer le partage</button>
+<script>
+const SUPABASE_URL = 'https://dhtpnxlliietxxxiaqfa.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRodHBueGxsaWlldHh4eGlhcWZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMjg0MTcsImV4cCI6MjA4MzkwNDQxN30.4oAlJpeyBc8Zsv4aTmP-1UKL8npFM0NYf3iPCiAE0Q4';
+let wid = null, last = 0;
+const s = document.getElementById('s'), b = document.getElementById('b');
+async function push(lat, lon, acc) {
+  try {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/watch_position', {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY,
+                 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ lat, lon, acc, device: 'tel' })
+    });
+    s.textContent = r.ok ? ('Partage : ' + lat.toFixed(5) + ', ' + lon.toFixed(5) + '  (±' + Math.round(acc) + ' m)')
+                         : ('Erreur ' + r.status + ' (table watch_position creee ?)');
+  } catch (e) { s.textContent = 'Erreur reseau'; }
+}
+b.onclick = () => {
+  if (wid) { navigator.geolocation.clearWatch(wid); wid = null; b.textContent = 'Demarrer le partage'; s.textContent = 'Inactif'; return; }
+  if (!navigator.geolocation) { s.textContent = 'Geolocalisation non supportee'; return; }
+  b.textContent = 'Arreter';
+  s.textContent = 'Acquisition GPS...';
+  wid = navigator.geolocation.watchPosition(
+    p => { const now = Date.now(); if (now - last < 4000) return; last = now;
+           push(p.coords.latitude, p.coords.longitude, p.coords.accuracy || 0); },
+    e => { s.textContent = 'Erreur GPS : ' + e.message; },
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 });
+};
+</script>
+</body>
+</html>
