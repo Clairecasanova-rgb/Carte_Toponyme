@@ -8946,6 +8946,38 @@
     setTimeout(_fixRasterManager, 1500);
     setTimeout(_fixRasterManager, 3500);
 
+    // ===== FAB derriere le panneau de recherche quand il est ouvert =====
+    // #pwaPosBtn / #pwaStatusBadge ont un z-index (100050) > celui du panneau
+    // #searchContainer (10000) -> ils flottent PAR-DESSUS le panneau ouvert. On
+    // les passe derriere quand le panneau est ouvert. Et on empeche le FAB geoloc
+    // (.leaflet-bottom.leaflet-right) d'etre pousse au MILIEU quand le panneau est
+    // agrandi (sa hauteur poussait le FAB a ~55% de l'ecran).
+    function _fabBehindPanel() {
+        var sb = document.getElementById('searchContainer');
+        // Derriere si le panneau de recherche OU la fenetre raster est ouverte.
+        var open = (sb && !sb.classList.contains('collapsed')) || !!document.getElementById('rasterMgrModal');
+        ['pwaPosBtn', 'pwaStatusBadge'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.style.setProperty('z-index', open ? '9990' : '100050', 'important');
+        });
+        var geo = document.querySelector('.leaflet-bottom.leaflet-right');
+        if (geo && sb && open && sb.offsetHeight > window.innerHeight * 0.5) {
+            geo.style.bottom = '';  // panneau agrandi -> FAB revient en bas (pas au milieu)
+        }
+    }
+    (function _initFabBehind() {
+        var sb = document.getElementById('searchContainer');
+        if (!sb) { setTimeout(_initFabBehind, 600); return; }
+        try { new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb, { attributes: true, attributeFilter: ['class', 'style'] }); } catch (_e) {}
+        try { if (typeof ResizeObserver !== 'undefined') new ResizeObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb); } catch (_e2) {}
+        // Detecte aussi l'ouverture/fermeture de la fenetre raster (ajout/retrait au DOM).
+        try { new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(document.body, { childList: true }); } catch (_e3) {}
+        window.addEventListener('resize', function() { requestAnimationFrame(_fabBehindPanel); });
+        _fabBehindPanel();
+        setTimeout(_fabBehindPanel, 1200);
+        setTimeout(_fabBehindPanel, 3000);
+    })();
+
     // ===== Rasters attaches a un PROJET (overlay) =====
     // Charge les couches raster liees aux projets affiches sur la carte
     // (table projet_rasters / RPC public_projet_rasters). Independant du hash
