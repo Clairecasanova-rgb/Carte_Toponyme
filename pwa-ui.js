@@ -8850,6 +8850,102 @@
     window._pwa.install = openInstallFlow;
     window._pwa.toast = showToast;
 
+    // ===== Surcharge gestionnaire de rasters (fix blend + mobile) =====
+    // Remplace openDynRasterManager (defini dans la carte) : (1) blend applique
+    // ET memorise meme pour imageOverlay (getElement, pas seulement getContainer),
+    // (2) layout bottom-sheet sur mobile -> la carte reste visible pendant le reglage.
+    function _fixedRasterManager(leafletMap) {
+        if (!leafletMap) leafletMap = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
+        if (!leafletMap) return;
+        var ex = document.getElementById('rasterMgrModal');
+        if (ex) { ex.remove(); return; }
+        var layers = window._rasterLayers || [];
+        var isMobile = window.innerWidth < 760;
+        var modal = document.createElement('div');
+        modal.id = 'rasterMgrModal';
+        if (isMobile) {
+            modal.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:40vh;'
+                + 'background:rgba(255,255,255,0.96);border-top-left-radius:14px;border-top-right-radius:14px;'
+                + 'box-shadow:0 -3px 18px rgba(0,0,0,0.25);z-index:10100;font-family:Segoe UI,sans-serif;'
+                + 'font-size:13px;display:flex;flex-direction:column;overflow:hidden;';
+        } else {
+            var top = 100, right = 10, mb = document.getElementById('rasterMgrBtn');
+            if (mb) { var br = mb.getBoundingClientRect(); top = br.bottom + 6; right = window.innerWidth - br.right; }
+            modal.style.cssText = 'position:fixed;top:' + top + 'px;right:' + right + 'px;width:300px;max-height:80vh;'
+                + 'background:white;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.15);z-index:10100;'
+                + 'font-family:Segoe UI,sans-serif;font-size:13px;overflow:hidden;display:flex;flex-direction:column;';
+        }
+        var header = document.createElement('div');
+        header.style.cssText = 'padding:10px 16px;font-size:10px;color:#8b7355;text-transform:uppercase;'
+            + 'letter-spacing:0.6px;font-weight:700;display:flex;justify-content:space-between;align-items:center;'
+            + 'border-bottom:1px solid #f0ebe3;background:#faf7f2;';
+        header.innerHTML = '<span>Rasters (' + layers.length + ')</span>'
+            + '<span id="rasterMgrClose" style="cursor:pointer;font-size:20px;color:#8b7355;padding:0 8px;line-height:1">&times;</span>';
+        var body = document.createElement('div');
+        body.style.cssText = 'padding:10px;overflow-y:auto;flex:1;';
+        modal.appendChild(header); modal.appendChild(body);
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.body;
+        fsEl.appendChild(modal);
+
+        function applyBlend(layer, mode) {
+            var el = (layer.getElement && layer.getElement()) || (layer.getContainer && layer.getContainer()) || null;
+            if (el) el.style.mixBlendMode = (mode === 'normal' ? '' : mode);
+            layer._rasterMeta = layer._rasterMeta || {};
+            layer._rasterMeta.blend_mode = mode;
+        }
+        function card(layer) {
+            var m = layer._rasterMeta || {};
+            var visible = leafletMap.hasLayer(layer);
+            var op = layer.options.opacity != null ? layer.options.opacity : 0.85;
+            var blend = m.blend_mode || 'normal';
+            var row = document.createElement('div');
+            row.style.cssText = 'background:#faf7f2;border:1px solid ' + (visible ? '#8b4513' : '#f0ebe3')
+                + ';border-radius:6px;padding:9px 10px;margin-bottom:7px;';
+            row.innerHTML =
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">'
+                + '<div style="font-weight:600;color:#5a3a1a;font-size:12px">' + (m.name || m.safe_name || 'raster') + '</div>'
+                + '<label style="cursor:pointer;font-size:11px;color:#8b7355"><input type="checkbox" class="dynRVis"' + (visible ? ' checked' : '') + '> Visible</label>'
+                + '</div>'
+                + '<div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#666">'
+                + '<span style="white-space:nowrap">Opac.</span>'
+                + '<input type="range" class="dynROpa" min="0" max="1" step="0.05" value="' + op + '" style="flex:1;min-width:60px">'
+                + '<select class="dynRBlend" style="padding:3px;border:1px solid #d0c0b0;border-radius:4px;font-size:11px">'
+                + ['normal', 'multiply', 'darken', 'screen', 'overlay', 'lighten'].map(function(b) {
+                    return '<option value="' + b + '"' + (b === blend ? ' selected' : '') + '>' + b + '</option>';
+                }).join('') + '</select>'
+                + '<button class="dynRCenter" title="Centrer" style="border:1px solid #c0a080;background:#fff;border-radius:4px;cursor:pointer;padding:3px 7px;color:#5a3a1a">&#9678;</button>'
+                + '</div>';
+            body.appendChild(row);
+            row.querySelector('.dynRVis').onchange = function(e) {
+                if (e.target.checked) { leafletMap.addLayer(layer); applyBlend(layer, layer._rasterMeta && layer._rasterMeta.blend_mode || 'normal'); }
+                else leafletMap.removeLayer(layer);
+                row.style.borderColor = e.target.checked ? '#8b4513' : '#f0ebe3';
+            };
+            row.querySelector('.dynROpa').oninput = function(e) { layer.setOpacity(parseFloat(e.target.value)); };
+            row.querySelector('.dynRBlend').onchange = function(e) { applyBlend(layer, e.target.value); };
+            row.querySelector('.dynRCenter').onclick = function() {
+                try { if (layer.getBounds) leafletMap.fitBounds(layer.getBounds(), { maxZoom: 19 }); } catch (_e) {}
+            };
+        }
+        var grouped = {};
+        layers.forEach(function(layer) { var g = (layer._rasterMeta && layer._rasterMeta.group) || 'Rasters'; (grouped[g] = grouped[g] || []).push(layer); });
+        Object.keys(grouped).forEach(function(g) {
+            var hd = document.createElement('div');
+            hd.style.cssText = 'font-size:10px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin:6px 2px 4px;border-bottom:1px solid #e5ddd0;padding-bottom:3px;';
+            hd.textContent = g + ' (' + grouped[g].length + ')';
+            body.appendChild(hd);
+            grouped[g].forEach(card);
+        });
+        document.getElementById('rasterMgrClose').onclick = function() { modal.remove(); };
+    }
+    function _fixRasterManager() {
+        window.openDynRasterManager = _fixedRasterManager;
+        var b = document.getElementById('rasterMgrBtn');
+        if (b) b.onclick = function() { _fixedRasterManager(); };
+    }
+    setTimeout(_fixRasterManager, 1500);
+    setTimeout(_fixRasterManager, 3500);
+
     // ===== Rasters attaches a un PROJET (overlay) =====
     // Charge les couches raster liees aux projets affiches sur la carte
     // (table projet_rasters / RPC public_projet_rasters). Independant du hash
