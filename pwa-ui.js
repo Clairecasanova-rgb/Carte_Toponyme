@@ -8869,44 +8869,54 @@
             body: JSON.stringify({ p_projet_ids: ids })
         }).then(function(r) { return r.ok ? r.json() : []; }).then(function(rows) {
             if (!rows || !rows.length) return;
-            window._projetRasterLayers = window._projetRasterLayers || {};
+            window._dynamicRasters = window._dynamicRasters || [];
+            window._projetRasterKeys = window._projetRasterKeys || {};
+            var added = 0;
             rows.forEach(function(rw) {
                 var key = 'pr_' + rw.projet_id + '_' + (rw.nom_affiche || rw.image_url || rw.raster_folder);
-                if (window._projetRasterLayers[key]) return;
+                if (window._projetRasterKeys[key]) return;
                 var op = (rw.opacity != null) ? Number(rw.opacity) : 0.85;
                 var blend = rw.blend_mode || 'normal';
                 var lyr = null;
                 if (rw.image_url && rw.bounds_json) {
                     lyr = L.imageOverlay(rw.image_url, rw.bounds_json, {
-                        opacity: op, interactive: false, zIndex: 350,
-                        className: 'projet-raster projet-raster-blend-' + blend
+                        opacity: op, interactive: false, zIndex: 300,
+                        className: 'dyn-raster dyn-raster-blend-' + blend
                     });
                 } else if (rw.raster_folder) {
                     lyr = L.tileLayer(
                         'https://clairecasanova-rgb.github.io/raster-tiles-corse/'
                         + rw.raster_folder + '/{z}/{x}/{y}.png',
                         { opacity: op, minNativeZoom: rw.min_zoom || 14,
-                          maxNativeZoom: rw.max_zoom || 18, maxZoom: 22, zIndex: 350,
-                          className: 'projet-raster projet-raster-blend-' + blend,
-                          attribution: rw.nom_affiche || rw.raster_folder });
+                          maxNativeZoom: rw.max_zoom || 18, maxZoom: 22, zIndex: 300,
+                          className: 'dyn-raster dyn-raster-blend-' + blend });
                 }
                 if (!lyr) return;
-                lyr._projetRasterName = rw.nom_affiche || ('Raster projet ' + rw.projet_id);
-                window._projetRasterLayers[key] = lyr;
-                if (rw.visible_default !== false) {
-                    lyr.addTo(map);
-                    if (blend !== 'normal') {
+                window._projetRasterKeys[key] = true;
+                var slug = rw.raster_folder
+                    || (rw.image_url ? rw.image_url.split('/').pop().replace(/\.[a-z]+$/i, '') : ('projet' + rw.projet_id));
+                if (blend !== 'normal') {
+                    lyr.on('add', function() {
                         try {
-                            var el = lyr.getElement ? lyr.getElement() : null;
-                            if (el) el.style.mixBlendMode = blend;
-                        } catch (_e) {}
-                    }
+                            var c = lyr.getElement ? lyr.getElement() : (lyr.getContainer ? lyr.getContainer() : null);
+                            if (c) c.style.mixBlendMode = blend;
+                        } catch (_eb) {}
+                    });
                 }
-                try {
-                    if (window._layerControl && window._layerControl.addOverlay)
-                        window._layerControl.addOverlay(lyr, lyr._projetRasterName);
-                } catch (_e2) {}
+                if (rw.visible_default !== false) lyr.addTo(map);
+                // Meme registre que les rasters de carte -> la fenetre de gestion
+                // des rasters (toggle / opacite / blend) les prend en charge.
+                window._dynamicRasters.push({ layer: lyr, meta: {
+                    raster_folder: slug, nom_affiche: rw.nom_affiche || slug,
+                    blend_mode: blend, opacity: op,
+                    visible_default: rw.visible_default !== false,
+                    group_name: rw.group_name || 'Rasters de projet'
+                } });
+                added++;
             });
+            if (added && typeof window.createDynRasterManagerBtn === 'function') {
+                try { window.createDynRasterManagerBtn(map); } catch (_em) {}
+            }
         }).catch(function(_e3) {});
     }
     setTimeout(_loadProjetRasters, 2000);
