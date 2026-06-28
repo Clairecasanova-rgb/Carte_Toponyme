@@ -8849,4 +8849,65 @@
     window._pwa.rename = openRenameShortcutModal;
     window._pwa.install = openInstallFlow;
     window._pwa.toast = showToast;
+
+    // ===== Rasters attaches a un PROJET (overlay) =====
+    // Charge les couches raster liees aux projets affiches sur la carte
+    // (table projet_rasters / RPC public_projet_rasters). Independant du hash
+    // de carte -> un raster d'un projet apparait sur toute carte le montrant.
+    function _loadProjetRasters() {
+        var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
+        if (!SU || !SK || typeof L === 'undefined') return;
+        var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
+        if (!map) { setTimeout(_loadProjetRasters, 1500); return; }
+        var projets = (typeof listAvailableProjects === 'function') ? listAvailableProjects() : [];
+        var ids = projets.map(function(p) { return p.id; })
+                         .filter(function(x) { return typeof x === 'number' && x >= 0; });
+        if (!ids.length) return;
+        fetch(SU + '/rest/v1/rpc/public_projet_rasters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': SK, 'Authorization': 'Bearer ' + SK },
+            body: JSON.stringify({ p_projet_ids: ids })
+        }).then(function(r) { return r.ok ? r.json() : []; }).then(function(rows) {
+            if (!rows || !rows.length) return;
+            window._projetRasterLayers = window._projetRasterLayers || {};
+            rows.forEach(function(rw) {
+                var key = 'pr_' + rw.projet_id + '_' + (rw.nom_affiche || rw.image_url || rw.raster_folder);
+                if (window._projetRasterLayers[key]) return;
+                var op = (rw.opacity != null) ? Number(rw.opacity) : 0.85;
+                var blend = rw.blend_mode || 'normal';
+                var lyr = null;
+                if (rw.image_url && rw.bounds_json) {
+                    lyr = L.imageOverlay(rw.image_url, rw.bounds_json, {
+                        opacity: op, interactive: false, zIndex: 350,
+                        className: 'projet-raster projet-raster-blend-' + blend
+                    });
+                } else if (rw.raster_folder) {
+                    lyr = L.tileLayer(
+                        'https://clairecasanova-rgb.github.io/raster-tiles-corse/'
+                        + rw.raster_folder + '/{z}/{x}/{y}.png',
+                        { opacity: op, minNativeZoom: rw.min_zoom || 14,
+                          maxNativeZoom: rw.max_zoom || 18, maxZoom: 22, zIndex: 350,
+                          className: 'projet-raster projet-raster-blend-' + blend,
+                          attribution: rw.nom_affiche || rw.raster_folder });
+                }
+                if (!lyr) return;
+                lyr._projetRasterName = rw.nom_affiche || ('Raster projet ' + rw.projet_id);
+                window._projetRasterLayers[key] = lyr;
+                if (rw.visible_default !== false) {
+                    lyr.addTo(map);
+                    if (blend !== 'normal') {
+                        try {
+                            var el = lyr.getElement ? lyr.getElement() : null;
+                            if (el) el.style.mixBlendMode = blend;
+                        } catch (_e) {}
+                    }
+                }
+                try {
+                    if (window._layerControl && window._layerControl.addOverlay)
+                        window._layerControl.addOverlay(lyr, lyr._projetRasterName);
+                } catch (_e2) {}
+            });
+        }).catch(function(_e3) {});
+    }
+    setTimeout(_loadProjetRasters, 2000);
 })();
