@@ -8858,7 +8858,7 @@
         if (!leafletMap) leafletMap = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
         if (!leafletMap) return;
         var ex = document.getElementById('rasterMgrModal');
-        if (ex) { ex.remove(); return; }
+        if (ex) { ex.remove(); if (typeof _fabBehindPanel === 'function') _fabBehindPanel(); return; }
         var layers = window._rasterLayers || [];
         var isMobile = window.innerWidth < 760;
         var modal = document.createElement('div');
@@ -8886,6 +8886,7 @@
         modal.appendChild(header); modal.appendChild(body);
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.body;
         fsEl.appendChild(modal);
+        if (typeof _fabBehindPanel === 'function') _fabBehindPanel();  // cache la loupe / passe les FAB derriere
 
         function applyBlend(layer, mode) {
             var el = (layer.getElement && layer.getElement()) || (layer.getContainer && layer.getContainer()) || null;
@@ -8958,7 +8959,7 @@
             };
         }
         render();
-        document.getElementById('rasterMgrClose').onclick = function() { modal.remove(); };
+        document.getElementById('rasterMgrClose').onclick = function() { modal.remove(); if (typeof _fabBehindPanel === 'function') _fabBehindPanel(); };
     }
     function _fixRasterManager() {
         window.openDynRasterManager = _fixedRasterManager;
@@ -8987,9 +8988,14 @@
             geo.style.bottom = '';  // panneau agrandi -> FAB revient en bas (pas au milieu)
         }
         // Bouton recherche (#panelToggle) : cache quand la FENETRE RASTER est
-        // ouverte, reaffiche quand elle est fermee.
+        // ouverte, reaffiche quand elle est fermee. !important INLINE car la carte
+        // tourne en pseudo-plein-ecran ou ".leaflet-pseudo-fullscreen #panelToggle"
+        // force display:flex !important -> seul un !important inline le bat.
         var pt = document.getElementById('panelToggle');
-        if (pt) pt.style.setProperty('display', document.getElementById('rasterMgrModal') ? 'none' : '');
+        if (pt) {
+            if (document.getElementById('rasterMgrModal')) pt.style.setProperty('display', 'none', 'important');
+            else pt.style.removeProperty('display');
+        }
     }
     (function _initFabBehind() {
         var sb = document.getElementById('searchContainer');
