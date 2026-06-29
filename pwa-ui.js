@@ -8893,7 +8893,25 @@
             layer._rasterMeta = layer._rasterMeta || {};
             layer._rasterMeta.blend_mode = mode;
         }
-        function card(layer) {
+        // Ordre d'empilement = ordre de window._rasterLayers : 1er de la liste = AU-DESSUS.
+        function assignZ() {
+            var arr = window._rasterLayers || [];
+            var n = arr.length;
+            arr.forEach(function(layer, i) {
+                if (layer.setZIndex) { try { layer.setZIndex(300 + (n - 1 - i)); } catch (_e) {} }
+            });
+        }
+        function render() {
+            body.innerHTML = '';
+            assignZ();
+            var arr = window._rasterLayers || [];
+            var hd = document.createElement('div');
+            hd.style.cssText = 'font-size:10px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin:2px 2px 6px;border-bottom:1px solid #e5ddd0;padding-bottom:3px;';
+            hd.textContent = 'Calques (' + arr.length + ') - haut = au-dessus';
+            body.appendChild(hd);
+            arr.forEach(function(layer, i) { card(layer, i, arr.length); });
+        }
+        function card(layer, idx, n) {
             var m = layer._rasterMeta || {};
             var visible = leafletMap.hasLayer(layer);
             var op = layer.options.opacity != null ? layer.options.opacity : 0.85;
@@ -8904,7 +8922,11 @@
             row.innerHTML =
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">'
                 + '<div style="font-weight:600;color:#5a3a1a;font-size:12px">' + (m.name || m.safe_name || 'raster') + '</div>'
-                + '<label style="cursor:pointer;font-size:11px;color:#8b7355"><input type="checkbox" class="dynRVis"' + (visible ? ' checked' : '') + '> Visible</label>'
+                + '<span style="display:flex;align-items:center;gap:5px">'
+                + '<button class="dynRUp" title="Monter (au-dessus)"' + (idx === 0 ? ' disabled' : '') + ' style="border:1px solid #c0a080;background:' + (idx === 0 ? '#eee' : '#fff') + ';border-radius:4px;cursor:' + (idx === 0 ? 'default' : 'pointer') + ';padding:1px 7px;color:#5a3a1a">&#9650;</button>'
+                + '<button class="dynRDown" title="Descendre (en-dessous)"' + (idx === n - 1 ? ' disabled' : '') + ' style="border:1px solid #c0a080;background:' + (idx === n - 1 ? '#eee' : '#fff') + ';border-radius:4px;cursor:' + (idx === n - 1 ? 'default' : 'pointer') + ';padding:1px 7px;color:#5a3a1a">&#9660;</button>'
+                + '<label style="cursor:pointer;font-size:11px;color:#8b7355"><input type="checkbox" class="dynRVis"' + (visible ? ' checked' : '') + '> Vis.</label>'
+                + '</span>'
                 + '</div>'
                 + '<div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#666">'
                 + '<span style="white-space:nowrap">Opac.</span>'
@@ -8917,7 +8939,7 @@
                 + '</div>';
             body.appendChild(row);
             row.querySelector('.dynRVis').onchange = function(e) {
-                if (e.target.checked) { leafletMap.addLayer(layer); applyBlend(layer, layer._rasterMeta && layer._rasterMeta.blend_mode || 'normal'); }
+                if (e.target.checked) { leafletMap.addLayer(layer); applyBlend(layer, layer._rasterMeta && layer._rasterMeta.blend_mode || 'normal'); assignZ(); }
                 else leafletMap.removeLayer(layer);
                 row.style.borderColor = e.target.checked ? '#8b4513' : '#f0ebe3';
             };
@@ -8926,16 +8948,16 @@
             row.querySelector('.dynRCenter').onclick = function() {
                 try { if (layer.getBounds) leafletMap.fitBounds(layer.getBounds(), { maxZoom: 19 }); } catch (_e) {}
             };
+            row.querySelector('.dynRUp').onclick = function() {
+                var arr = window._rasterLayers, i = arr.indexOf(layer);
+                if (i > 0) { arr.splice(i, 1); arr.splice(i - 1, 0, layer); render(); }
+            };
+            row.querySelector('.dynRDown').onclick = function() {
+                var arr = window._rasterLayers, i = arr.indexOf(layer);
+                if (i >= 0 && i < arr.length - 1) { arr.splice(i, 1); arr.splice(i + 1, 0, layer); render(); }
+            };
         }
-        var grouped = {};
-        layers.forEach(function(layer) { var g = (layer._rasterMeta && layer._rasterMeta.group) || 'Rasters'; (grouped[g] = grouped[g] || []).push(layer); });
-        Object.keys(grouped).forEach(function(g) {
-            var hd = document.createElement('div');
-            hd.style.cssText = 'font-size:10px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin:6px 2px 4px;border-bottom:1px solid #e5ddd0;padding-bottom:3px;';
-            hd.textContent = g + ' (' + grouped[g].length + ')';
-            body.appendChild(hd);
-            grouped[g].forEach(card);
-        });
+        render();
         document.getElementById('rasterMgrClose').onclick = function() { modal.remove(); };
     }
     function _fixRasterManager() {
@@ -8964,6 +8986,10 @@
         if (geo && sb && open && sb.offsetHeight > window.innerHeight * 0.5) {
             geo.style.bottom = '';  // panneau agrandi -> FAB revient en bas (pas au milieu)
         }
+        // Bouton recherche (#panelToggle) : cache quand la FENETRE RASTER est
+        // ouverte, reaffiche quand elle est fermee.
+        var pt = document.getElementById('panelToggle');
+        if (pt) pt.style.setProperty('display', document.getElementById('rasterMgrModal') ? 'none' : '');
     }
     (function _initFabBehind() {
         var sb = document.getElementById('searchContainer');
