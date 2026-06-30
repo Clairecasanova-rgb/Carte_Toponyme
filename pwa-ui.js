@@ -26,7 +26,7 @@
     // visibles) pour le reperage offline. On force donc maxNativeZoom = ancien
     // maxZoom (= dernier zoom ou les tuiles existent reellement) et on bump
     // maxZoom a 22 (limite Leaflet). Idem pour minNativeZoom / minZoom.
-    function _patchTileLayerOptions(layer) {
+    function _patchTileLayerOptions(layer) {1111
         if (!layer || !layer.options) return;
         var o = layer.options;
         // Zoom natif REEL du serveur de cette couche (au-dela, le serveur n'a
@@ -9011,71 +9011,95 @@
     })();
 
     // ===== Rasters attaches a un PROJET (overlay) =====
-    // Charge les couches raster liees aux projets affiches sur la carte
-    // (table projet_rasters / RPC public_projet_rasters). Independant du hash
-    // de carte -> un raster d'un projet apparait sur toute carte le montrant.
+    // DECOUPLE de la liste de projets de la carte : on charge TOUS les rasters
+    // de projet (lecture publique RLS) et on affiche ceux dont l'emprise recoupe
+    // la carte. Un overlay apparait donc sur TOUTE carte couvrant sa zone, meme
+    // si elle ne liste pas son projet dans PROJETS_DISPONIBLES (l'ancien filtre
+    // par projet faisait disparaitre les overlays sur les cartes voisines). Les
+    // overlays hors de la vue initiale apparaissent des qu'on se deplace dessus.
+    function _projetRasterInView(map, rw) {
+        // Tuiles XYZ (raster_folder sans emprise) : toujours candidat (Leaflet
+        // ne charge que les tuiles dans la vue -> cout nul hors zone).
+        if (rw.raster_folder && !rw.bounds_json) return true;
+        if (!rw.bounds_json) return false;
+        try { return map.getBounds().intersects(L.latLngBounds(rw.bounds_json)); }
+        catch (e) { return false; }
+    }
+    function _applyProjetRasters(map, rows) {
+        window._dynamicRasters = window._dynamicRasters || [];
+        window._projetRasterKeys = window._projetRasterKeys || {};
+        var added = 0;
+        rows.forEach(function(rw) {
+            var key = 'pr_' + rw.projet_id + '_' + (rw.nom_affiche || rw.image_url || rw.raster_folder);
+            if (window._projetRasterKeys[key]) return;
+            if (rw.actif === false) return;              // desactive depuis l'admin
+            if (!_projetRasterInView(map, rw)) return;   // pas (encore) dans la zone
+            var op = (rw.opacity != null) ? Number(rw.opacity) : 0.85;
+            var blend = rw.blend_mode || 'normal';
+            var lyr = null;
+            if (rw.image_url && rw.bounds_json) {
+                lyr = L.imageOverlay(rw.image_url, rw.bounds_json, {
+                    opacity: op, interactive: false, zIndex: 300,
+                    className: 'dyn-raster dyn-raster-blend-' + blend
+                });
+            } else if (rw.raster_folder) {
+                lyr = L.tileLayer(
+                    'https://clairecasanova-rgb.github.io/raster-tiles-corse/'
+                    + rw.raster_folder + '/{z}/{x}/{y}.png',
+                    { opacity: op, minNativeZoom: rw.min_zoom || 14,
+                      maxNativeZoom: rw.max_zoom || 18, maxZoom: 22, zIndex: 300,
+                      className: 'dyn-raster dyn-raster-blend-' + blend });
+            }
+            if (!lyr) return;
+            window._projetRasterKeys[key] = true;
+            var slug = rw.raster_folder
+                || (rw.image_url ? rw.image_url.split('/').pop().replace(/\.[a-z]+$/i, '') : ('projet' + rw.projet_id));
+            if (blend !== 'normal') {
+                lyr.on('add', function() {
+                    try {
+                        var c = lyr.getElement ? lyr.getElement() : (lyr.getContainer ? lyr.getContainer() : null);
+                        if (c) c.style.mixBlendMode = blend;
+                    } catch (_eb) {}
+                });
+            }
+            if (rw.visible_default !== false) lyr.addTo(map);
+            // Meme registre que les rasters de carte -> la fenetre de gestion
+            // des rasters (toggle / opacite / blend) les prend en charge.
+            window._dynamicRasters.push({ layer: lyr, meta: {
+                raster_folder: slug, nom_affiche: rw.nom_affiche || slug,
+                blend_mode: blend, opacity: op,
+                visible_default: rw.visible_default !== false,
+                group_name: rw.group_name || 'Rasters de projet'
+            } });
+            added++;
+        });
+        if (added && typeof window.createDynRasterManagerBtn === 'function') {
+            try { window.createDynRasterManagerBtn(map); } catch (_em) {}
+        }
+        return added;
+    }
     function _loadProjetRasters() {
         var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
         if (!SU || !SK || typeof L === 'undefined') return;
         var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
         if (!map) { setTimeout(_loadProjetRasters, 1500); return; }
-        var projets = (typeof listAvailableProjects === 'function') ? listAvailableProjects() : [];
-        var ids = projets.map(function(p) { return p.id; })
-                         .filter(function(x) { return typeof x === 'number' && x >= 0; });
-        if (!ids.length) return;
-        fetch(SU + '/rest/v1/rpc/public_projet_rasters', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': SK, 'Authorization': 'Bearer ' + SK },
-            body: JSON.stringify({ p_projet_ids: ids })
+        // Lecture publique de la table (RLS SELECT autorise a anon) ; pas de
+        // filtre par projet -> on recupere tout puis on filtre par emprise.
+        // select=* : inclut la colonne 'actif' des qu'elle existe SANS casser
+        // avant la migration (rw.actif undefined -> non filtre = affiche).
+        fetch(SU + '/rest/v1/projet_rasters?select=*&order=ordre', {
+            headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
         }).then(function(r) { return r.ok ? r.json() : []; }).then(function(rows) {
             if (!rows || !rows.length) return;
-            window._dynamicRasters = window._dynamicRasters || [];
-            window._projetRasterKeys = window._projetRasterKeys || {};
-            var added = 0;
-            rows.forEach(function(rw) {
-                var key = 'pr_' + rw.projet_id + '_' + (rw.nom_affiche || rw.image_url || rw.raster_folder);
-                if (window._projetRasterKeys[key]) return;
-                var op = (rw.opacity != null) ? Number(rw.opacity) : 0.85;
-                var blend = rw.blend_mode || 'normal';
-                var lyr = null;
-                if (rw.image_url && rw.bounds_json) {
-                    lyr = L.imageOverlay(rw.image_url, rw.bounds_json, {
-                        opacity: op, interactive: false, zIndex: 300,
-                        className: 'dyn-raster dyn-raster-blend-' + blend
-                    });
-                } else if (rw.raster_folder) {
-                    lyr = L.tileLayer(
-                        'https://clairecasanova-rgb.github.io/raster-tiles-corse/'
-                        + rw.raster_folder + '/{z}/{x}/{y}.png',
-                        { opacity: op, minNativeZoom: rw.min_zoom || 14,
-                          maxNativeZoom: rw.max_zoom || 18, maxZoom: 22, zIndex: 300,
-                          className: 'dyn-raster dyn-raster-blend-' + blend });
-                }
-                if (!lyr) return;
-                window._projetRasterKeys[key] = true;
-                var slug = rw.raster_folder
-                    || (rw.image_url ? rw.image_url.split('/').pop().replace(/\.[a-z]+$/i, '') : ('projet' + rw.projet_id));
-                if (blend !== 'normal') {
-                    lyr.on('add', function() {
-                        try {
-                            var c = lyr.getElement ? lyr.getElement() : (lyr.getContainer ? lyr.getContainer() : null);
-                            if (c) c.style.mixBlendMode = blend;
-                        } catch (_eb) {}
-                    });
-                }
-                if (rw.visible_default !== false) lyr.addTo(map);
-                // Meme registre que les rasters de carte -> la fenetre de gestion
-                // des rasters (toggle / opacite / blend) les prend en charge.
-                window._dynamicRasters.push({ layer: lyr, meta: {
-                    raster_folder: slug, nom_affiche: rw.nom_affiche || slug,
-                    blend_mode: blend, opacity: op,
-                    visible_default: rw.visible_default !== false,
-                    group_name: rw.group_name || 'Rasters de projet'
-                } });
-                added++;
-            });
-            if (added && typeof window.createDynRasterManagerBtn === 'function') {
-                try { window.createDynRasterManagerBtn(map); } catch (_em) {}
+            window._projetRasterRows = rows;
+            _applyProjetRasters(map, rows);
+            // Re-evalue a chaque deplacement : un overlay hors vue initiale
+            // s'ajoute des qu'on navigue sur sa zone (dedoublonne via les cles).
+            if (!map._projetRastersHooked) {
+                map._projetRastersHooked = true;
+                map.on('moveend', function() {
+                    _applyProjetRasters(map, window._projetRasterRows || []);
+                });
             }
         }).catch(function(_e3) {});
     }
