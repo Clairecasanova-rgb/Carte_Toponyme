@@ -9294,3 +9294,63 @@
         boot();
     }
 })();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-07) : cadastre AU-DESSUS des rasters projet.
+   Le cadastre (WMS CADASTRALPARCELS) vivait dans le tilePane et se
+   faisait recouvrir par les rasters projet (imageOverlay dans overlayPane
+   z=400, ou tileLayer dans tilePane z=200). On le place dans un pane dedie
+   a z-index 450 : au-dessus des rasters, mais SOUS les marqueurs/points
+   (markerPane=600) pour qu'ils restent visibles/cliquables. Plan IGN J+1
+   garde son pane baked (planIgnPane=650). Sans regeneration.
+   ===================================================================== */
+(function pwaCadastreOnTopPatch() {
+    'use strict';
+    function isCadastre(lyr) {
+        try {
+            if (lyr && lyr.wmsParams && lyr.wmsParams.layers &&
+                String(lyr.wmsParams.layers).indexOf('CADASTRALPARCELS') >= 0) return true;
+            if (lyr && lyr.options && lyr.options.layers &&
+                String(lyr.options.layers).indexOf('CADASTRALPARCELS') >= 0) return true;
+            if (lyr && lyr._url && String(lyr._url).indexOf('CADASTRALPARCELS') >= 0) return true;
+        } catch (e) {}
+        return false;
+    }
+    function getMap() {
+        for (var k in window) {
+            try {
+                var w = window[k];
+                if (w && w._container && w._container.classList &&
+                    w._container.classList.contains('leaflet-container') && w._layers) return w;
+            } catch (e) {}
+        }
+        return null;
+    }
+    function apply(map) {
+        if (!map.getPane('cadastreTopPane')) {
+            var p = map.createPane('cadastreTopPane');
+            p.style.zIndex = 450;
+            p.style.pointerEvents = 'none';
+        }
+        var layers = [];
+        for (var id in map._layers) layers.push(map._layers[id]);
+        layers.forEach(function (lyr) {
+            if (isCadastre(lyr) && lyr.options && lyr.options.pane !== 'cadastreTopPane') {
+                lyr.options.pane = 'cadastreTopPane';
+                if (map.hasLayer(lyr)) { map.removeLayer(lyr); map.addLayer(lyr); }
+            }
+        });
+    }
+    function boot() {
+        var map = getMap();
+        if (!map) { setTimeout(boot, 1000); return; }
+        apply(map);
+        /* Le cadastre peut etre active plus tard, ou des rasters ajoutes en
+           differe (moveend) : on re-applique apres chaque ajout de couche. */
+        map.on('overlayadd layeradd', function () {
+            setTimeout(function () { apply(map); }, 120);
+        });
+    }
+    if (document.readyState === 'loading') window.addEventListener('load', boot);
+    else boot();
+})();
