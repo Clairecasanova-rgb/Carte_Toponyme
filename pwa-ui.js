@@ -9354,3 +9354,78 @@
     if (document.readyState === 'loading') window.addEventListener('load', boot);
     else boot();
 })();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-07) : compression photo econome en memoire.
+   Le compressImage baked lisait l'image PLEINE RESOLUTION en base64
+   (readAsDataURL) + new Image + toDataURL en boucle + atob -> pic memoire
+   enorme sur une photo d'appareil (12-48 Mpx) -> crash de l'onglet mobile
+   -> Chrome recharge la page au clic "Sauvegarder". On remplace la fonction
+   GLOBALE compressImage par une version qui decode via createImageBitmap
+   (ferme le bitmap aussitot) et sort via canvas.toBlob (sans base64/atob).
+   Reduit fortement le pic memoire -> plus de rechargement. Sans regen.
+   ===================================================================== */
+(function pwaCompressImagePatch() {
+    'use strict';
+    function install() {
+        if (window._pwaCompressPatched) return;
+        window._pwaCompressPatched = true;
+
+        window.compressImage = function (file) {
+            var MAXW = (typeof PHOTO_MAX_WIDTH !== 'undefined') ? PHOTO_MAX_WIDTH : 1200;
+            var MAXH = (typeof PHOTO_MAX_HEIGHT !== 'undefined') ? PHOTO_MAX_HEIGHT : 1200;
+            var Q = (typeof PHOTO_QUALITY !== 'undefined') ? PHOTO_QUALITY : 0.75;
+
+            function canvasToBlob(c) {
+                return new Promise(function (resolve) {
+                    if (c.toBlob) {
+                        c.toBlob(function (b) { resolve(b); }, 'image/jpeg', Q);
+                    } else {
+                        try {
+                            var du = c.toDataURL('image/jpeg', Q), bs = atob(du.split(',')[1]);
+                            var ab = new ArrayBuffer(bs.length), ia = new Uint8Array(ab);
+                            for (var i = 0; i < bs.length; i++) ia[i] = bs.charCodeAt(i);
+                            resolve(new Blob([ab], { type: 'image/jpeg' }));
+                        } catch (e) { resolve(null); }
+                    }
+                });
+            }
+            function paint(sw, sh, drawFn) {
+                var r = Math.min(1, MAXW / sw, MAXH / sh);
+                var w = Math.max(1, Math.round(sw * r)), h = Math.max(1, Math.round(sh * r));
+                var c = document.createElement('canvas');
+                c.width = w; c.height = h;
+                var ctx = c.getContext('2d');
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, w, h);
+                drawFn(ctx, w, h);
+                return canvasToBlob(c);
+            }
+            function viaImg() {
+                return new Promise(function (resolve, reject) {
+                    var url = URL.createObjectURL(file), img = new Image();
+                    img.onload = function () {
+                        paint(img.naturalWidth || img.width, img.naturalHeight || img.height,
+                            function (ctx, w, h) { ctx.drawImage(img, 0, 0, w, h); })
+                            .then(function (b) { URL.revokeObjectURL(url); resolve(b || file); });
+                    };
+                    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('img')); };
+                    img.src = url;
+                });
+            }
+            if (typeof createImageBitmap === 'function') {
+                return createImageBitmap(file).then(function (bmp) {
+                    return paint(bmp.width, bmp.height, function (ctx, w, h) {
+                        ctx.drawImage(bmp, 0, 0, w, h);
+                        if (bmp.close) bmp.close();
+                    });
+                }).then(function (b) { return b || file; }).catch(function () { return viaImg(); });
+            }
+            return viaImg();
+        };
+        console.log('[PWA] compressImage patch memoire installe');
+    }
+    /* Installer APRES que la page ait defini son compressImage (fin de load). */
+    if (document.readyState === 'complete') install();
+    else window.addEventListener('load', install);
+})();
