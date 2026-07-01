@@ -8906,13 +8906,68 @@
             body.innerHTML = '';
             assignZ();
             var arr = window._rasterLayers || [];
-            var hd = document.createElement('div');
-            hd.style.cssText = 'font-size:10px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin:2px 2px 6px;border-bottom:1px solid #e5ddd0;padding-bottom:3px;';
-            hd.textContent = 'Calques (' + arr.length + ') - haut = au-dessus';
-            body.appendChild(hd);
-            arr.forEach(function(layer, i) { card(layer, i, arr.length); });
+            // Regroupement par categorie (group_name) en conservant l'ordre global
+            // (= ordre d'empilement z-index). Chaque categorie est un parent pliable
+            // dont la case a cocher affiche/masque d'un coup tous ses enfants (etat
+            // indetermine si seulement certains sont visibles).
+            var grouped = {}, order = [];
+            arr.forEach(function(layer) {
+                var g = (layer._rasterMeta && layer._rasterMeta.group) || 'Rasters';
+                if (!grouped[g]) { grouped[g] = []; order.push(g); }
+                grouped[g].push(layer);
+            });
+            order.forEach(function(g) {
+                var groupLayers = grouped[g];
+                var head = document.createElement('div');
+                head.style.cssText = 'display:flex;align-items:center;gap:7px;margin:4px 2px 6px;'
+                    + 'border-bottom:1px solid #e5ddd0;padding-bottom:4px;';
+                var caret = document.createElement('span');
+                caret.textContent = '▾';
+                caret.style.cssText = 'cursor:pointer;color:#8b7355;font-size:11px;width:11px;text-align:center;user-select:none;';
+                var pcb = document.createElement('input');
+                pcb.type = 'checkbox';
+                pcb.style.cssText = 'cursor:pointer;margin:0';
+                var lab = document.createElement('span');
+                lab.textContent = g + ' (' + groupLayers.length + ')';
+                lab.style.cssText = 'font-size:10px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;'
+                    + 'font-weight:700;cursor:pointer;flex:1';
+                head.appendChild(caret); head.appendChild(pcb); head.appendChild(lab);
+                body.appendChild(head);
+                var wrap = document.createElement('div');
+                body.appendChild(wrap);
+                groupLayers.forEach(function(layer) { card(layer, arr.indexOf(layer), arr.length, wrap); });
+
+                function refreshParent() {
+                    var vis = 0;
+                    groupLayers.forEach(function(l) { if (leafletMap.hasLayer(l)) vis++; });
+                    pcb.checked = vis > 0;
+                    pcb.indeterminate = vis > 0 && vis < groupLayers.length;
+                }
+                refreshParent();
+                // La case parent relaie son etat aux cases enfants (qui portent
+                // l'ajout/retrait de couche + le style + le z-index).
+                pcb.onchange = function() {
+                    var want = pcb.checked;
+                    pcb.indeterminate = false;
+                    var cbs = wrap.querySelectorAll('.dynRVis');
+                    for (var i = 0; i < cbs.length; i++) {
+                        if (cbs[i].checked !== want) { cbs[i].checked = want; cbs[i].dispatchEvent(new Event('change')); }
+                    }
+                    refreshParent();
+                };
+                wrap.addEventListener('change', function(e) {
+                    if (e.target && e.target.classList && e.target.classList.contains('dynRVis')) refreshParent();
+                });
+                function toggleCollapse() {
+                    var hidden = wrap.style.display === 'none';
+                    wrap.style.display = hidden ? '' : 'none';
+                    caret.textContent = hidden ? '▾' : '▸';
+                }
+                caret.onclick = toggleCollapse;
+                lab.onclick = toggleCollapse;
+            });
         }
-        function card(layer, idx, n) {
+        function card(layer, idx, n, container) {
             var m = layer._rasterMeta || {};
             var visible = leafletMap.hasLayer(layer);
             var op = layer.options.opacity != null ? layer.options.opacity : 0.85;
@@ -8938,7 +8993,7 @@
                 }).join('') + '</select>'
                 + '<button class="dynRCenter" title="Centrer" style="border:1px solid #c0a080;background:#fff;border-radius:4px;cursor:pointer;padding:3px 7px;color:#5a3a1a">&#9678;</button>'
                 + '</div>';
-            body.appendChild(row);
+            (container || body).appendChild(row);
             row.querySelector('.dynRVis').onchange = function(e) {
                 if (e.target.checked) { leafletMap.addLayer(layer); applyBlend(layer, layer._rasterMeta && layer._rasterMeta.blend_mode || 'normal'); assignZ(); }
                 else leafletMap.removeLayer(layer);
@@ -9104,4 +9159,138 @@
         }).catch(function(_e3) {});
     }
     setTimeout(_loadProjetRasters, 2000);
+})();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-07) : bouton "Appareil photo" a l'ajout / edition
+   de point. Les cartes deja deployees n'ont qu'un input "galerie"
+   (accept=image/*, SANS capture) -> sur mobile le navigateur ouvre la
+   galerie et n'offre pas l'appareil photo. On injecte, a cote de chaque
+   input photo, un bouton qui declenche un input dedie capture="environment"
+   (ouvre l'appareil photo arriere), et on route le fichier vers l'input
+   d'origine pour reutiliser l'apercu + la compression + l'upload existants.
+   S'applique a TOUTES les cartes sans regeneration (pwa-ui.js network-first).
+   ===================================================================== */
+(function pwaCameraButtonPatch() {
+    'use strict';
+
+    function routeToOriginal(orig, file) {
+        try {
+            var dt = new DataTransfer();
+            dt.items.add(file);
+            orig.files = dt.files;
+            orig.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function makeCamInput(orig) {
+        if (orig._pwaCam) return orig._pwaCam;
+        var cam = document.createElement('input');
+        cam.type = 'file';
+        cam.accept = 'image/*';
+        cam.setAttribute('capture', 'environment');
+        cam.style.display = 'none';
+        (orig.parentNode || document.body).insertBefore(cam, orig.nextSibling);
+        cam.addEventListener('change', function () {
+            if (!cam.files || !cam.files.length) return;
+            if (!routeToOriginal(orig, cam.files[0])) {
+                /* Fallback tres rare (pas de DataTransfer) : bascule capture
+                   sur l'input d'origine puis clic. */
+                orig.setAttribute('capture', 'environment');
+                orig.click();
+                setTimeout(function () { orig.removeAttribute('capture'); }, 1500);
+            }
+            cam.value = '';
+        });
+        orig._pwaCam = cam;
+        return cam;
+    }
+
+    function camButton(cam, className, inlineStyle) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        if (className) b.className = className;
+        if (inlineStyle) b.style.cssText = inlineStyle;
+        b.textContent = 'Appareil photo';
+        b.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            cam.click();
+        });
+        return b;
+    }
+
+    /* Formulaire d'AJOUT (draw) : #drawPhoto1 / #drawPhoto2 + bouton .btn-photo-upload */
+    function patchDraw() {
+        ['drawPhoto1', 'drawPhoto2'].forEach(function (id) {
+            var orig = document.getElementById(id);
+            if (!orig || orig._pwaCamPatched) return;
+            var btn = null;
+            document.querySelectorAll('.btn-photo-upload').forEach(function (c) {
+                var oc = c.getAttribute('onclick') || '';
+                if (!btn && oc.indexOf(id) >= 0) btn = c;
+            });
+            if (!btn) return; /* panneau pas encore rendu */
+            orig._pwaCamPatched = true;
+            var cam = makeCamInput(orig);
+            var cb = camButton(cam, btn.className);
+            btn.parentNode.insertBefore(cb, btn);
+            if (/photo/i.test(btn.textContent)) btn.textContent = 'Galerie';
+        });
+    }
+
+    /* Formulaire d'EDITION : #editPhotoInput1/2 dans une zone .edit-photo-empty */
+    function patchEdit() {
+        ['editPhotoInput1', 'editPhotoInput2'].forEach(function (id) {
+            var orig = document.getElementById(id);
+            if (!orig || orig._pwaCamPatched) return;
+            var num = id.replace(/\D+/g, '');
+            var empty = document.getElementById('editPhotoEmpty' + num);
+            if (!empty) return;
+            /* Carte deja regeneree (nouveau formulaire a 2 boutons) : ne pas
+               dupliquer -> on marque comme traite et on s'arrete. */
+            if (empty.querySelector('button')) { orig._pwaCamPatched = true; return; }
+            orig._pwaCamPatched = true;
+            var cam = makeCamInput(orig);
+            var cb = camButton(cam, null,
+                'display:block;margin:0 auto 6px;padding:6px 10px;font-size:11px;' +
+                'border:1px solid #4CAF50;background:#fff;color:#2e7d32;' +
+                'border-radius:6px;cursor:pointer;');
+            empty.insertBefore(cb, empty.firstChild);
+            var small = empty.querySelector('small');
+            if (small && !/galerie/i.test(small.textContent)) small.textContent = 'Galerie';
+        });
+    }
+
+    function patchAll() {
+        try { patchDraw(); } catch (e) {}
+        try { patchEdit(); } catch (e) {}
+    }
+
+    function boot() {
+        patchAll();
+        var tries = 0;
+        var iv = setInterval(function () {
+            patchAll();
+            if (++tries > 25) clearInterval(iv);
+        }, 700);
+        var moTimer = null, mo = null;
+        try {
+            mo = new MutationObserver(function () {
+                if (moTimer) return;
+                moTimer = setTimeout(function () { moTimer = null; patchAll(); }, 400);
+            });
+            mo.observe(document.body, { childList: true, subtree: true });
+            setTimeout(function () { if (mo) mo.disconnect(); }, 60000);
+        } catch (e) {}
+    }
+
+    if (document.readyState === 'loading') {
+        window.addEventListener('load', boot);
+    } else {
+        boot();
+    }
 })();
