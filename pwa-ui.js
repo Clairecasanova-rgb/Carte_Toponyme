@@ -9514,19 +9514,17 @@
 /* =====================================================================
    PATCH RUNTIME (2026-07) : projet par defaut 100% pilote depuis l'admin.
    PROJETS_DISPONIBLES est fige dans le HTML a la generation ; le code
-   embarque n'applique projet_override QUE s'il est dans cette whitelist
-   (test inWl) ET seulement si le localStorage ne l'emporte pas. Donc un
-   projet epingle en admin mais cree apres la generation (hors whitelist)
-   n'etait jamais charge, et sur un appareil ayant deja ouvert la carte le
-   "dernier projet ouvert" (localStorage) gagnait sur le choix admin.
-   Ici : on relit carte_default_state(hash) a CHAQUE chargement et, si un
-   projet_override est defini, on l'applique via changeProjet() -- quel que
-   soit son statut whitelist ET en gagnant sur le localStorage. Si aucun
-   override n'est defini, on ne touche a rien (le comportement "dernier
-   projet ouvert" reste actif). Tout se pilote donc depuis l'admin, sans
-   regeneration. NB : on ne MUTE PAS PROJETS_DISPONIBLES (le hash de carte,
-   donc la cle localStorage, en depend) ; changeProjet ajoute lui-meme
-   l'option manquante au select.
+   embarque n'applique le defaut QUE dans la whitelist (test inWl) et
+   laisse le localStorage (dernier projet OUVERT sur l'appareil) gagner.
+   Ici, a CHAQUE chargement, on decide cote serveur, en gagnant sur le
+   localStorage ET la whitelist :
+     1. si projet_override (admin) est defini -> ce projet ;
+     2. sinon mode "auto" -> default_projet_for_carte = dernier projet
+        MODIFIE (le plus actif) associe a la carte ;
+     3. si aucun des deux -> on ne touche a rien (comportement embarque).
+   NB : on ne MUTE PAS PROJETS_DISPONIBLES (le hash de carte, donc la cle
+   localStorage, en depend) ; changeProjet tolere un id hors whitelist et
+   ajoute lui-meme l'option manquante au select.
    ===================================================================== */
 (function pwaForceDefaultProjet() {
     'use strict';
@@ -9539,35 +9537,43 @@
         for (var i = 0; i < ids.length; i++) h = ((h << 5) - h + ids.charCodeAt(i)) | 0;
         return Math.abs(h).toString(36);
     }
-    function _go(pid, nom) {
-        try { window.changeProjet(pid, nom); } catch (e) {}
-        console.log('[PWA] Projet par defaut admin applique : ' + nom + ' (ID ' + pid + ')');
+    function _headers() {
+        return { 'Content-Type': 'application/json', 'apikey': window.SUPABASE_KEY, 'Authorization': 'Bearer ' + window.SUPABASE_KEY };
+    }
+    function _rpc(fn, hash) {
+        return fetch(window.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+            method: 'POST', headers: _headers(), body: JSON.stringify({ p_hash: hash })
+        }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+    }
+    function _applyProjet(pid, mode) {
+        pid = parseInt(pid, 10);
+        if (!pid || pid <= 0) return;
+        if (typeof window.PROJET_ID !== 'undefined' && window.PROJET_ID === pid) return;  // deja actif
+        var wl = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
+        var found = wl.filter(function (p) { return p && p.id == pid; })[0];
+        function go(nom) {
+            try { window.changeProjet(pid, nom); } catch (e) {}
+            console.log('[PWA] Projet par defaut (' + mode + ') : ' + nom + ' (ID ' + pid + ')');
+        }
+        if (found && found.nom) { go(found.nom); return; }
+        fetch(window.SUPABASE_URL + '/rest/v1/projets?select=id,nom&id=eq.' + pid, { headers: _headers() })
+            .then(function (r) { return r.ok ? r.json() : []; })
+            .then(function (rows) { go((rows && rows[0] && rows[0].nom) ? rows[0].nom : ('Projet ' + pid)); })
+            .catch(function () { try { window.changeProjet(pid); } catch (e2) {} });
     }
     function apply() {
-        var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
-        if (!SU || !SK || typeof window.changeProjet !== 'function') { setTimeout(apply, 800); return; }
+        if (!window.SUPABASE_URL || !window.SUPABASE_KEY || typeof window.changeProjet !== 'function') { setTimeout(apply, 800); return; }
         var hash = _carteHash();
         if (!hash) return;
-        fetch(SU + '/rest/v1/rpc/carte_default_state', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': SK, 'Authorization': 'Bearer ' + SK },
-            body: JSON.stringify({ p_hash: hash })
-        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (state) {
-            var pid = state && state.projet_override;
-            if (!pid) return;                          // aucun projet epingle -> comportement embarque (dernier projet ouvert)
-            pid = parseInt(pid, 10);
-            if (!pid || pid <= 0) return;
-            if (typeof window.PROJET_ID !== 'undefined' && window.PROJET_ID === pid) return;  // deja actif
-            // Nom : d'abord la whitelist locale, sinon lecture publique de la table projets.
-            var wl = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
-            var found = wl.filter(function (p) { return p && p.id == pid; })[0];
-            if (found && found.nom) { _go(pid, found.nom); return; }
-            fetch(SU + '/rest/v1/projets?select=id,nom&id=eq.' + pid, {
-                headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
-            }).then(function (r) { return r.ok ? r.json() : []; }).then(function (rows) {
-                _go(pid, (rows && rows[0] && rows[0].nom) ? rows[0].nom : ('Projet ' + pid));
-            }).catch(function () { try { window.changeProjet(pid); } catch (e2) {} });
-        }).catch(function () {});
+        _rpc('carte_default_state', hash).then(function (state) {
+            var ov = state && state.projet_override;
+            if (ov) { _applyProjet(ov, 'override admin'); return; }   // 1. projet epingle
+            // 2. mode auto -> dernier projet modifie (le plus actif)
+            _rpc('default_projet_for_carte', hash).then(function (smart) {
+                if (smart) _applyProjet(smart, 'auto : dernier modifie');
+                // 3. sinon : rien (comportement embarque)
+            });
+        });
     }
     if (document.readyState === 'complete') setTimeout(apply, 900);
     else window.addEventListener('load', function () { setTimeout(apply, 900); });
