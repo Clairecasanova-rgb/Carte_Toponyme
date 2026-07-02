@@ -9429,3 +9429,62 @@
     if (document.readyState === 'complete') install();
     else window.addEventListener('load', install);
 })();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-07) : noms de projets a jour (renommage admin).
+   Les noms sont figes dans PROJETS_DISPONIBLES a la generation du HTML ;
+   un renommage depuis l'admin ne s'y refletait pas (il faudrait regenerer).
+   On relit les noms actuels depuis la table `projets` (lecture publique RLS)
+   par les IDs deja presents, et on met a jour la whitelist + les selecteurs
+   + le libelle du projet actif. Sans regeneration.
+   ===================================================================== */
+(function pwaProjetNamesRefresh() {
+    'use strict';
+    function refresh() {
+        var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
+        if (!SU || !SK) return;
+        var list = (typeof window.PROJETS_DISPONIBLES !== 'undefined') ? window.PROJETS_DISPONIBLES : null;
+        if (!list || !list.length) return;
+        var ids = list.map(function (p) { return p && p.id; })
+                      .filter(function (id) { return id != null && !isNaN(parseInt(id, 10)) && id > 0; });
+        if (!ids.length) return;
+        fetch(SU + '/rest/v1/projets?select=id,nom&id=in.(' + ids.join(',') + ')', {
+            headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
+        }).then(function (r) { return r.ok ? r.json() : []; }).then(function (rows) {
+            if (!rows || !rows.length) return;
+            var byId = {};
+            rows.forEach(function (row) { if (row && row.id != null) byId[row.id] = row.nom; });
+            var changed = false;
+            list.forEach(function (p) {
+                if (p && byId.hasOwnProperty(p.id) && byId[p.id] && p.nom !== byId[p.id]) {
+                    p.nom = byId[p.id]; changed = true;
+                }
+            });
+            if (!changed) return;
+            /* Nom du projet actif */
+            try {
+                if (typeof window.PROJET_ID !== 'undefined' && window.PROJET_ID > 0 && byId[window.PROJET_ID]) {
+                    window.PROJET_NOM = byId[window.PROJET_ID];
+                    if (typeof window.DRAWING_PROJET_NOM !== 'undefined') window.DRAWING_PROJET_NOM = byId[window.PROJET_ID];
+                    var nomEl = document.getElementById('projetActuelNom');
+                    if (nomEl) nomEl.textContent = window.PROJET_NOM;
+                }
+            } catch (e) {}
+            /* Texte des options des selecteurs (par value = id) */
+            ['projetSelect', 'projetSelect2'].forEach(function (sid) {
+                var sel = document.getElementById(sid);
+                if (!sel) return;
+                for (var i = 0; i < sel.options.length; i++) {
+                    var v = parseInt(sel.options[i].value, 10);
+                    if (byId.hasOwnProperty(v) && byId[v]) sel.options[i].textContent = byId[v];
+                }
+            });
+            /* Reconstruire proprement via les fonctions existantes si dispo */
+            try { if (typeof window.loadProjets === 'function') window.loadProjets(); } catch (e) {}
+            try { if (typeof window.chargerListeProjets2 === 'function') window.chargerListeProjets2(); } catch (e) {}
+            console.log('[PWA] Noms de projets rafraichis (' + rows.length + ')');
+        }).catch(function () {});
+    }
+    if (document.readyState === 'complete') setTimeout(refresh, 800);
+    else window.addEventListener('load', function () { setTimeout(refresh, 800); });
+})();
