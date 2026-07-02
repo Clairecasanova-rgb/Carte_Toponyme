@@ -6895,6 +6895,18 @@
             showToast('App deja installee sur l\'ecran d\'accueil. Pour renommer, desinstalle d\'abord.', 6000);
             return;
         }
+        // iOS : aucune install programmatique possible (Apple). On renomme (le
+        // nom est applique au meta apple-mobile-web-app-title des la sauvegarde,
+        // sans reload) puis on montre les instructions "Partager -> Sur l'ecran
+        // d'accueil". PAS d'etape telechargement des fonds ici : sur iPhone un
+        // pre-cache fait dans l'onglet Safari ne suit pas dans l'app installee.
+        // Les fonds sont proposes a la 1re ouverture DEPUIS le raccourci (plus bas).
+        if (isIosSafari()) {
+            openRenameShortcutModal(function(newName) {
+                showIosInstallModal();
+            });
+            return;
+        }
         openRenameShortcutModal(function(newName) {
             // Apres le choix du nom : proposer de pre-charger les fonds Corse.
             openInstallTilesModal(function(tileChoice) {
@@ -7034,6 +7046,26 @@
             }
         } catch(_e) {}
     });
+
+    // Ouverte DEPUIS le raccourci installe (mode standalone) : proposer UNE
+    // fois le telechargement des fonds hors-ligne. C'est le bon moment sur
+    // iPhone : le pre-cache est alors stocke dans l'app installee (donc dispo
+    // hors-ligne), contrairement a un pre-cache fait dans l'onglet Safari.
+    // iOS uniquement (Android propose deja les fonds pendant l'install).
+    // setTimeout direct (pwa-ui.js en defer -> DOM pret) et PAS 'load' : sur une
+    // carte lourde 'load' arrive trop tard (apres toutes les tuiles).
+    setTimeout(function() {
+        if (!isPwaInstalled()) return;   // seulement si ouverte depuis le raccourci
+        var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '')
+            || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+        if (!isIOS) return;
+        var K = 'pwaOfflineProposedStandalone';
+        try { if (localStorage.getItem(K) === '1') return; } catch(_e) { return; }
+        try { localStorage.setItem(K, '1'); } catch(_e) {}
+        openInstallTilesModal(function(choice) {
+            if (choice === 'light' || choice === 'full') _startCorsePrecache(choice);
+        });
+    }, 3500);
 
     function _pollInstallPrompt() {
         var maxWait = 10000;
