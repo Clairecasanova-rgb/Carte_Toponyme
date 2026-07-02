@@ -13,6 +13,50 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    // === Correctif iOS : icones de la carte (loupe + calque) ===
+    // Loupe (#panelToggle .icon) : le glyphe Unicode ⌕ depend de la police
+    // systeme -> sur iOS (police d'Apple) il deborde du bouton / rend mal.
+    // On le remplace par un SVG loupe taille pour le bouton (rendu identique
+    // partout). Le badge de comptage (#panelBadge, frere de .icon) reste
+    // intact. Calque (.modern-layer-control) : SVG 16px -> 22px dans un bouton
+    // 44px (cible tactile Apple). Runtime -> vaut pour TOUTES les cartes sans
+    // regeneration. Sur une carte sans ces elements, ne fait rien.
+    (function _pwaMapIconsFix() {
+        // iOS UNIQUEMENT (iPhone/iPad) : c'est la police d'Apple qui rend le
+        // glyphe loupe ⌕ mal. Desktop et Android : AUCUN changement (le glyphe
+        // et le calque y sont deja corrects).
+        var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '')
+            || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+        if (!isIOS) return;
+        if (!document.getElementById('pwaMapIconsFixStyle')) {
+            var st = document.createElement('style');
+            st.id = 'pwaMapIconsFixStyle';
+            st.textContent =
+                '#panelToggle .icon{display:flex;align-items:center;justify-content:center;font-size:0;line-height:0;}' +
+                '#panelToggle .icon svg{width:24px;height:24px;display:block;}' +
+                '.modern-layer-control .layer-toggle{width:44px !important;height:44px !important;padding:0 !important;display:flex;align-items:center;justify-content:center;}' +
+                '.modern-layer-control .layer-toggle svg{width:22px;height:22px;}';
+            (document.head || document.documentElement).appendChild(st);
+        }
+        // #panelToggle est construit par le script de la carte APRES le
+        // chargement de pwa-ui.js : on reessaie jusqu'a ce qu'il existe. Le
+        // span .icon n'est jamais reecrit ensuite (seul #panelBadge.textContent
+        // change), donc le SVG n'est pas ecrase.
+        function swapLoupe() {
+            var ic = document.querySelector('#panelToggle .icon');
+            if (!ic) return false;
+            if (!ic.querySelector('svg')) {
+                ic.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><line x1="20.5" y1="20.5" x2="16.5" y2="16.5"></line></svg>';
+            }
+            return true;
+        }
+        if (swapLoupe()) return;
+        var tries = 0;
+        var iv = setInterval(function() {
+            if (swapLoupe() || ++tries > 40) clearInterval(iv);
+        }, 300);
+    })();
+
     var DB_NAME = 'topo-sync';
     var DB_VERSION = 4;
     var STORE = 'queue';
