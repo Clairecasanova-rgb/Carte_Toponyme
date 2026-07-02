@@ -9510,3 +9510,56 @@
     if (document.readyState === 'complete') setTimeout(refresh, 800);
     else window.addEventListener('load', function () { setTimeout(refresh, 800); });
 })();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-07) : projet par defaut admin FORCE hors whitelist.
+   PROJETS_DISPONIBLES est fige dans le HTML a la generation. Le code
+   embarque n'applique projet_override / smart-default QUE si le projet
+   est dans cette whitelist (test inWl, map_collaboration.py). Un projet
+   epingle en admin mais absent de la whitelist du HTML deploye n'etait
+   donc JAMAIS charge (retombait sur PROJET_ID hardcode ou le localStorage).
+   Ici on relit carte_default_state(hash) et, si un override est pin ET
+   hors whitelist, on l'applique via changeProjet() sans regeneration.
+   NB : on ne MUTE PAS PROJETS_DISPONIBLES (le hash de carte, donc la cle
+   localStorage, en depend) ; changeProjet ajoute lui-meme l'option au select.
+   ===================================================================== */
+(function pwaForceDefaultProjet() {
+    'use strict';
+    function _carteHash() {
+        var list = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
+        var ids = list.map(function (p) { return p && p.id; })
+                      .filter(function (id) { return id != null && !isNaN(parseInt(id, 10)) && id > 0; })
+                      .sort(function (a, b) { return a - b; }).join(',');
+        var h = 0;
+        for (var i = 0; i < ids.length; i++) h = ((h << 5) - h + ids.charCodeAt(i)) | 0;
+        return Math.abs(h).toString(36);
+    }
+    function apply() {
+        var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
+        if (!SU || !SK || typeof window.changeProjet !== 'function') { setTimeout(apply, 800); return; }
+        var hash = _carteHash();
+        if (!hash) return;
+        fetch(SU + '/rest/v1/rpc/carte_default_state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': SK, 'Authorization': 'Bearer ' + SK },
+            body: JSON.stringify({ p_hash: hash })
+        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (state) {
+            var pid = state && state.projet_override;
+            if (!pid) return;                          // aucun projet epingle -> comportement embarque
+            pid = parseInt(pid, 10);
+            if (!pid || pid <= 0) return;
+            if (typeof window.PROJET_ID !== 'undefined' && window.PROJET_ID === pid) return;  // deja actif
+            var wl = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
+            if (wl.some(function (p) { return p && p.id == pid; })) return;  // dans la whitelist -> gere par le HTML
+            fetch(SU + '/rest/v1/projets?select=id,nom&id=eq.' + pid, {
+                headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
+            }).then(function (r) { return r.ok ? r.json() : []; }).then(function (rows) {
+                var nom = (rows && rows[0] && rows[0].nom) ? rows[0].nom : ('Projet ' + pid);
+                try { window.changeProjet(pid, nom); } catch (e) {}
+                console.log('[PWA] Projet par defaut admin force (hors whitelist) : ' + nom + ' (ID ' + pid + ')');
+            }).catch(function () { try { window.changeProjet(pid); } catch (e2) {} });
+        }).catch(function () {});
+    }
+    if (document.readyState === 'complete') setTimeout(apply, 900);
+    else window.addEventListener('load', function () { setTimeout(apply, 900); });
+})();
