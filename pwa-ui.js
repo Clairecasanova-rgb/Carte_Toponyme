@@ -9512,16 +9512,21 @@
 })();
 
 /* =====================================================================
-   PATCH RUNTIME (2026-07) : projet par defaut admin FORCE hors whitelist.
-   PROJETS_DISPONIBLES est fige dans le HTML a la generation. Le code
-   embarque n'applique projet_override / smart-default QUE si le projet
-   est dans cette whitelist (test inWl, map_collaboration.py). Un projet
-   epingle en admin mais absent de la whitelist du HTML deploye n'etait
-   donc JAMAIS charge (retombait sur PROJET_ID hardcode ou le localStorage).
-   Ici on relit carte_default_state(hash) et, si un override est pin ET
-   hors whitelist, on l'applique via changeProjet() sans regeneration.
-   NB : on ne MUTE PAS PROJETS_DISPONIBLES (le hash de carte, donc la cle
-   localStorage, en depend) ; changeProjet ajoute lui-meme l'option au select.
+   PATCH RUNTIME (2026-07) : projet par defaut 100% pilote depuis l'admin.
+   PROJETS_DISPONIBLES est fige dans le HTML a la generation ; le code
+   embarque n'applique projet_override QUE s'il est dans cette whitelist
+   (test inWl) ET seulement si le localStorage ne l'emporte pas. Donc un
+   projet epingle en admin mais cree apres la generation (hors whitelist)
+   n'etait jamais charge, et sur un appareil ayant deja ouvert la carte le
+   "dernier projet ouvert" (localStorage) gagnait sur le choix admin.
+   Ici : on relit carte_default_state(hash) a CHAQUE chargement et, si un
+   projet_override est defini, on l'applique via changeProjet() -- quel que
+   soit son statut whitelist ET en gagnant sur le localStorage. Si aucun
+   override n'est defini, on ne touche a rien (le comportement "dernier
+   projet ouvert" reste actif). Tout se pilote donc depuis l'admin, sans
+   regeneration. NB : on ne MUTE PAS PROJETS_DISPONIBLES (le hash de carte,
+   donc la cle localStorage, en depend) ; changeProjet ajoute lui-meme
+   l'option manquante au select.
    ===================================================================== */
 (function pwaForceDefaultProjet() {
     'use strict';
@@ -9534,6 +9539,10 @@
         for (var i = 0; i < ids.length; i++) h = ((h << 5) - h + ids.charCodeAt(i)) | 0;
         return Math.abs(h).toString(36);
     }
+    function _go(pid, nom) {
+        try { window.changeProjet(pid, nom); } catch (e) {}
+        console.log('[PWA] Projet par defaut admin applique : ' + nom + ' (ID ' + pid + ')');
+    }
     function apply() {
         var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
         if (!SU || !SK || typeof window.changeProjet !== 'function') { setTimeout(apply, 800); return; }
@@ -9545,18 +9554,18 @@
             body: JSON.stringify({ p_hash: hash })
         }).then(function (r) { return r.ok ? r.json() : null; }).then(function (state) {
             var pid = state && state.projet_override;
-            if (!pid) return;                          // aucun projet epingle -> comportement embarque
+            if (!pid) return;                          // aucun projet epingle -> comportement embarque (dernier projet ouvert)
             pid = parseInt(pid, 10);
             if (!pid || pid <= 0) return;
             if (typeof window.PROJET_ID !== 'undefined' && window.PROJET_ID === pid) return;  // deja actif
+            // Nom : d'abord la whitelist locale, sinon lecture publique de la table projets.
             var wl = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
-            if (wl.some(function (p) { return p && p.id == pid; })) return;  // dans la whitelist -> gere par le HTML
+            var found = wl.filter(function (p) { return p && p.id == pid; })[0];
+            if (found && found.nom) { _go(pid, found.nom); return; }
             fetch(SU + '/rest/v1/projets?select=id,nom&id=eq.' + pid, {
                 headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
             }).then(function (r) { return r.ok ? r.json() : []; }).then(function (rows) {
-                var nom = (rows && rows[0] && rows[0].nom) ? rows[0].nom : ('Projet ' + pid);
-                try { window.changeProjet(pid, nom); } catch (e) {}
-                console.log('[PWA] Projet par defaut admin force (hors whitelist) : ' + nom + ' (ID ' + pid + ')');
+                _go(pid, (rows && rows[0] && rows[0].nom) ? rows[0].nom : ('Projet ' + pid));
             }).catch(function () { try { window.changeProjet(pid); } catch (e2) {} });
         }).catch(function () {});
     }
