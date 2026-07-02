@@ -9306,6 +9306,12 @@
    ===================================================================== */
 (function pwaCadastreOnTopPatch() {
     'use strict';
+    /* Approche robuste (independante du theme) : on EPINGLE les rasters dans un
+       pane bas (z250, juste au-dessus du fond de carte tilePane=200) et on remonte
+       le cadastre dans un pane dedie (z450). En theme clair l'overlayPane est
+       remonte a 660 -> les rasters imageOverlay y passaient AU-DESSUS du cadastre
+       (450) ET du plan IGN J+1 (650). En les pinnant a 250, cadastre, plan IGN J+1,
+       polygones et points repassent tous au-dessus. */
     function isCadastre(lyr) {
         try {
             if (lyr && lyr.wmsParams && lyr.wmsParams.layers &&
@@ -9313,6 +9319,14 @@
             if (lyr && lyr.options && lyr.options.layers &&
                 String(lyr.options.layers).indexOf('CADASTRALPARCELS') >= 0) return true;
             if (lyr && lyr._url && String(lyr._url).indexOf('CADASTRALPARCELS') >= 0) return true;
+        } catch (e) {}
+        return false;
+    }
+    function isRaster(lyr) {
+        try {
+            if (lyr && lyr._rasterMeta) return true;
+            if (lyr && lyr.options && lyr.options.className &&
+                String(lyr.options.className).indexOf('dyn-raster') >= 0) return true;
         } catch (e) {}
         return false;
     }
@@ -9326,27 +9340,35 @@
         }
         return null;
     }
+    function moveToPane(map, lyr, pane) {
+        if (lyr.options && lyr.options.pane !== pane) {
+            lyr.options.pane = pane;
+            if (map.hasLayer(lyr)) { map.removeLayer(lyr); map.addLayer(lyr); }
+        }
+    }
     function apply(map) {
+        if (!map.getPane('rasterLowPane')) {
+            var pr = map.createPane('rasterLowPane');
+            pr.style.zIndex = 250;  // au-dessus du fond (200), SOUS cadastre/plan IGN/points
+        }
         if (!map.getPane('cadastreTopPane')) {
-            var p = map.createPane('cadastreTopPane');
-            p.style.zIndex = 450;
-            p.style.pointerEvents = 'none';
+            var pc = map.createPane('cadastreTopPane');
+            pc.style.zIndex = 450;
+            pc.style.pointerEvents = 'none';
         }
         var layers = [];
         for (var id in map._layers) layers.push(map._layers[id]);
         layers.forEach(function (lyr) {
-            if (isCadastre(lyr) && lyr.options && lyr.options.pane !== 'cadastreTopPane') {
-                lyr.options.pane = 'cadastreTopPane';
-                if (map.hasLayer(lyr)) { map.removeLayer(lyr); map.addLayer(lyr); }
-            }
+            if (isCadastre(lyr)) moveToPane(map, lyr, 'cadastreTopPane');
+            else if (isRaster(lyr)) moveToPane(map, lyr, 'rasterLowPane');
         });
     }
     function boot() {
         var map = getMap();
         if (!map) { setTimeout(boot, 1000); return; }
         apply(map);
-        /* Le cadastre peut etre active plus tard, ou des rasters ajoutes en
-           differe (moveend) : on re-applique apres chaque ajout de couche. */
+        /* Cadastre active plus tard, ou rasters ajoutes en differe (moveend) :
+           on re-applique apres chaque ajout de couche. */
         map.on('overlayadd layeradd', function () {
             setTimeout(function () { apply(map); }, 120);
         });
