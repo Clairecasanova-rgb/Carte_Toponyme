@@ -9731,3 +9731,19 @@
         if (tryWrap() || tries > 120) clearInterval(iv);
     }, 800);
 })();
+
+/* ============================================================
+   Reduction du "flash" charge-puis-masque : applique l'etat par
+   defaut des calques DES QUE dispo (au lieu d'attendre 1,5 s).
+   Utilise la logique existante de la carte (aucun regen requis).
+   ============================================================ */
+(function () {
+    var tries = 0;
+    var iv = setInterval(function () {
+        tries++;
+        if (window._lastDefaultLayers && typeof window.applyDefaultLayerState === 'function') {
+            try { window.applyDefaultLayerState(window._lastDefaultLayers); } catch (e) {}
+        }
+        if (tries > 12) clearInterval(iv);  // ~1.8s puis le code de la carte + l'observer prennent le relais
+    }, 150);
+})();
