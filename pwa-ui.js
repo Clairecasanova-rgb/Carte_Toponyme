@@ -9654,3 +9654,80 @@
     if (document.readyState === 'complete') setTimeout(apply, 900);
     else window.addEventListener('load', function () { setTimeout(apply, 900); });
 })();
+
+/* ============================================================
+   Patch runtime : filtre "Periode" dans le panneau Elements
+   (au meme titre que Categorie / Couleur / Commune).
+   Lit le champ f.periode. TOTALEMENT NEUTRE pour les projets
+   sans periode. Idempotent avec la version source.
+   ============================================================ */
+(function () {
+    function getPeriodeForFeature(f) {
+        return (f && f.periode && String(f.periode).trim()) ? f.periode : 'Non definie';
+    }
+    function populatePeriode(full) {
+        var sel = document.getElementById('cfPeriodeSelect');
+        if (!sel) return;
+        var counts = {};
+        (full || []).forEach(function (f) {
+            var p = getPeriodeForFeature(f);
+            counts[p] = (counts[p] || 0) + 1;
+        });
+        var cur = sel.value;
+        var html = '<option value="">Toutes</option>';
+        Object.keys(counts).sort().forEach(function (p) {
+            html += '<option value="' + p + '"' + (p === cur ? ' selected' : '') + '>' + p + ' (' + counts[p] + ')</option>';
+        });
+        sel.innerHTML = html;
+    }
+    function injectRow() {
+        if (document.getElementById('cfPeriodeSelect')) return;
+        var communeSelect = document.getElementById('cfCommuneSelect');
+        if (!communeSelect) return;
+        var communeRow = communeSelect.closest('div');
+        var row = document.createElement('div');
+        row.style.cssText = 'padding:5px 10px; display:flex; align-items:center; gap:8px; border-top:1px solid #eee;';
+        row.innerHTML =
+            '<label style="font-size:11px; color:#888; min-width:55px;">Periode</label>' +
+            '<select id="cfPeriodeSelect" style="flex:1; min-width:100px; font-size:11px; padding:4px 6px; border:1px solid #ddd; border-radius:4px; background:#fff;">' +
+            '<option value="">Toutes</option></select>';
+        if (communeRow && communeRow.parentNode) {
+            communeRow.parentNode.insertBefore(row, communeRow.nextSibling);
+        } else {
+            communeSelect.parentNode.appendChild(row);
+        }
+        document.getElementById('cfPeriodeSelect').addEventListener('change', function () {
+            window.currentPeriodeFilter = this.value;
+            window.refreshCustomFeaturesList();
+        });
+    }
+    function tryWrap() {
+        if (window.__periodePatched) return true;
+        if (typeof window.refreshCustomFeaturesList !== 'function') return false;
+        window.__periodePatched = true;
+        window.currentPeriodeFilter = window.currentPeriodeFilter || '';
+        var orig = window.refreshCustomFeaturesList;
+        window.refreshCustomFeaturesList = function () {
+            var full = window.customFeaturesData || [];
+            var hasP = full.some(function (f) { return f && f.periode && String(f.periode).trim(); });
+            if (hasP) injectRow();
+            var selEl = document.getElementById('cfPeriodeSelect');
+            if (selEl && selEl.closest('div')) selEl.closest('div').style.display = hasP ? '' : 'none';
+            var pf = hasP ? window.currentPeriodeFilter : '';
+            if (pf) {
+                window.customFeaturesData = full.filter(function (f) {
+                    return getPeriodeForFeature(f) === pf;
+                });
+            }
+            try { orig.apply(this, arguments); }
+            finally { if (pf) window.customFeaturesData = full; }
+            if (hasP) populatePeriode(full);
+        };
+        return true;
+    }
+    var tries = 0;
+    var iv = setInterval(function () {
+        tries++;
+        if (tryWrap() || tries > 120) clearInterval(iv);
+    }, 800);
+})();
