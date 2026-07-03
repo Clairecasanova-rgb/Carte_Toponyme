@@ -9214,14 +9214,24 @@
         if (!SU || !SK || typeof L === 'undefined') return;
         var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
         if (!map) { setTimeout(_loadProjetRasters, 1500); return; }
-        // Lecture publique de la table (RLS SELECT autorise a anon) ; pas de
-        // filtre par projet -> on recupere tout puis on filtre par emprise.
-        // select=* : inclut la colonne 'actif' des qu'elle existe SANS casser
-        // avant la migration (rw.actif undefined -> non filtre = affiche).
+        // Lecture publique de la table (RLS SELECT autorise a anon). On recupere
+        // tout puis on SCOPE aux projets de la whitelist de CETTE carte
+        // (PROJETS_DISPONIBLES) : un raster de projet n'apparait plus sur une
+        // carte qui ne montre pas ce projet. L'emprise (in-view) filtre ensuite.
+        // Fallback : whitelist inconnue -> comportement historique (tout par emprise).
         fetch(SU + '/rest/v1/projet_rasters?select=*&order=ordre', {
             headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
         }).then(function(r) { return r.ok ? r.json() : []; }).then(function(rows) {
             if (!rows || !rows.length) return;
+            try {
+                var _pd = window.PROJETS_DISPONIBLES;
+                if (_pd && _pd.length) {
+                    var _wl = {};
+                    _pd.forEach(function(p) { if (p && p.id != null) _wl[p.id] = true; });
+                    rows = rows.filter(function(rw) { return _wl[rw.projet_id]; });
+                }
+            } catch (_ewl) {}
+            if (!rows.length) return;
             window._projetRasterRows = rows;
             _applyProjetRasters(map, rows);
             // Re-evalue a chaque deplacement : un overlay hors vue initiale
