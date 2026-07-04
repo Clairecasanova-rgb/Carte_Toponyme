@@ -72,6 +72,10 @@
     // maxZoom a 22 (limite Leaflet). Idem pour minNativeZoom / minZoom.
     function _patchTileLayerOptions(layer) {1111
         if (!layer || !layer.options) return;
+        // Ne PAS patcher les couches WMS (ex. cadastre CADASTRALPARCELS) : ce patch
+        // native-zoom/upscaling est concu pour les tuiles XYZ/WMTS ; sur du WMS
+        // (GetMap par bbox) il casse le rendu ("clignote puis ne charge pas").
+        if (layer.wmsParams) return;
         var o = layer.options;
         // Zoom natif REEL du serveur de cette couche (au-dela, le serveur n'a
         // pas de tuile : certains -- OpenTopoMap -- renvoient un PNG "max zoom"
@@ -9445,8 +9449,10 @@
         var layers = [];
         for (var id in map._layers) layers.push(map._layers[id]);
         layers.forEach(function (lyr) {
-            if (isCadastre(lyr)) moveToPane(map, lyr, 'cadastreTopPane');
-            else if (isRaster(lyr)) moveToPane(map, lyr, 'rasterLowPane');
+            // NE PAS deplacer le cadastre (couche WMS) : le remove/add + changement
+            // de pane cassait son rendu ("clignote puis ne charge pas"). Il reste
+            // dans son pane baked par le HTML. On ne remonte que les rasters.
+            if (isRaster(lyr)) moveToPane(map, lyr, 'rasterLowPane');
         });
     }
     function boot() {
