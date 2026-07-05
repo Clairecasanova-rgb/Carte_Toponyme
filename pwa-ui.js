@@ -9545,6 +9545,155 @@
 })();
 
 /* =====================================================================
+   PATCH RUNTIME (2026-07) : photos iPhone HEIC/HEIF acceptees a l'ajout
+   ET a l'edition. Sur les cartes deja deployees, le garde-fou
+   `file.type.startsWith('image/')` (dans setupPhotoInput et
+   handleEditPhotoSelect) REJETTE un fichier au type MIME vide ("") : or
+   l'iPhone livre parfois le .heic avec un type vide (selection via
+   Fichiers, mode PWA autonome) -> alerte "selectionnez une image" et la
+   photo n'est jamais enregistree. Meme accepte, un .heic n'est pas
+   decodable par tous les chemins.
+   Correctif sans regeneration : on intercepte le `change` des inputs photo
+   EN PHASE DE CAPTURE (sur document, donc AVANT les handlers baked). Si le
+   fichier est HEIC/HEIF ou de type inconnu, on le transcode en JPEG via
+   createImageBitmap (decodeur systeme iOS ; repli <img>), on reinjecte le
+   JPEG dans l'input (DataTransfer, comme le patch appareil photo) puis on
+   redispatch le change -> les handlers baked voient un image/jpeg standard
+   (garde-fou OK, apercu OK, compression OK). Si le decodage echoue vraiment
+   -> message clair (au lieu d'un echec muet). Les JPEG/PNG normaux passent
+   sans etre touches (aucun impact sur le chemin qui marche deja).
+   ===================================================================== */
+(function pwaHeicPhotoPatch() {
+    'use strict';
+    var PHOTO_INPUT_IDS = { drawPhoto1: 1, drawPhoto2: 1, editPhotoInput1: 1, editPhotoInput2: 1 };
+    var MAX_DIM = 4096;          // borne anti-limite canvas iOS
+    var JPEG_Q = 0.9;
+    var normalized = (typeof WeakSet === 'function') ? new WeakSet() : null;
+
+    function needsNormalize(f) {
+        var t = (f && f.type || '').toLowerCase();
+        var n = (f && f.name || '').toLowerCase();
+        if (t.indexOf('heic') >= 0 || t.indexOf('heif') >= 0) return true;
+        if (/\.(heic|heif)$/.test(n)) return true;
+        if (t === '') return true;      // type inconnu (souvent .heic sur iPhone) -> on tente le transcodage
+        return false;
+    }
+
+    function canvasToJpegBlob(c) {
+        return new Promise(function (resolve, reject) {
+            if (c.toBlob) {
+                c.toBlob(function (b) { if (b) resolve(b); else reject(new Error('toBlob null')); }, 'image/jpeg', JPEG_Q);
+            } else {
+                try {
+                    var du = c.toDataURL('image/jpeg', JPEG_Q), bs = atob(du.split(',')[1]);
+                    var ab = new ArrayBuffer(bs.length), ia = new Uint8Array(ab);
+                    for (var i = 0; i < bs.length; i++) ia[i] = bs.charCodeAt(i);
+                    resolve(new Blob([ab], { type: 'image/jpeg' }));
+                } catch (e) { reject(e); }
+            }
+        });
+    }
+
+    function paint(sw, sh, drawFn) {
+        var r = Math.min(1, MAX_DIM / sw, MAX_DIM / sh);
+        var w = Math.max(1, Math.round(sw * r)), h = Math.max(1, Math.round(sh * r));
+        var c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, w, h);
+        drawFn(ctx, w, h);
+        return canvasToJpegBlob(c);
+    }
+
+    function viaImg(file) {
+        return new Promise(function (resolve, reject) {
+            var url = URL.createObjectURL(file), img = new Image();
+            img.onload = function () {
+                paint(img.naturalWidth || img.width, img.naturalHeight || img.height,
+                    function (ctx, w, h) { ctx.drawImage(img, 0, 0, w, h); })
+                    .then(function (b) { URL.revokeObjectURL(url); resolve(b); })
+                    .catch(function (e) { URL.revokeObjectURL(url); reject(e); });
+            };
+            img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('img decode')); };
+            img.src = url;
+        });
+    }
+
+    function toJpegBlob(file) {
+        if (typeof createImageBitmap === 'function') {
+            return createImageBitmap(file).then(function (bmp) {
+                return paint(bmp.width, bmp.height, function (ctx, w, h) {
+                    ctx.drawImage(bmp, 0, 0, w, h);
+                    if (bmp.close) bmp.close();
+                });
+            }).catch(function () { return viaImg(file); });
+        }
+        return viaImg(file);
+    }
+
+    function jpegName(name) {
+        return String(name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
+    }
+
+    function normalizeToJpegFile(file) {
+        return toJpegBlob(file).then(function (blob) {
+            var nm = jpegName(file.name);
+            try { return new File([blob], nm, { type: 'image/jpeg' }); }
+            catch (e) { try { blob.name = nm; } catch (e2) {} return blob; }  // repli si File() indisponible
+        });
+    }
+
+    function setInputFile(inp, file) {
+        var dt = new DataTransfer();
+        dt.items.add(file);
+        inp.files = dt.files;   // leve si non supporte -> attrape en amont
+    }
+
+    function onChangeCapture(e) {
+        var inp = e.target;
+        if (!inp || inp.tagName !== 'INPUT' || inp.type !== 'file') return;
+        if (!PHOTO_INPUT_IDS[inp.id]) return;
+        if (!inp.files || !inp.files.length) return;
+        var f = inp.files[0];
+        if (normalized && normalized.has(f)) return;   // deja transcode par nous -> laisser passer
+        if (!needsNormalize(f)) return;                 // JPEG/PNG normal -> laisser passer intact
+        /* On bloque les handlers baked pour CE tour, on transcode, puis on
+           redispatch un change avec le JPEG en place. */
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        normalizeToJpegFile(f).then(function (jpg) {
+            if (normalized && (typeof File === 'function') && jpg instanceof File) normalized.add(jpg);
+            try {
+                setInputFile(inp, jpg);
+            } catch (err) {
+                /* DataTransfer indisponible : on ne peut pas reinjecter -> on
+                   previent plutot que d'echouer en silence. */
+                try { inp.value = ''; } catch (e2) {}
+                alert("Photo iPhone (HEIC) non prise en charge par ce navigateur.\n"
+                    + "Reglages iPhone > Appareil photo > Formats > \"Le plus compatible\".");
+                return;
+            }
+            inp.dispatchEvent(new Event('change', { bubbles: true }));
+        }).catch(function () {
+            try { inp.value = ''; } catch (e2) {}
+            alert("Cette photo (format iPhone HEIC) n'a pas pu etre lue.\n"
+                + "Sur l'iPhone : Reglages > Appareil photo > Formats > \"Le plus compatible\", "
+                + "ou choisissez la photo depuis la galerie.");
+        });
+    }
+
+    function boot() {
+        if (window._pwaHeicPatched) return;
+        window._pwaHeicPatched = true;
+        document.addEventListener('change', onChangeCapture, true);
+        console.log('[PWA] patch photos HEIC installe');
+    }
+    if (document.readyState === 'loading') window.addEventListener('load', boot);
+    else boot();
+})();
+
+/* =====================================================================
    PATCH RUNTIME (2026-07) : noms de projets a jour (renommage admin).
    Les noms sont figes dans PROJETS_DISPONIBLES a la generation du HTML ;
    un renommage depuis l'admin ne s'y refletait pas (il faudrait regenerer).
