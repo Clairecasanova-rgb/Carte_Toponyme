@@ -9996,3 +9996,84 @@
         }, 250);
     }
 })();
+
+/* ============================================================
+   Panneau detail MODERNE (#modernDetailBody, openCfDetail) :
+   1) sauts de ligne dans la description (les cartes generees
+      l'injectent en escapeHtml sans white-space:pre-line) ;
+   2) URLs d'images dans la description -> ajoutees a la galerie
+      Photos du panneau (lightbox si dispo), URL et label retires
+      du texte. Complement du patch equivalent du panneau detail
+      "voir +" (#detailDescription) plus haut.
+   ============================================================ */
+(function () {
+    var IMG_RE = /https?:\/\/[^\s"'<>]+\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]*)?/gi;
+    /* CSS : retours a la ligne dans le bloc description du panneau moderne */
+    function injectCss() {
+        if (document.getElementById('pwaModernDescPreLine')) return;
+        if (!document.head) return;
+        var st = document.createElement('style');
+        st.id = 'pwaModernDescPreLine';
+        st.textContent = '#modernDetailBody .detail-section div[style*="faf7f2"]{white-space:pre-line;}';
+        document.head.appendChild(st);
+    }
+    function process() {
+        var body = document.getElementById('modernDetailBody');
+        if (!body) return;
+        var desc = body.querySelector('.detail-section div[style*="faf7f2"]');
+        if (!desc) return;
+        var txt = desc.textContent || '';
+        var urls = txt.match(IMG_RE);
+        if (!urls || !urls.length) return;
+        var cleaned = txt;
+        urls.forEach(function (u) { cleaned = cleaned.replace(u, ''); });
+        cleaned = cleaned.replace(/^[ \t]*[^\n]*?:\s*$/gm, function (m) {
+            return /plan|photo|image|illustration/i.test(m) ? '' : m;
+        });
+        cleaned = cleaned.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        desc.textContent = cleaned;
+        /* galerie photos : section existante ou creee */
+        var gal = body.querySelector('.cf-photos');
+        if (!gal) {
+            var sec = document.createElement('div');
+            sec.className = 'detail-section';
+            sec.innerHTML = '<div class="detail-section-title">Photos</div><div class="cf-photos"></div>';
+            body.appendChild(sec);
+            gal = sec.querySelector('.cf-photos');
+        }
+        /* liste complete pour la lightbox = photos deja presentes + nouvelles */
+        var existing = [].slice.call(gal.querySelectorAll('img')).map(function (i) { return i.src; });
+        var all = existing.concat(urls.filter(function (u) { return existing.indexOf(u) === -1; }));
+        urls.forEach(function (u) {
+            if (gal.querySelector('img[src="' + u + '"]')) return;
+            var img = document.createElement('img');
+            img.src = u;
+            img.className = 'cf-photo-img';
+            img.alt = 'Illustration';
+            img.onclick = function () {
+                if (typeof window.openPhotoLightbox === 'function') {
+                    window.openPhotoLightbox(all, all.indexOf(u));
+                } else {
+                    window.open(u, '_blank');
+                }
+            };
+            gal.appendChild(img);
+        });
+    }
+    function arm() {
+        var body = document.getElementById('modernDetailBody');
+        if (!body) return false;
+        injectCss();
+        new MutationObserver(process).observe(body, { childList: true, subtree: true });
+        process();
+        return true;
+    }
+    if (!arm()) {
+        var tries = 0;
+        var iv = setInterval(function () {
+            tries++;
+            injectCss();
+            if (arm() || tries > 40) clearInterval(iv);
+        }, 250);
+    }
+})();
