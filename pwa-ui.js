@@ -10014,7 +10014,10 @@
         if (!document.head) return;
         var st = document.createElement('style');
         st.id = 'pwaModernDescPreLine';
-        st.textContent = '#modernDetailBody .detail-section div[style*="faf7f2"]{white-space:pre-line;}';
+        st.textContent = '#modernDetailBody .detail-section div[style*="faf7f2"]{white-space:pre-line;}'
+            /* consigne "Cliquer pour agrandir" : discrete, sous la galerie (classe sans CSS dans les cartes) */
+            + '#modernDetailBody .napoleon-crop-hint{font-size:10px;color:#9aa3b5;font-style:italic;'
+            + 'text-align:center;margin:4px 0 0;line-height:1.3;}';
         document.head.appendChild(st);
     }
     function process() {
@@ -10044,6 +10047,8 @@
         /* liste complete pour la lightbox = photos deja presentes + nouvelles */
         var existing = [].slice.call(gal.querySelectorAll('img')).map(function (i) { return i.src; });
         var all = existing.concat(urls.filter(function (u) { return existing.indexOf(u) === -1; }));
+        /* la consigne "Cliquer pour agrandir" reste EN DERNIER : inserer les images avant elle */
+        var hint = gal.querySelector('.napoleon-crop-hint');
         urls.forEach(function (u) {
             if (gal.querySelector('img[src="' + u + '"]')) return;
             var img = document.createElement('img');
@@ -10057,7 +10062,8 @@
                     window.open(u, '_blank');
                 }
             };
-            gal.appendChild(img);
+            if (hint) gal.insertBefore(img, hint);
+            else gal.appendChild(img);
         });
     }
     function arm() {
