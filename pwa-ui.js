@@ -9939,3 +9939,60 @@
         }, 250);
     }
 })();
+
+/* ============================================================
+   Images complementaires via URL dans la description :
+   toute URL d'image (jpg/png/webp/gif) presente dans la
+   description d'un element personnalise est retiree du texte
+   affiche et ajoutee a la galerie Photos du panneau detail
+   (ex. plan de l'enceinte, projet 71 Mazet). Meme logique que
+   le retrait des liens Sketchfab fait par les cartes.
+   NB : les callbacks MutationObserver s'executent apres le
+   remplissage complet du panneau (microtask), donc apres le
+   reset de #detailPhotos par la carte.
+   ============================================================ */
+(function () {
+    var IMG_RE = /https?:\/\/[^\s"']+\.(?:jpe?g|png|webp|gif)(?:\?[^\s"']*)?/gi;
+    function process() {
+        var d = document.getElementById('detailDescription');
+        var ph = document.getElementById('detailPhotos');
+        var sec = document.getElementById('detailPhotosSection');
+        if (!d || !ph || !sec) return;
+        var txt = d.textContent || '';
+        var urls = txt.match(IMG_RE);
+        if (!urls || !urls.length) return;
+        var cleaned = txt;
+        urls.forEach(function (u) { cleaned = cleaned.replace(u, ''); });
+        // retire les labels devenus orphelins (ex. "Plan de l'enceinte (these) :")
+        cleaned = cleaned.replace(/^[ \t]*[^\n]*?:\s*$/gm, function (m) {
+            return /plan|photo|image|illustration/i.test(m) ? '' : m;
+        });
+        cleaned = cleaned.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        d.textContent = cleaned; // re-declenche l'observer ; plus d'URL -> stop
+        urls.forEach(function (u) {
+            if (ph.querySelector('img[src="' + u + '"]')) return;
+            var img = document.createElement('img');
+            img.src = u;
+            img.className = 'detail-photo';
+            img.alt = 'Illustration';
+            img.title = 'Illustration liee (description)';
+            img.onclick = function () { window.open(this.src, '_blank'); };
+            ph.appendChild(img);
+        });
+        sec.style.display = 'block';
+    }
+    function arm() {
+        var d = document.getElementById('detailDescription');
+        if (!d) return false;
+        new MutationObserver(process).observe(d, { childList: true, characterData: true, subtree: true });
+        process();
+        return true;
+    }
+    if (!arm()) {
+        var tries = 0;
+        var iv = setInterval(function () {
+            tries++;
+            if (arm() || tries > 40) clearInterval(iv);
+        }, 250);
+    }
+})();
