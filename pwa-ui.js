@@ -9912,3 +9912,30 @@
         if (tries > 12) clearInterval(iv);  // ~1.8s puis le code de la carte + l'observer prennent le relais
     }, 150);
 })();
+
+/* ============================================================
+   Sauts de ligne dans la description du panneau detail :
+   la description (custom_features) est injectee en textContent
+   et le CSS de la carte ne conserve pas les retours a la ligne.
+   Ce style cible uniquement #detailDescription (pre-line) pour
+   afficher les fiches structurees (ex. enceintes Mazet, projet 71)
+   sans regenerer les cartes. Benefice pour tous les projets.
+   ============================================================ */
+(function () {
+    function inject() {
+        if (document.getElementById('pwaDescPreLine')) return true;
+        if (!document.head) return false;
+        var st = document.createElement('style');
+        st.id = 'pwaDescPreLine';
+        st.textContent = '#detailDescription{white-space:pre-line;}';
+        document.head.appendChild(st);
+        return true;
+    }
+    if (!inject()) {
+        var tries = 0;
+        var iv = setInterval(function () {
+            tries++;
+            if (inject() || tries > 40) clearInterval(iv);
+        }, 250);
+    }
+})();
