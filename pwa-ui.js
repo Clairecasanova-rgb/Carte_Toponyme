@@ -13,6 +13,125 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _feuilleElements() {
+        // Le panneau s'ouvrait a 50 % de l'ecran, dont 131 px de chrome : 285 px
+        // utiles pour un formulaire qui en fait 903. Le plein ecran existait deja
+        // (#btnExpandPanel, classe panel-expanded) mais il fallait le trouver.
+        // On ajoute donc une poignee qui se tire au doigt, et le passage
+        // automatique en grand quand on saisit un element.
+        function petitEcran() {
+            return Math.min(screen.width, screen.height) <= 820 || window.innerWidth <= 768;
+        }
+        function panneau() { return document.getElementById('searchContainer'); }
+        function plein() {
+            var p = panneau();
+            return !!p && p.classList.contains('panel-expanded');
+        }
+        function replie() {
+            var p = panneau();
+            return !!p && p.classList.contains('collapsed');
+        }
+        function basculerPlein() {
+            // On passe par le bouton d'origine : il tient a jour son libelle,
+            // son titre et la classe posee sur le body.
+            var b = document.getElementById('btnExpandPanel');
+            if (b) { b.click(); return true; }
+            var p = panneau();
+            if (!p) return false;
+            p.classList.toggle('panel-expanded');
+            document.body.classList.toggle('panel-is-expanded');
+            return true;
+        }
+        function agrandir() { if (!plein()) basculerPlein(); }
+        function reduire() { if (plein()) basculerPlein(); }
+        function fermer() {
+            var p = panneau();
+            if (!p) return;
+            var b = document.getElementById('btnCollapsePanel');
+            if (b) b.click(); else p.classList.add('collapsed');
+        }
+
+        // --- Poignee -------------------------------------------------------
+        function poserPoignee() {
+            var p = panneau();
+            if (!p || p.querySelector('.pwaPoignee')) return;
+            var h = document.createElement('div');
+            h.className = 'pwaPoignee';
+            h.setAttribute('role', 'button');
+            h.setAttribute('tabindex', '0');
+            h.title = 'Tirer pour agrandir ou reduire';
+            h.setAttribute('aria-label', 'Tirer pour agrandir ou reduire le panneau');
+            h.innerHTML = '<span class="pwaPoigneeBarre"></span>';
+            p.insertBefore(h, p.firstChild);
+
+            var depart = null, bouge = false;
+            var debut = function(y) { depart = y; bouge = false; };
+            var suite = function(y) {
+                if (depart === null) return;
+                if (Math.abs(y - depart) > 8) bouge = true;
+            };
+            var fin = function(y) {
+                if (depart === null) return;
+                var dy = y - depart;
+                depart = null;
+                if (!bouge) { basculerPlein(); return; }   // simple appui
+                if (dy < -40) { agrandir(); return; }
+                if (dy > 40) { if (plein()) reduire(); else fermer(); }
+            };
+            h.addEventListener('pointerdown', function(e) {
+                debut(e.clientY);
+                try { h.setPointerCapture(e.pointerId); } catch (err) {}
+            });
+            h.addEventListener('pointermove', function(e) { suite(e.clientY); });
+            h.addEventListener('pointerup', function(e) { fin(e.clientY); });
+            h.addEventListener('pointercancel', function() { depart = null; });
+            h.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); basculerPlein(); }
+            });
+        }
+
+        // --- Saisie d'un element : le formulaire a besoin de place ----------
+        var agrandiParNous = false;
+        function suivreSaisie() {
+            var onglet = document.getElementById('drawTabNouveau');
+            if (!onglet || onglet._feuilleSuivie) return;
+            onglet._feuilleSuivie = true;
+            var etatPrecedent = onglet.classList.contains('active');
+            try {
+                new MutationObserver(function() {
+                    var actif = onglet.classList.contains('active');
+                    if (actif === etatPrecedent) return;
+                    etatPrecedent = actif;
+                    if (!petitEcran() || replie()) return;
+                    if (actif) {
+                        if (!plein()) { agrandir(); agrandiParNous = true; }
+                    } else if (agrandiParNous) {
+                        // On ne defait que ce qu'on a fait : un plein ecran
+                        // demande a la main doit rester.
+                        agrandiParNous = false;
+                        reduire();
+                    }
+                }).observe(onglet, { attributes: true, attributeFilter: ['class'] });
+            } catch (e) {}
+        }
+
+        function brancher(essai) {
+            if (!panneau()) {
+                if ((essai || 0) < 60) setTimeout(function() { brancher((essai || 0) + 1); }, 500);
+                return;
+            }
+            poserPoignee();
+            suivreSaisie();
+            setTimeout(suivreSaisie, 2000);
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(0); });
+        } else {
+            brancher(0);
+        }
+    })();
+
+
     (function _iconesOeil() {
         // L'oeil des boutons "afficher / masquer" etait un emoji, dont le dessin
         // et la couleur dependent du systeme. On le remplace par une icone au
@@ -592,7 +711,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '4afdf7ec98';
+        var THEME_V = '530b108cfa';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;

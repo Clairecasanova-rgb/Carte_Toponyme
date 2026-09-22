@@ -2813,3 +2813,26 @@ html body #searchContainer .filter-btn{display:inline-flex!important;
 html body svg.pwaOeil,
 html body svg.icone-oeil{display:block!important;flex:0 0 auto!important}
 
+/* === Panneau : poignee de bas d'ecran ========================================
+   Le panneau s'ouvre a 50 % de l'ecran ; le plein ecran existait (bouton ⛶ de
+   l'entete) mais restait a trouver. La poignee rend le geste evident : tirer
+   vers le haut agrandit, vers le bas reduit puis referme, un simple appui
+   bascule. Elle n'a de sens qu'en feuille de bas d'ecran, donc sur mobile. */
+html body #searchContainer .pwaPoignee{display:none}
+@media (max-width:768px){
+ html body #searchContainer .pwaPoignee{display:flex!important;align-items:center!important;
+  justify-content:center!important;height:18px!important;flex:0 0 18px!important;
+  cursor:grab;touch-action:none;background:transparent!important;border:none!important;
+  padding:0!important;margin:0!important}
+ html body #searchContainer .pwaPoignee .pwaPoigneeBarre{display:block!important;width:38px!important;
+  height:4px!important;border-radius:2px!important;background:var(--bd)!important}
+ html body #searchContainer .pwaPoignee:active{cursor:grabbing}
+ html body #searchContainer .pwaPoignee:active .pwaPoigneeBarre{background:var(--ink3)!important}
+}
+
+/* Rangee "Categorie / Couleur" du formulaire : la colonne de droite etait
+   taillee sur le seul selecteur de couleur (36 px), ce qui coupait son
+   libelle. On lui donne la largeur de son intitule. */
+html body #drawTabNouveau .draw-field-row:has(input[type="color"]) > *:last-child{
+ min-width:64px!important;flex:0 0 auto!important}
+
