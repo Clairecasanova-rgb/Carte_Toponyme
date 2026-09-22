@@ -9589,7 +9589,10 @@
         // des fenetres modales (10000). Ils recouvraient la fenetre resume et sa
         // croix de fermeture. On les efface le temps de la modale.
         var _mo = _modaleOverlay();
-        ['modernLayerControl', 'rasterMgrBtn'].forEach(function(id) {
+        // floatingButtons (loupe de recherche) partage le z-index 100000 des
+        // modales : il passait devant la fenetre resume et couvrait ses
+        // boutons. Il s'efface avec les autres controles de carte.
+        ['modernLayerControl', 'rasterMgrBtn', 'floatingButtons'].forEach(function(id) {
             var el = document.getElementById(id);
             if (!el) return;
             if (_mo) {
