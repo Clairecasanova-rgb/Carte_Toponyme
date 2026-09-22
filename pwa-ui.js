@@ -1,7 +1,7 @@
 /* ============================================================
    PWA UI — Toponymie Corse
    ============================================================
-   Composants client injectes dans chaque carte HTML :
+   Composants client injectes dans chaque carte HTML:
    - Badge online/offline (haut-droite)
    - Modal "Preparer pour hors-ligne" (pre-cache de tuiles)
    - Modal "Gerer le cache" (stats + vider)
@@ -13,7 +13,50 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
-    // === Correctif iOS : icones de la carte (loupe + calque) ===
+    // === Theme "Something Found" pour les cartes DEJA PUBLIEES ===
+    // Les cartes generees en Moderne Light portent #themeClairOverride. On leur
+    // empile theme-found.css (charge depuis la racine du depot) sans les
+    // regenerer. Une carte generee avec ui_style='modern_found' porte deja
+    // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
+    // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
+    (function _applyFoundTheme() {
+        var THEME_V = '20260922';
+        function go() {
+            if (!document.getElementById('themeClairOverride')) return;
+            if (document.getElementById('themeFoundOverride')) return;
+            if (document.getElementById('themeFoundLink')) return;
+            // Masque le temps du chargement pour eviter un clignotement de
+            // l'ancien theme. Retire des que la feuille est la, en erreur, ou
+            // au bout de 1,5 s (hors-ligne au tout premier chargement).
+            var hide = document.createElement('style');
+            hide.id = 'themeFoundHide';
+            hide.textContent = '#searchContainer,#modernDetailPanel,#floatingButtons,'
+                             + '#modernLayerControl{visibility:hidden!important}';
+            (document.head || document.documentElement).appendChild(hide);
+            var unhide = function() {
+                var h = document.getElementById('themeFoundHide');
+                if (h && h.parentNode) h.parentNode.removeChild(h);
+            };
+            var link = document.createElement('link');
+            link.id = 'themeFoundLink';
+            link.rel = 'stylesheet';
+            link.href = 'theme-found.css?v=' + THEME_V;
+            link.onload = unhide;
+            link.onerror = unhide;
+            setTimeout(unhide, 1500);
+            // Ajoute en FIN de document : l'ordre de cascade le place apres
+            // #themeClairOverride, donc il gagne a specificite egale.
+            document.documentElement.appendChild(link);
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', go, { once: true });
+        } else {
+            go();
+        }
+    })();
+
+
+    // === Correctif iOS: icones de la carte (loupe + calque) ===
     // Loupe (#panelToggle .icon) : le glyphe Unicode ⌕ depend de la police
     // systeme -> sur iOS (police d'Apple) il deborde du bouton / rend mal.
     // On le remplace par un SVG loupe taille pour le bouton (rendu identique
@@ -23,7 +66,7 @@
     // regeneration. Sur une carte sans ces elements, ne fait rien.
     (function _pwaMapIconsFix() {
         // iOS UNIQUEMENT (iPhone/iPad) : c'est la police d'Apple qui rend le
-        // glyphe loupe ⌕ mal. Desktop et Android : AUCUN changement (le glyphe
+        // glyphe loupe ⌕ mal. Desktop et Android: AUCUN changement (le glyphe
         // et le calque y sont deja corrects).
         var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '')
             || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
@@ -39,7 +82,7 @@
             (document.head || document.documentElement).appendChild(st);
         }
         // #panelToggle est construit par le script de la carte APRES le
-        // chargement de pwa-ui.js : on reessaie jusqu'a ce qu'il existe. Le
+        // chargement de pwa-ui.js: on reessaie jusqu'a ce qu'il existe. Le
         // span .icon n'est jamais reecrit ensuite (seul #panelBadge.textContent
         // change), donc le SVG n'est pas ecrase.
         function swapLoupe() {
@@ -64,7 +107,7 @@
     var TRACK_STORE = 'tracks';           // 1 entree par parcours de marche enregistre
     var VS_STORE = 'viewsheds';           // 1 entree par champ de visibilite sauvegarde
 
-    // ===== Patch Leaflet : zoom au-dela du max n'efface plus le calque =====
+    // ===== Patch Leaflet: zoom au-dela du max n'efface plus le calque =====
     // Par defaut, quand on zoome au-dela du maxZoom d'une couche, Leaflet la
     // fait disparaitre. On preferere garder les tuiles upscalees (floues mais
     // visibles) pour le reperage offline. On force donc maxNativeZoom = ancien
@@ -78,14 +121,13 @@
         if (layer.wmsParams) return;
         var o = layer.options;
         // Zoom natif REEL du serveur de cette couche (au-dela, le serveur n'a
-        // pas de tuile : certains -- OpenTopoMap -- renvoient un PNG "max zoom"
+        // pas de tuile: certains -- OpenTopoMap -- renvoient un PNG "max zoom"
         // au lieu d'une erreur, donc ne JAMAIS demander au-dela). Capture une
         // seule fois, avant tout bump.
         if (o._pwaServerMax == null) {
-            o._pwaServerMax = (o.maxNativeZoom != null) ? o.maxNativeZoom
-                : (o.maxZoom != null ? o.maxZoom : 19);
+            o._pwaServerMax = (o.maxNativeZoom != null) ? o.maxNativeZoom: (o.maxZoom != null ? o.maxZoom : 19);
         }
-        // maxNativeZoom = max serveur reel : Leaflet AGRANDIT lui-meme au-dela
+        // maxNativeZoom = max serveur reel: Leaflet AGRANDIT lui-meme au-dela
         // (flou mais propre, sans tuile placeholder serveur).
         o.maxNativeZoom = o._pwaServerMax;
         // minNativeZoom = 8 (zoom min du contexte Corse pre-cache) : au DEZOOM
@@ -97,7 +139,7 @@
         _attachTileErrorFallback(layer);
     }
 
-    // Fallback robuste INDEPENDANT des metadonnees : si une tuile echoue
+    // Fallback robuste INDEPENDANT des metadonnees: si une tuile echoue
     // HORS-LIGNE (zoom au-dela du cache, ex: contexte Corse z>10), on baisse
     // maxNativeZoom de cette couche au niveau qui echoue -1. Leaflet agrandit
     // alors la tuile cachee la plus profonde -> flou mais JAMAIS de trou.
@@ -111,10 +153,9 @@
                 var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
                 if (!offline) return;
                 var z = (e && e.coords && typeof e.coords.z === 'number')
-                    ? e.coords.z
-                    : (layer._map ? layer._map.getZoom() : null);
+                    ? e.coords.z: (layer._map ? layer._map.getZoom() : null);
                 if (z == null) return;
-                var cur = (layer.options.maxNativeZoom != null) ? layer.options.maxNativeZoom : 21;
+                var cur = (layer.options.maxNativeZoom != null) ? layer.options.maxNativeZoom: 21;
                 var target = Math.max(8, Math.min(cur, z) - 1);
                 if (target < cur) {
                     layer.options.maxNativeZoom = target;
@@ -152,7 +193,7 @@
     }
 
     // ===== maxNativeZoom adaptatif (anti-disparition hors-ligne) =====
-    // Zoom max REELLEMENT telecharge : contexte Corse leger=10 / complet=14,
+    // Zoom max REELLEMENT telecharge: contexte Corse leger=10 / complet=14,
     // ou zmax des zones/communes pre-cachees. HORS-LIGNE on cale
     // maxNativeZoom dessus -> Leaflet AGRANDIT lui-meme au-dela (flou mais
     // present, sans dependre du SW ni de tuiles lisibles). EN LIGNE on garde
@@ -175,7 +216,7 @@
     }
     // Zoom max reellement cache (indice metadonnees), maj par
     // _applyAdaptiveNativeZoom. Sert a RE-ARMER maxNativeZoom avant chaque
-    // changement de vue : ainsi une zone detaillee re-tente son zoom natif
+    // changement de vue: ainsi une zone detaillee re-tente son zoom natif
     // (net) au lieu de rester bloquee sur le cap baisse par 'tileerror'
     // dans une zone contexte-seul.
     var _maxCachedHint = null;
@@ -195,10 +236,10 @@
             map.eachLayer(function(l) {
                 if (!(l instanceof L.TileLayer)) return;
                 // Ne jamais depasser le max serveur reel de la couche.
-                var sMax = (l.options._pwaServerMax != null) ? l.options._pwaServerMax : 21;
+                var sMax = (l.options._pwaServerMax != null) ? l.options._pwaServerMax: 21;
                 var c = Math.min(ceil, sMax);
                 if (l.options.maxNativeZoom !== c) {
-                    // Pas de redraw : le move/zoom en cours va re-demander les
+                    // Pas de redraw: le move/zoom en cours va re-demander les
                     // tuiles avec cette nouvelle valeur. 'tileerror' rabaissera
                     // uniquement la ou le cache est moins profond.
                     l.options.maxNativeZoom = c;
@@ -218,9 +259,9 @@
             _maxCachedHint = maxCached || null;  // memorise pour le re-armement
             map.eachLayer(function(l) {
                 if (!(l instanceof L.TileLayer)) return;
-                var sMax = (l.options._pwaServerMax != null) ? l.options._pwaServerMax : 21;
+                var sMax = (l.options._pwaServerMax != null) ? l.options._pwaServerMax: 21;
                 if (offline && maxCached) {
-                    // Hors-ligne avec indice : cap au zoom cache (sans depasser
+                    // Hors-ligne avec indice: cap au zoom cache (sans depasser
                     // le max serveur) -> upscale CSS
                     var capO = Math.min(maxCached, sMax);
                     if (l.options.maxNativeZoom !== capO) {
@@ -228,11 +269,11 @@
                         if (l._map) try { l.redraw(); } catch(_e) {}
                     }
                 } else if (offline) {
-                    // Hors-ligne SANS metadonnees : on ne force PAS un cap haut
+                    // Hors-ligne SANS metadonnees: on ne force PAS un cap haut
                     // (ferait clignoter des trous). Le hook 'tileerror'
                     // (_attachTileErrorFallback) baissera tout seul au besoin.
                 } else {
-                    // En ligne : cap au max serveur reel de la couche. Au-dela,
+                    // En ligne: cap au max serveur reel de la couche. Au-dela,
                     // Leaflet agrandit la derniere tuile nette (flou mais propre)
                     // -> pas de tuile placeholder "max zoom" du serveur.
                     if (l.options.maxNativeZoom !== sMax) {
@@ -266,7 +307,7 @@
         // Re-caler maxNativeZoom (test offline = comme hors-ligne reel)
         try { if (typeof _applyAdaptiveNativeZoom === 'function') _applyAdaptiveNativeZoom(); } catch(_e) {}
     }
-    // Etat composite : online seulement si navigator.onLine ET pas forced
+    // Etat composite: online seulement si navigator.onLine ET pas forced
     function isAppOffline() {
         return isForcedOffline() || !navigator.onLine;
     }
@@ -330,7 +371,7 @@
 
     // ===== Batches de pre-cache (1 par DL lance par l'utilisateur) =====
     // {id, label, kind, date, zmin, zmax, count, urls:[...], contextCache?}
-    // urls : liste des URLs tuiles -> permet une suppression selective sans
+    // urls: liste des URLs tuiles -> permet une suppression selective sans
     // toucher aux tuiles partagees par un autre batch conserve.
     function dbBatchPut(batch) {
         return openDb().then(function(db) {
@@ -405,7 +446,7 @@
         });
     }
 
-    // ===== Sync queue : wrapper fetch =====
+    // ===== Sync queue: wrapper fetch =====
     // Intercepte les fetch vers Supabase REST + Storage et, si offline ou si
     // l'appel echoue, met l'operation en queue pour replay au retour reseau.
     // Le body peut etre une string (JSON REST), un FormData (upload Storage)
@@ -449,7 +490,7 @@
             }
             return { type: 'formdata', value: entries };
         }
-        // ArrayBuffer / URLSearchParams / autre : fallback string
+        // ArrayBuffer / URLSearchParams / autre: fallback string
         try { return { type: 'string', value: String(body) }; }
         catch(e) { return { type: 'null', value: null }; }
     }
@@ -474,9 +515,9 @@
 
     window.fetch = function(input, init) {
         init = init || {};
-        var url = typeof input === 'string' ? input : (input.url || '');
+        var url = typeof input === 'string' ? input: (input.url || '');
         var method = (init.method || 'GET').toUpperCase();
-        // Intercepter : REST mutations + Storage uploads (PUT/POST)
+        // Intercepter: REST mutations + Storage uploads (PUT/POST)
         var isRestMut = /supabase\.co\/rest\/v1\//.test(url) &&
                         (method === 'POST' || method === 'PATCH' || method === 'DELETE');
         var isStorageMut = /supabase\.co\/storage\/v1\//.test(url) &&
@@ -492,7 +533,7 @@
             attempt = _origFetch(input, init);
         }
         return attempt.catch(async function(err) {
-            console.warn('[PWA Sync] Echec reseau, mise en queue :', method, url);
+            console.warn('[PWA Sync] Echec reseau, mise en queue:', method, url);
             // Identifiant lisible (nom du point pour REST, nom de fichier pour Storage)
             var summary = '';
             var parsedBody = null;
@@ -512,11 +553,11 @@
             // L'utilisateur sait ainsi que son point a ete pris en compte.
             if (method === 'POST' && /\/rest\/v1\/custom_features\b/.test(url) && parsedBody && parsedBody.geometry) {
                 try { addOfflineFeatureToMap(parsedBody); }
-                catch(e) { console.warn('[PWA] Affichage offline echoue :', e); }
+                catch(e) { console.warn('[PWA] Affichage offline echoue:', e); }
             }
             var bodySer = await serializeBody(init.body);
 
-            // Normaliser headers : Headers object n'est PAS clonable par IndexedDB.
+            // Normaliser headers: Headers object n'est PAS clonable par IndexedDB.
             // On le convertit en plain object pour eviter DataCloneError silencieux.
             var headersPlain = {};
             try {
@@ -535,7 +576,7 @@
                     }
                 }
             } catch(e) {
-                console.warn('[PWA Sync] Normalisation headers :', e);
+                console.warn('[PWA Sync] Normalisation headers:', e);
             }
 
             return dbAdd({
@@ -551,10 +592,10 @@
                 console.log('[PWA Sync] Queue OK (id=' + insertedId + ') :', method, url.split('?')[0], 'summary=' + (summary || '(vide)'));
                 updateQueueBadge();
                 ensureQueuePolling();
-                // Toast utilisateur : confirme visuellement que le point a ete mis en queue
+                // Toast utilisateur: confirme visuellement que le point a ete mis en queue
                 try {
                     if (method === 'POST' && /\/rest\/v1\/custom_features\b/.test(url)) {
-                        showToast('Point en attente : ' + (summary || 'enregistre offline'), 3000);
+                        showToast('Point en attente: ' + (summary || 'enregistre offline'), 3000);
                     } else if (isStorageMut && method === 'POST') {
                         showToast('Photo en attente de sync', 2500);
                     }
@@ -563,15 +604,15 @@
                     navigator.serviceWorker.ready.then(function(reg) {
                         return reg.sync.register('sync-queue');
                     }).catch(function(e) {
-                        console.warn('[PWA Sync] Background Sync non dispo :', e.message);
+                        console.warn('[PWA Sync] Background Sync non dispo:', e.message);
                     });
                 }
-                // Pour les uploads Storage : retourner une fausse reponse avec
+                // Pour les uploads Storage: retourner une fausse reponse avec
                 // l'URL publique attendue, pour que le code appelant continue.
                 if (isStorageMut && method === 'POST') {
                     var pathMatch = /\/object\/([^\/]+)\/(.+)$/.exec(url);
                     var fakeUrl = pathMatch ? url.replace('/object/', '/object/public/') : url;
-                    // Mettre le Blob photo en cache sous l'URL publique : apercu
+                    // Mettre le Blob photo en cache sous l'URL publique: apercu
                     // <img> fonctionnel hors-ligne avant meme la synchro.
                     try {
                         var _imgBlob = _extractImageBlob(init.body);
@@ -581,19 +622,19 @@
                                 blob: _imgBlob, mime: _imgBlob.type || 'image/jpeg'
                             });
                         }
-                    } catch(_e) { console.warn('[PWA] Cache photo offline echoue :', _e); }
+                    } catch(_e) { console.warn('[PWA] Cache photo offline echoue:', _e); }
                     return new Response(JSON.stringify({ Key: pathMatch ? pathMatch[2] : '', queued: true, offline: true, publicUrl: fakeUrl }),
                         { status: 202, headers: { 'Content-Type': 'application/json' } });
                 }
                 return new Response(JSON.stringify({ queued: true, offline: true }),
                     { status: 202, headers: { 'Content-Type': 'application/json' } });
             }).catch(function(dbErr) {
-                // CRITIQUE : si dbAdd echoue, le point est perdu apres reload !
+                // CRITIQUE: si dbAdd echoue, le point est perdu apres reload !
                 // On informe explicitement l'utilisateur pour qu'il sache que sa modif
                 // n'est PAS persistee (et qu'il puisse re-essayer en ligne).
-                console.error('[PWA Sync] dbAdd ECHOUE :', dbErr, '— item:', { method: method, url: url, summary: summary });
+                console.error('[PWA Sync] dbAdd ECHOUE:', dbErr, '— item:', { method: method, url: url, summary: summary });
                 try {
-                    showToast('Erreur : impossible de mettre en queue (' + (dbErr && dbErr.name ? dbErr.name : 'erreur') + '). Reessaye en ligne.', 7000);
+                    showToast('Erreur: impossible de mettre en queue (' + (dbErr && dbErr.name ? dbErr.name: 'erreur') + '). Reessaye en ligne.', 7000);
                 } catch(_e) {}
                 // Retourner une 503 pour que le code appelant sache qu'il y a eu un probleme
                 return new Response(JSON.stringify({ error: 'queue-failed', message: String(dbErr) }),
@@ -605,7 +646,7 @@
     // ===== Replay queue au retour online =====
     // Trie les items par ordre chronologique pour que les photos (storage POST)
     // soient envoyees AVANT le feature REST qui les reference. Pas de remap
-    // d'URL pour l'instant : si une photo n'a pas pu etre uploadee au moment
+    // d'URL pour l'instant: si une photo n'a pas pu etre uploadee au moment
     // de la creation, elle est uploadee plus tard mais le feature aura quand
     // meme la URL publique attendue (l'objet n'existait pas pendant le offline,
     // mais l'URL Supabase Storage est deterministe si on connait le chemin).
@@ -623,7 +664,7 @@
                 }
                 return a.createdAt - b.createdAt;
             });
-            console.log('[PWA Sync] Replay : ' + items.length + ' operation(s)');
+            console.log('[PWA Sync] Replay: ' + items.length + ' operation(s)');
             for (var i = 0; i < items.length; i++) {
                 var it = items[i];
                 try {
@@ -635,7 +676,7 @@
                     });
                     if (resp.ok || resp.status === 201 || resp.status === 204) {
                         await dbDel(it.id);
-                        console.log('[PWA Sync] OK :', it.method, it.url.split('?')[0]);
+                        console.log('[PWA Sync] OK:', it.method, it.url.split('?')[0]);
                     } else if (resp.status >= 500 || resp.status === 429) {
                         console.warn('[PWA Sync] Server error ' + resp.status + ', reessai plus tard');
                         break;
@@ -644,7 +685,7 @@
                         await dbDel(it.id);
                     }
                 } catch (e) {
-                    console.warn('[PWA Sync] Replay echoue (network), arret :', e);
+                    console.warn('[PWA Sync] Replay echoue (network), arret:', e);
                     break;
                 }
             }
@@ -670,20 +711,20 @@
         if (b) return b;
         b = document.createElement('div');
         b.id = 'pwaStatusBadge';
-        // Position bas-gauche pour eviter le coin haut-droit (encombre : couches,
+        // Position bas-gauche pour eviter le coin haut-droit (encombre: couches,
         // raster, fullscreen) et la popup de precision du LocateControl GPS.
         b.style.cssText =
             'position:fixed !important;bottom:10px !important;left:10px !important;' +
             'z-index:100050 !important;' +
             'display:flex !important;align-items:center;gap:6px;padding:5px 10px;' +
-            'border-radius:14px;font:600 11px/1 Segoe UI,sans-serif;' +
+            'border-radius:14px;font:600 11px/1 var(--sans,Segoe UI,sans-serif);' +
             'background:rgba(255,255,255,0.95);box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
             'cursor:pointer;user-select:none;pointer-events:auto;';
         b.title = 'Cliquer pour gerer le mode hors-ligne';
         b.onclick = openOfflineMenu;
         // Append a l'element fullscreen si actif, sinon body
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(b);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(b);
         return b;
     }
 
@@ -694,12 +735,12 @@
         b = document.createElement('button');
         b.id = 'pwaPosBtn';
         b.type = 'button';
-        b.title = 'Position : partage et parcours';
+        b.title = 'Position: partage et parcours';
         b.style.cssText =
             'position:fixed !important;bottom:46px !important;left:10px !important;' +
             'z-index:100050 !important;display:flex !important;align-items:center;gap:6px;' +
-            'padding:6px 11px;border:none;border-radius:14px;font:600 11px/1 Segoe UI,sans-serif;' +
-            'background:rgba(255,255,255,0.95);color:#5a3a1a;box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
+            'padding:6px 11px;border:none;border-radius:14px;font:600 11px/1 var(--sans,Segoe UI,sans-serif);' +
+            'background:rgba(255,255,255,0.95);color:var(--ink2,#5a3a1a);box-shadow:0 1px 4px rgba(0,0,0,0.18);' +
             'cursor:pointer;user-select:none;pointer-events:auto !important;';
         if (!document.getElementById('pwaLivePulseStyle')) {
             var ps = document.createElement('style');
@@ -711,11 +752,11 @@
             '<span id="pwaPosDot" style="display:none;width:8px;height:8px;border-radius:50%;' +
             'background:#ff5252;pointer-events:none;flex:none;"></span>' +
             '<span id="pwaPosLbl" style="pointer-events:none;">Position</span>';
-        // PAS de L.DomEvent.disableClickPropagation : il bloque le clic sur ce
+        // PAS de L.DomEvent.disableClickPropagation: il bloque le clic sur ce
         // petit bouton au-dessus de la carte (le badge marche sans, on s'aligne).
         b.onclick = function(e) { e.stopPropagation(); _togglePosMenu(); };
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(b);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(b);
         try { _liveUpdateIndicator(); } catch(_e) {}  // refleter l'etat live
         return b;
     }
@@ -728,25 +769,25 @@
         m.id = 'pwaPosPanel';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
             'display:flex;align-items:center;justify-content:center;padding:16px;' +
-            'font-family:Segoe UI,sans-serif;';
+            'font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
-        // Meme palette (brun/creme/olive) mais ton DISCRET : fonds clairs,
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
+        // Meme palette (brun/creme/olive) mais ton DISCRET: fonds clairs,
         // texte brun, bordure fine — pas d'aplats satures.
-        var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
-        var btnDiscret = 'background:#f7f3ec;color:#5a3a1a;border:1px solid #e3dac8;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var sectionTitle = 'font:700 10px var(--sans,Segoe UI,sans-serif);text-transform:uppercase;letter-spacing:0.6px;color:var(--ink3,#8b7355);margin:14px 0 6px 2px;border-bottom:1px solid var(--tagbg,#f0ebe3);padding-bottom:4px;';
+        var btnDiscret = 'background:var(--pan,#f7f3ec);color:var(--ink2,#5a3a1a);border:1px solid var(--bd2,#e3dac8);padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px var(--sans,Segoe UI,sans-serif);text-align:left;width:100%;transition:background 0.15s;';
         var btnPrimary = btnDiscret;
         var btnSecondary = btnDiscret;
-        // Live ON : teinte teal douce (etat actif) ; OFF : discret comme le reste
+        // Live ON: teinte teal douce (etat actif) ; OFF: discret comme le reste
         var liveStyle = _liveOn
-            ? 'background:#e6f4f0;color:#0e7a68;border:1px solid #bfe3da;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;'
+            ? 'background:#e6f4f0;color:#0e7a68;border:1px solid #bfe3da;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px var(--sans,Segoe UI,sans-serif);text-align:left;width:100%;transition:background 0.15s;'
             : btnDiscret;
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:88vh;'
             + 'overflow-y:auto;padding:20px 22px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;font-family:Segoe UI,sans-serif;">Itineraire &amp; position</h2>' +
-            '<button id="pwaPPClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;line-height:1;padding:0 4px;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);font-family:var(--sans,Segoe UI,sans-serif);">Itineraire &amp; position</h2>' +
+            '<button id="pwaPPClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);line-height:1;padding:0 4px;">&times;</button>' +
             '</div>' +
             '<div style="' + sectionTitle + '">Ma position</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
@@ -779,7 +820,7 @@
     }
 
     // ============================================================
-    //  Champ de visibilite (viewshed) "Pixscape-like" depuis un point :
+    //  Champ de visibilite (viewshed) "Pixscape-like" depuis un point:
     //  - planimetrique precis (par-echantillon + courbure terrestre)
     //  - secteur directionnel (azimut + ouverture)
     //  - vue tangentielle (panorama azimut x angle vertical, colore distance)
@@ -817,7 +858,7 @@
     // Position du soleil (NOAA simplifie) -- azimut a partir du Nord, sens
     // horaire ; precision ~0.5 deg, suffisant pour caler une boussole.
     // alt < 0 = sous l'horizon (sera signale a l'utilisateur).
-    // Calibrage par marche GPS : on echantillonne navigator.geolocation
+    // Calibrage par marche GPS: on echantillonne navigator.geolocation
     // jusqu'a ce que le deplacement atteigne ~15 m, on en deduit le cap.
     // Independant du magnetometre et du soleil ; precision ~5-15 deg
     // (limitee par la precision GPS, ~5 m en plein air).
@@ -840,8 +881,8 @@
             + 'transition:width 0.3s;"></div></div>'
             + '<div id="pwaWalkLive" style="font-size:11px;opacity:0.75;">'
             + 'En attente du GPS…</div>'
-            + '<button id="pwaWalkX" style="margin-top:16px;background:#f0ebe3;'
-            + 'color:#5a3a1a;border:none;border-radius:6px;padding:8px 16px;'
+            + '<button id="pwaWalkX" style="margin-top:16px;background:var(--tagbg,#f0ebe3);'
+            + 'color:var(--ink2,#5a3a1a);border:none;border-radius:6px;padding:8px 16px;'
             + 'cursor:pointer;font:600 12px Segoe UI;">Annuler</button>';
         ov.appendChild(ph);
         var first = null, watch = -1, done = false;
@@ -887,8 +928,8 @@
                 stop(true, _vsBearing(first.lat, first.lon, c.latitude, c.longitude));
             }
         }, function(err) {
-            ph.querySelector('#pwaWalkMsg').textContent = 'GPS erreur : '
-                + (err && err.message ? err.message : err);
+            ph.querySelector('#pwaWalkMsg').textContent = 'GPS erreur: '
+                + (err && err.message ? err.message: err);
         }, { enableHighAccuracy: true, maximumAge: 0, timeout: 60000 });
     }
     function _vsSunAzEl(date, lat, lon) {
@@ -915,12 +956,12 @@
     }
 
     function _vsDelay(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
-    // Altimetrie IGN par lots. Robuste au throttling : l'API renvoie 429
+    // Altimetrie IGN par lots. Robuste au throttling: l'API renvoie 429
     // (Too Many Requests) quand les requetes s'enchainent trop vite -> on
     // respecte Retry-After / backoff exponentiel + petit espacement entre
     // lots, sinon le calcul echouait silencieusement (rien ne s'affichait).
     function _vsFetchElev(pts, onProgress) {
-        // POST par GROS lots (1500 pts) -> tres peu de requetes : evite la
+        // POST par GROS lots (1500 pts) -> tres peu de requetes: evite la
         // saturation de la passerelle IGN (504) et le throttling (429) sur
         // grand rayon. Repli automatique en GET (lots de 180) si le POST
         // n'est pas accepte (status method/format ou blocage reseau/CORS).
@@ -933,7 +974,7 @@
         function doFetch(slice, attempt) {
             var usePost = postOk, ll = lonsLats(slice), req;
             if (usePost) {
-                // POST JSON : l'IGN exige des valeurs en CHAINE (lon/lat
+                // POST JSON: l'IGN exige des valeurs en CHAINE (lon/lat
                 // delimites, zonly:'true'). Verifie OK via Playwright.
                 req = fetch(VS_ALTI, {
                     method: 'POST',
@@ -962,7 +1003,7 @@
                 throw new Error('Altimetrie IGN HTTP ' + r.status
                     + (r.status === 429 ? ' (trop de requetes)'
                        : (r.status === 503 || r.status === 504)
-                         ? ' (serveur IGN sature : reessayer ou reduire le rayon)' : ''));
+                         ? ' (serveur IGN sature: reessayer ou reduire le rayon)' : ''));
             }).catch(function(e) {
                 if (e && e.__switchGet) throw e;
                 var net = /NetworkError|Failed to fetch|load failed|aborted/i.test(String(e && e.message));
@@ -976,18 +1017,18 @@
         }
         function next() {
             if (i >= pts.length) return Promise.resolve(out);
-            var ch = postOk ? CH_POST : CH_GET;
+            var ch = postOk ? CH_POST: CH_GET;
             var slice = pts.slice(i, i + ch);
             return doFetch(slice, 0).then(function(j) {
                 var ev = (j && j.elevations) || [];
-                // ALIGNEMENT STRICT : chaque lot doit fournir EXACTEMENT
-                // slice.length altitudes. L'IGN peut en renvoyer moins/plus :
+                // ALIGNEMENT STRICT: chaque lot doit fournir EXACTEMENT
+                // slice.length altitudes. L'IGN peut en renvoyer moins/plus:
                 // sans ce garde-fou, tout l'index se decale et les cibles
                 // (points perso) recuperaient l'altitude d'un echantillon
                 // lointain -> elles se retrouvaient "sur des cretes".
                 for (var qi = 0; qi < slice.length; qi++) {
                     var z = ev[qi];
-                    out.push((typeof z === 'number' && z > -1000) ? z : 0);
+                    out.push((typeof z === 'number' && z > -1000) ? z: 0);
                 }
                 i += slice.length;
                 if (onProgress) onProgress(Math.min(i, pts.length), pts.length);
@@ -1009,13 +1050,13 @@
         var d = document.createElement('div');
         d.id = 'pwaVSprog';
         d.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);'
-            + 'z-index:100068;background:#5a3a1a;color:#fff;padding:9px 16px;'
-            + 'border-radius:20px;font:600 13px Segoe UI,sans-serif;'
+            + 'z-index:100068;background:var(--ink2,#5a3a1a);color:#fff;padding:9px 16px;'
+            + 'border-radius:20px;font:600 13px var(--sans,Segoe UI,sans-serif);'
             + 'box-shadow:0 2px 10px rgba(0,0,0,0.35);pointer-events:none;white-space:nowrap;';
         d.textContent = txt;
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement
             || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(d);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(d);
         _vsProgEl = d;
     }
     function _vsProgSet(txt) {
@@ -1027,7 +1068,7 @@
         var ex = document.getElementById('pwaVSprog');
         if (ex) { try { ex.remove(); } catch(_e) {} }
     }
-    // Rendu net (pas de lissage) de l'imageOverlay : le navigateur interpole
+    // Rendu net (pas de lissage) de l'imageOverlay: le navigateur interpole
     // l'image en bilineaire quand Leaflet l'agrandit -> mailles/trous floutes
     // et "combles" visuellement. On force un rendu pixelise pour garder le
     // grain et les vrais trous fideles a tout zoom.
@@ -1079,13 +1120,13 @@
         }
         return false;
     }
-    // Tri par distance croissante : les points PROCHES sont etiquetes en
+    // Tri par distance croissante: les points PROCHES sont etiquetes en
     // priorite ; les lointains perdent leur libelle si la zone est saturee.
     function _vsByDist(a, b) { return (a.dist || 0) - (b.dist || 0); }
     // Couleur d'un point selon sa distance (effet de profondeur, meme echelle
     // que les reliefs/curseur) : proche = teinte vive de la categorie,
     // loin = estompe/pale. La forme garde l'identite (cercle/triangle/losange).
-    // Categorie d'affichage d'un repere OSM (res.peaks) selon sa nature :
+    // Categorie d'affichage d'un repere OSM (res.peaks) selon sa nature:
     // col / village / lac ont leur propre icone ; tout le reste = sommet.
     function _vsKind(nature) {
         return nature === 'col' ? 'col'
@@ -1093,7 +1134,7 @@
              : nature === 'water' ? 'lac'
              : nature === 'river' ? 'river' : 'peak';
     }
-    // Eclaircit une couleur hex (#rrggbb) vers un gris clair : version
+    // Eclaircit une couleur hex (#rrggbb) vers un gris clair: version
     // "estompee" d'une teinte de categorie.
     function _vsPale(hex) {
         var r = parseInt(hex.slice(1, 3), 16);
@@ -1110,7 +1151,7 @@
         var k = _vsKind(p && p.nature);
         var full = k === 'col' ? '#6f5f96' : k === 'village' ? '#b5342b'
                  : k === 'lac' ? '#2f7fa0' : k === 'river' ? '#2f9a90' : '#8a5a2b';
-        return (p && p.visible) ? full : _vsPale(full);
+        return (p && p.visible) ? full: _vsPale(full);
     }
     function _vsPeakGlyph(nature) {
         var k = _vsKind(nature);
@@ -1138,7 +1179,7 @@
         var t = Math.max(0, Math.min(1, (dist || 0) / (R || 1)));
         return 6.5 - 3 * t;   // proche ~6.5 px -> loin ~3.5 px
     }
-    // Marqueur Patrimoine sur la carte 2D : losange (forme differente des
+    // Marqueur Patrimoine sur la carte 2D: losange (forme differente des
     // sommets qui sont des cercles), couleur rose.
     function _vsDiamondIcon(color) {
         return L.divIcon({
@@ -1159,12 +1200,12 @@
         var items = [];
         // Construit (ou reconstruit) la liste des elements visibles depuis
         // res, EN PLACE (items.length = 0). Les sommets OSM et le patrimoine
-        // arrivent en ASYNCHRONE apres le calcul : si la vue camera s'ouvre
+        // arrivent en ASYNCHRONE apres le calcul: si la vue camera s'ouvre
         // tot (mode auto-cam depuis le GPS), res.peaks / res.patrimoine sont
         // encore vides -> on rafraichit via res._setCamItems quand ils
         // arrivent. La boucle de rendu lit items a chaque frame, donc muter
         // le tableau en place suffit a mettre l'overlay AR a jour.
-        // Filtre par categorie : l'utilisateur choisit ce qu'il affiche
+        // Filtre par categorie: l'utilisateur choisit ce qu'il affiche
         // (sommets / cols / villages / lacs / patrimoine / mes points).
         // Etat memorise en localStorage. catShow[k] === false -> masque.
         var catShow = { peak: true, col: true, village: true, lac: true,
@@ -1215,7 +1256,7 @@
         }
         var ov = document.createElement('div');
         ov.style.cssText = 'position:fixed;inset:0;z-index:100085;background:#000;'
-            + 'font-family:Segoe UI,sans-serif;overflow:hidden;';
+            + 'font-family:var(--sans,Segoe UI,sans-serif);overflow:hidden;';
         var video = document.createElement('video');
         video.setAttribute('playsinline', ''); video.muted = true; video.autoplay = true;
         video.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;'
@@ -1267,20 +1308,20 @@
             + '<path d="M 4 7 L 8 7 L 9.5 5 L 14.5 5 L 16 7 L 20 7 Q 21 7 21 8 L 21 18 '
             + 'Q 21 19 20 19 L 4 19 Q 3 19 3 18 L 3 8 Q 3 7 4 7 Z"/>'
             + '<circle cx="12" cy="13" r="3.5"/></svg></button>'
-            + '<button id="pwaCamX" style="background:#f0ebe3;color:#5a3a1a;border:none;'
+            + '<button id="pwaCamX" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;'
             + 'border-radius:6px;padding:6px 12px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>';
         var manual = document.createElement('div');
         manual.style.cssText = 'position:absolute;top:46px;left:0;right:0;display:none;'
             + 'z-index:10;padding:6px 12px;color:#fff;background:rgba(0,0,0,0.4);'
             + 'font:600 11px Segoe UI;';
-        manual.innerHTML = 'Boussole indisponible — direction manuelle : '
+        manual.innerHTML = 'Boussole indisponible — direction manuelle: '
             + '<span id="pwaCamMv">0</span>°<br>'
             + '<input type="range" id="pwaCamM" min="0" max="359" value="0" style="width:100%;">';
         var list = document.createElement('div');
         list.style.cssText = 'position:absolute;left:0;right:0;bottom:0;max-height:42vh;'
             + 'z-index:10;overflow-y:auto;background:rgba(0,0,0,0.62);color:#fff;'
             + 'padding:8px 10px;font:13px Segoe UI;display:none;';
-        // Mini-carte : vraie carte Leaflet (tuiles OSM/OpenTopo) + perimetre
+        // Mini-carte: vraie carte Leaflet (tuiles OSM/OpenTopo) + perimetre
         // de visibilite + points visibles + overlay canvas pour FOV/Nord.
         var miniMap = document.createElement('div');
         miniMap.title = 'Tape un point que tu vois pour caler le cap dessus';
@@ -1336,10 +1377,10 @@
         ov.appendChild(manual); ov.appendChild(list); ov.appendChild(calibPane);
         ov.appendChild(miniMap);
         var fe = document.fullscreenElement || document.webkitFullscreenElement;
-        (fe && !fe.contains(document.body) ? fe : document.body).appendChild(ov);
+        (fe && !fe.contains(document.body) ? fe: document.body).appendChild(ov);
         // Masque les controles de la carte (recherche/loupe, boutons
         // flottants, gestion rasters, badge en ligne, position, zoom
-        // Leaflet...) tant que la vue camera est ouverte : ils passaient
+        // Leaflet...) tant que la vue camera est ouverte: ils passaient
         // PAR-DESSUS le flux camera et genaient la visibilite. Rend aussi le
         // HUD adaptatif : il s'enroule et se compacte en portrait, pour que
         // la vue camera soit utilisable telephone tenu a la verticale.
@@ -1374,7 +1415,7 @@
 
         var rawHeading = 0, heading = 0, pitch = 0, haveHeading = false;
         var stream = null, raf = 0, dead = false;
-        // Lissage du cap : moyenne mobile sur (cos, sin) pour gerer le saut
+        // Lissage du cap: moyenne mobile sur (cos, sin) pour gerer le saut
         // 359 -> 0 sans clignotement. SMOOTH ~ poids du nouvel echantillon
         // (0.12 = lag ~8 frames a 60 Hz, ~130 ms, confortable a l'oeil).
         var smX = null, smY = null, smPitch = null;
@@ -1387,7 +1428,7 @@
                    smY = smY * (1 - SMOOTH) + ny * SMOOTH; }
             return (Math.atan2(smY, smX) * 180 / Math.PI + 360) % 360;
         }
-        // Hysteresis sur le cap affiche : ne reaffiche le degre rond
+        // Hysteresis sur le cap affiche: ne reaffiche le degre rond
         // que si l'ecart au precedent depasse 1.2 deg (sinon flicker).
         var lastShownCap = null;
         // Decalage de cap (calibrage) : appris quand l'utilisateur pointe un
@@ -1395,7 +1436,7 @@
         var headingOffset = 0;
         try { headingOffset = parseFloat(localStorage.getItem('pwaCamHeadOff')) || 0; } catch(_e) {}
         function saveOff() {
-            // En mode XR, ARCore part d'un yaw arbitraire : l'offset ne
+            // En mode XR, ARCore part d'un yaw arbitraire: l'offset ne
             // s'applique qu'a cette session, on ne le persiste pas en
             // localStorage (ce serait du bruit pour la prochaine session).
             // En mode magneto, on sauvegarde -> calibration durable.
@@ -1422,7 +1463,7 @@
         // Icones SVG (Path2D) : units centrees sur (0,0), echelle ~20px.
         // Genere a partir de chemins SVG, plus reconnaissables et propres
         // que les triangles/losanges canvas. Scale = rr / 10 a l'utilisation.
-        // Pin teardrop partage par toutes les categories. Centre bulbe : (0,-8)
+        // Pin teardrop partage par toutes les categories. Centre bulbe: (0,-8)
         // rayon utile ~7. Le pictogramme blanc est dessine par-dessus.
         var PIN_PATH = new Path2D(
             'M 0 13 C 0 13 -10 -3 -10 -9 C -10 -14.5 -5.5 -17 0 -17 '
@@ -1440,7 +1481,7 @@
             lac:     ['#5aa8d8', '#2c6f9e'],   // bleu
             river:   ['#48bcbc', '#1c7575']    // turquoise
         };
-        // 9 pictogrammes : sommet + 7 patrimoine + cible.
+        // 9 pictogrammes: sommet + 7 patrimoine + cible.
         // Chaque entree : white = Path2D fill blanc, dark = Path2D fill couleur kind
         // (pour les ouvertures, meurtrieres, etc.)
         function P(d) { return new Path2D(d); }
@@ -1461,7 +1502,7 @@
             'patri-chapelle': {
                 // Nef + toit + clocher (rect plein, jonction nette au toit) +
                 // croix posee sur le clocher. Plus de demi-triangles parasites
-                // a l'apex : le clocher est plus large que l'apex donc la
+                // a l'apex: le clocher est plus large que l'apex donc la
                 // jonction est propre.
                 white: P(
                     // nef
@@ -1502,7 +1543,7 @@
                     + ' M -6 -1.5 L 6 -1.5 L 6 -0.1 L -6 -0.1 Z')
             },
             'patri-fouille': {
-                // Cas special : dessine avec une rotation -30deg dans drawIcon.
+                // Cas special: dessine avec une rotation -30deg dans drawIcon.
                 rotated: true,
                 white: P('M -1.6 -14 L 1.6 -14 L 1.6 -12.6 L -1.6 -12.6 Z'
                     + ' M -0.7 -12.6 L 0.7 -12.6 L 0.7 -6.6 L -0.7 -6.6 Z'
@@ -1512,28 +1553,28 @@
                 white: P('M 0 -4 A 4 4 0 1 1 0 -12 A 4 4 0 1 1 0 -4 Z'),
                 dark:  P('M 0 -6.3 A 1.7 1.7 0 1 1 0 -9.7 A 1.7 1.7 0 1 1 0 -6.3 Z')
             },
-            // Col / breche : sablier (deux triangles joints au centre du bulbe)
+            // Col / breche: sablier (deux triangles joints au centre du bulbe)
             col: {
                 white: P('M -6 -14 L 6 -14 L 0 -8 Z M -6 -2 L 6 -2 L 0 -8 Z')
             },
-            // Village / hameau : maison simple (toit + porte)
+            // Village / hameau: maison simple (toit + porte)
             village: {
                 white: P('M -6.5 -1 L -6.5 -7 L 0 -13 L 6.5 -7 L 6.5 -1 Z'),
                 dark:  P('M -1.9 -1 L 1.9 -1 L 1.9 -5.4 L -1.9 -5.4 Z')
             },
-            // Lac / plan d'eau : goutte
+            // Lac / plan d'eau: goutte
             lac: {
                 white: P('M 0 -15 C -3 -11 -6 -8 -6 -5 C -6 -0.5 6 -0.5 6 -5 '
                     + 'C 6 -8 3 -11 0 -15 Z')
             },
-            // Riviere / cours d'eau : ruban ondule (le flot)
+            // Riviere / cours d'eau: ruban ondule (le flot)
             river: {
                 white: P('M -8 -8 C -6 -11.5 -2 -11.5 0 -8 C 2 -4.5 6 -4.5 8 -8 '
                     + 'L 8 -5.5 C 6 -2 2 -2 0 -5.5 C -2 -9 -6 -9 -8 -5.5 Z')
             }
         };
         // Detection de la sous-categorie patrimoine depuis le nom de l'element.
-        // Ordre important : la PREMIERE regle qui matche gagne.
+        // Ordre important: la PREMIERE regle qui matche gagne.
         // Insensible casse + accents (NFD strip).
         function _patriIconKind(nom) {
             if (!nom) return 'patri-fouille';
@@ -1613,7 +1654,7 @@
             g.arcTo(x, y, x + w, y, r);
             g.closePath();
         }
-        // Pastille label moderne : gradient sombre + pastille kind + nom + sous-texte distance.
+        // Pastille label moderne: gradient sombre + pastille kind + nom + sous-texte distance.
         // Si `rects` est passe, on tente plusieurs positions (droite, gauche, droite-haut,
         // gauche-haut, droite-bas, gauche-bas) et on rejette si toutes overlapent un
         // rect deja place. Retourne true si dessine, false si abandonne.
@@ -1627,7 +1668,7 @@
             var pad = 10, hh = 23, gap = 11;
             var totalW = pad + 9 + gap + nw + 5 + sw2 + pad;
             var W = g.canvas.width, H = g.canvas.height;
-            // Candidates : droite, gauche, haut-droite, haut-gauche, bas-droite, bas-gauche
+            // Candidates: droite, gauche, haut-droite, haut-gauche, bas-droite, bas-gauche
             var candidates = [
                 { bx: x + 13,            by: y - hh / 2 },
                 { bx: x - totalW - 13,   by: y - hh / 2 },
@@ -1691,12 +1732,12 @@
             return true;
         }
         // Superposition de la silhouette du relief calcule (skyline MNT)
-        // sur le flux camera : permet de comparer visuellement l'horizon
+        // sur le flux camera: permet de comparer visuellement l'horizon
         // synthetique et le vrai pour caler la boussole sans repere connu.
-        // Methode PeakLens-like, calage manuel : on ajuste +/-1deg ou
+        // Methode PeakLens-like, calage manuel: on ajuste +/-1deg ou
         // Calibrer jusqu'a ce que la silhouette epouse le relief reel.
         var showRelief = false;
-        // Reglages de calage du relief, memorises et reutilises : zoom de la
+        // Reglages de calage du relief, memorises et reutilises: zoom de la
         // silhouette (<1 = dezoome, pour coller a un champ camera plus large)
         // et decalage vertical simple (fraction de la hauteur, monte/descend
         // toute la silhouette d'un bloc pour aligner l'horizon).
@@ -1711,13 +1752,13 @@
         // si heading == calibAz (donc immobile a l'ecran quand l'utilisateur
         // pivote). Il oriente physiquement le tel pour superposer, et tape
         // "Caler ici" -> headingOffset = calibAz - rawHeading.
-        var calibAz = (typeof opts.calibAz === 'number') ? opts.calibAz : null;
+        var calibAz = (typeof opts.calibAz === 'number') ? opts.calibAz: null;
         if (calibAz != null) showRelief = true;
         function drawRelief(g, W, H, f, cx, cyH) {
             if (!showRelief || !res.rayProf || !res.rayProf.length) return;
             // En mode calage, on figue la silhouette au centre de l'ecran
             // (anchoree sur calibAz), sinon elle suit le cap (heading).
-            var anchor = (calibAz != null) ? calibAz : heading;
+            var anchor = (calibAz != null) ? calibAz: heading;
             var refPitch = (calibAz != null) ? 0 : pitch;
             var rp = res.rayProf;
             var hasBands = !!(rp[0] && rp[0].bandMax && res.bandOut);
@@ -1739,12 +1780,12 @@
                 return Math.max(-1500, Math.min(H + 8, y));
             }
             if (hasBands) {
-                // SILHOUETTES PAR BANDE : peindre du loin au proche pour que
+                // SILHOUETTES PAR BANDE: peindre du loin au proche pour que
                 // les reliefs proches OCCLUDENT les plus eloignes. Palette
                 // topographique : proche = vert-olive profond, mid = gris-vert
                 // brumeux, loin = bleu-gris atmospherique (perspective aerienne).
                 var NB = res.bandOut.length;
-                // Interpolation lineaire entre 3 couleurs cle :
+                // Interpolation lineaire entre 3 couleurs cle:
                 // t=0   -> RGB(58, 92, 64)   olive forestier
                 // t=0.5 -> RGB(120,135,128)  gris-vert
                 // t=1   -> RGB(180,200,215)  bleu-gris brume
@@ -1813,13 +1854,13 @@
                     g.stroke();
                 }
             } else {
-                // Repli : silhouette unique du skyline (anciens res sans bandMax)
+                // Repli: silhouette unique du skyline (anciens res sans bandMax)
                 g.fillStyle = 'rgba(255,100,180,0.18)';
                 g.beginPath();
                 g.moveTo(inFov[0].x, H + 4);
                 for (var ii = 0; ii < inFov.length; ii++) {
                     g.lineTo(inFov[ii].x,
-                        yFromAng(inFov[ii].ray.sky ? inFov[ii].ray.sky.ang : -90));
+                        yFromAng(inFov[ii].ray.sky ? inFov[ii].ray.sky.ang: -90));
                 }
                 g.lineTo(inFov[inFov.length - 1].x, H + 4);
                 g.closePath(); g.fill();
@@ -1827,7 +1868,7 @@
                 g.lineWidth = 2;
                 g.beginPath();
                 for (var jj = 0; jj < inFov.length; jj++) {
-                    var ay = yFromAng(inFov[jj].ray.sky ? inFov[jj].ray.sky.ang : -90);
+                    var ay = yFromAng(inFov[jj].ray.sky ? inFov[jj].ray.sky.ang: -90);
                     if (jj === 0) g.moveTo(inFov[jj].x, ay);
                     else g.lineTo(inFov[jj].x, ay);
                 }
@@ -1870,7 +1911,7 @@
             }
             g.textAlign = 'left';
             // ----- Phase 1 : projeter chaque item en pixel + scorer -----
-            // Score = priorite d'affichage. On veut afficher en priorite :
+            // Score = priorite d'affichage. On veut afficher en priorite:
             // (a) les elements PROCHES (parallaxe -> ils sont les plus discriminants)
             // (b) les elements proches du CENTRE de l'ecran (axe du regard)
             // (c) les sommets et patrimoine plutot que les cibles perso
@@ -1963,7 +2004,7 @@
                     g.restore();
                 }
             });
-            // Labels : ordre de priorite (le plus pertinent gagne la place)
+            // Labels: ordre de priorite (le plus pertinent gagne la place)
             var labeled = 0;
             kept.forEach(function(p) {
                 if (labeled >= MAX_LABELS) return;
@@ -2029,7 +2070,7 @@
                     inertia: false, minZoom: 5, maxZoom: 19
                 });
                 miniLeafDiv.style.cursor = 'crosshair';
-                // Zoom initial : centre sur l'utilisateur de maniere prononcee
+                // Zoom initial: centre sur l'utilisateur de maniere prononcee
                 // (on prend la moitie du rayon comme reference -> l'observateur
                 // est dominant et son environnement proche est lisible).
                 // L'utilisateur peut dezoomer pour voir la portee complete.
@@ -2074,9 +2115,9 @@
                 setTimeout(function() {
                     try { miniLMap.invalidateSize(); } catch(_e) {}
                 }, 120);
-                // Tap-to-calibrate : l'utilisateur tape un point qu'il voit
+                // Tap-to-calibrate: l'utilisateur tape un point qu'il voit
                 // dans la camera -> on cale le cap dessus en deduisant
-                // l'offset capteur (le seul vrai inconnu : on a deja la
+                // l'offset capteur (le seul vrai inconnu: on a deja la
                 // direction objective (lat/lon -> bearing) et la direction
                 // capteur (rawHeading)).
                 // Boutons +/- : zoom autour du centre (pas de pan)
@@ -2094,12 +2135,12 @@
                 });
                 miniLMap.on('click', function(e) {
                     if (calibAz != null) {
-                        // Mode calage : tape la mini-carte pour deplacer la
+                        // Mode calage: tape la mini-carte pour deplacer la
                         // silhouette sur cette direction (autre point de vue).
                         var cb = _vsBearing(res.lat, res.lon,
                             e.latlng.lat, e.latlng.lng);
                         setCalibAz(cb);
-                        showToast('Silhouette deplacee : azimut '
+                        showToast('Silhouette deplacee: azimut '
                             + Math.round(cb) + '°', 2500);
                         return;
                     }
@@ -2113,7 +2154,7 @@
                     headingOffset = ((bear - rawHeading + 540) % 360) - 180;
                     saveOff(); applyOffset();
                     smX = null; smY = null; lastShownCap = null; tick();
-                    showToast('Cap cale : ' + Math.round(bear) + '°'
+                    showToast('Cap cale: ' + Math.round(bear) + '°'
                         + ' · ' + (distM > 1000
                             ? (distM / 1000).toFixed(1) + ' km'
                             : Math.round(distM) + ' m'), 3500);
@@ -2131,7 +2172,7 @@
                 });
             } catch(_e) {}
         }
-        // Overlay canvas : FOV + Nord + (en mode calage) trait perspective
+        // Overlay canvas: FOV + Nord + (en mode calage) trait perspective
         function drawMiniMap() {
             var ctx = miniOverlay.getContext('2d');
             var W = miniOverlay.width, H = miniOverlay.height;
@@ -2314,7 +2355,7 @@
             tick();
         }
         saveOff();
-        // Sources de cap acceptees, dans l'ordre :
+        // Sources de cap acceptees, dans l'ordre:
         //   1) webkitCompassHeading (iOS Safari) -- toujours absolu / boussole
         //   2) deviceorientationabsolute avec absolute=true (Android Chrome)
         //      -> on calcule le cap a partir de l'attitude complete a,b,g
@@ -2327,7 +2368,7 @@
             var pComputed = null;
             if (typeof ev.webkitCompassHeading === 'number'
                 && isFinite(ev.webkitCompassHeading)) {
-                // iOS Safari : webkitCompassHeading est deja le cap "boussole"
+                // iOS Safari: webkitCompassHeading est deja le cap "boussole"
                 // du haut physique du device. On compense l'orientation ecran.
                 hd = ev.webkitCompassHeading;
                 var so = 0;
@@ -2360,14 +2401,13 @@
                     hd = (Math.atan2(cx, cy) * 180 / Math.PI + 360) % 360;
                     pComputed = Math.atan2(cz, horiz) * 180 / Math.PI;
                 }
-                // Pas de + screen.orientation.angle ici : la rotation autour de
+                // Pas de + screen.orientation.angle ici: la rotation autour de
                 // l'axe camera est deja entierement encodee dans (beta, gamma).
                 // Ajouter so introduisait une erreur de 90/180/270 en paysage.
             }
             if (pComputed != null) {
                 var p = Math.max(-45, Math.min(45, pComputed));
-                smPitch = (smPitch == null) ? p
-                    : smPitch * (1 - SMOOTH_PITCH) + p * SMOOTH_PITCH;
+                smPitch = (smPitch == null) ? p: smPitch * (1 - SMOOTH_PITCH) + p * SMOOTH_PITCH;
                 pitch = smPitch;
             }
             if (hd == null) { tick(); return; }
@@ -2380,7 +2420,7 @@
             var sawAbs = false;
             var onAbs = function(ev) { sawAbs = true; onOri(ev); };
             // Sur 'deviceorientation', on relaie SEULEMENT si pas de flux abs
-            // deja en cours (autrement on l'ignore : doublons + valeurs alpha
+            // deja en cours (autrement on l'ignore: doublons + valeurs alpha
             // potentiellement relatives).
             var onMaybe = function(ev) {
                 if (sawAbs) return;
@@ -2483,7 +2523,7 @@
             catPane.style.display = open ? 'block' : 'none';
             if (open) renderCatPane();
         };
-        // Capture photo : compose le flux camera + l'overlay marqueurs +
+        // Capture photo: compose le flux camera + l'overlay marqueurs +
         // bandeau d'info (cap, position, date). Partage natif si dispo,
         // sinon telechargement.
         function takePhoto() {
@@ -2492,7 +2532,7 @@
             var photo = document.createElement('canvas');
             photo.width = W; photo.height = H;
             var pctx = photo.getContext('2d');
-            // 1. Fond : frame video (object-fit:cover -> crop conservatif)
+            // 1. Fond: frame video (object-fit:cover -> crop conservatif)
             var hasVideo = video && video.videoWidth > 0 && !xrSession;
             if (hasVideo) {
                 try {
@@ -2514,13 +2554,13 @@
                     pctx.fillStyle = 'rgba(255,255,255,0.6)';
                     pctx.font = '600 14px system-ui,sans-serif';
                     pctx.textAlign = 'center'; pctx.textBaseline = 'middle';
-                    pctx.fillText('Mode AR : flux camera non capturable',
+                    pctx.fillText('Mode AR: flux camera non capturable',
                         W / 2, H / 2);
                 }
             }
             // 2. Overlay marqueurs / silhouette / FOV
             pctx.drawImage(canvas, 0, 0);
-            // 3. Mini-carte en bas-gauche : carte Leaflet complete (tuiles
+            // 3. Mini-carte en bas-gauche: carte Leaflet complete (tuiles
             //    OSM + champ de visibilite 2D + perimetre + marqueurs) +
             //    overlay FOV/Nord. Leaflet ne dessine pas dans un canvas
             //    unique : on rasterise le DOM (tuiles <img>, calque vecteur
@@ -2537,7 +2577,7 @@
                 pctx.fillRect(mmX, mmY, mmW, mmH);
                 if (srcW > 2 && srcH > 2) {
                     var sxf = mmW / srcW, syf = mmH / srcH;
-                    // Tuiles puis calque vecteur : querySelectorAll renvoie
+                    // Tuiles puis calque vecteur: querySelectorAll renvoie
                     // dans l'ordre du DOM (tile-pane avant overlay-pane),
                     // donc l'empilement z est preserve.
                     var mmNodes = miniLeafDiv.querySelectorAll(
@@ -2600,7 +2640,7 @@
                 setTimeout(function() { try { flash.remove(); } catch(_e) {} }, 400);
             });
             // 6. Export blob -> enregistrement direct du fichier (pas de
-            // volet de partage : l'utilisateur veut simplement enregistrer
+            // volet de partage: l'utilisateur veut simplement enregistrer
             // la photo, le partage se fait ensuite depuis la galerie).
             try {
                 photo.toBlob(function(blob) {
@@ -2621,7 +2661,7 @@
                     setTimeout(function() {
                         try { a.remove(); URL.revokeObjectURL(url); } catch(_e) {}
                     }, 1000);
-                    showToast('Photo enregistree : ' + fn, 4000);
+                    showToast('Photo enregistree: ' + fn, 4000);
                 } catch(_e) { showToast('Telechargement impossible', 4000); }
             }
         }
@@ -2639,7 +2679,7 @@
                 ? 'rgba(255,100,180,0.65)' : 'rgba(255,100,180,0.2)';
             schedule();
         };
-        // Affinage automatique : capture une frame, detecte le sky/relief
+        // Affinage automatique: capture une frame, detecte le sky/relief
         // par gradient vertical, et trouve le decalage en pixels qui aligne
         // au mieux la silhouette MNT sur les contours reels.
         function autoRefine() {
@@ -2655,7 +2695,7 @@
             try { tctx.drawImage(video, 0, 0, SW, SH); }
             catch(_e) { return { err: 'Capture camera impossible' }; }
             var img = tctx.getImageData(0, 0, SW, SH).data;
-            // Detection : pour chaque colonne, y du gradient vertical max
+            // Detection: pour chaque colonne, y du gradient vertical max
             // (luminosite au-dessus - en-dessous, positif a la limite ciel/relief)
             var detected = new Array(SW), gradVal = new Array(SW), maxG = 0;
             for (var x = 0; x < SW; x++) {
@@ -2674,7 +2714,7 @@
                 detected[x] = bestY; gradVal[x] = bestG;
                 if (bestG > maxG) maxG = bestG;
             }
-            // Seuil : on ne garde que les colonnes a gradient marque (>40% du max)
+            // Seuil: on ne garde que les colonnes a gradient marque (>40% du max)
             var thresh = Math.max(maxG * 0.4, 200);
             var nKept = 0;
             for (var xx = 0; xx < SW; xx++) {
@@ -2716,7 +2756,7 @@
                 if (avg < bestErr) { bestErr = avg; bestShift = dx; bestN = cnt; }
             }
             if (bestErr === Infinity) return { err: 'Pas de correspondance' };
-            // Qualite : MSE doit etre raisonnable (sinon faux match)
+            // Qualite: MSE doit etre raisonnable (sinon faux match)
             if (bestErr > 300) return { err: 'Match peu fiable (silhouette tres differente du reel)' };
             var deltaDeg = Math.atan2(bestShift, fxPx) * 180 / Math.PI;
             // bestShift > 0 -> synth doit decaler droite, donc heading_reel > heading
@@ -2740,10 +2780,10 @@
                 var r = autoRefine();
                 b.style.background = oldBg;
                 if (r.err) {
-                    showToast('Affiner : ' + r.err, 5000);
+                    showToast('Affiner: ' + r.err, 5000);
                 } else {
                     var s = (r.delta > 0 ? '+' : '') + r.delta.toFixed(1) + '°';
-                    showToast('Affine : ' + s + ' (sur ' + r.cols
+                    showToast('Affine: ' + s + ' (sur ' + r.cols
                         + ' colonnes, erreur ~' + Math.round(Math.sqrt(r.mse)) + ' px)', 4500);
                 }
             }, 80);
@@ -2763,7 +2803,7 @@
             return Math.round(a) + '° '
                 + ['N','NE','E','SE','S','SO','O','NO'][Math.round(a / 45) % 8];
         }
-        // Deplace la silhouette de calage : change l'azimut fige (calibAz)
+        // Deplace la silhouette de calage: change l'azimut fige (calibAz)
         // pour que l'utilisateur puisse choisir un autre point de vue et
         // caler sur un relief plus reconnaissable. Met a jour l'affichage
         // (azimut + curseur) puis redessine. Appele par les fleches, le
@@ -2777,7 +2817,7 @@
             if (sl && parseInt(sl.value, 10) !== calibAz) sl.value = String(calibAz);
             schedule();
         }
-        // Entre dans le mode calage silhouette : la silhouette du relief
+        // Entre dans le mode calage silhouette: la silhouette du relief
         // calcule est figee a l'azimut calibAz ; l'utilisateur tourne le
         // telephone pour la faire coincider avec le relief reel, puis valide.
         // La silhouette est DEPLACABLE (curseur / fleches / tap mini-carte)
@@ -2857,7 +2897,7 @@
                     String(reliefZoom)); } catch(_e) {}
                 schedule();
             };
-            // Reinitialiser le calage du relief : zoom 100 %, decalage 0,
+            // Reinitialiser le calage du relief: zoom 100 %, decalage 0,
             // retour a la vue par defaut. Reconstruit le panneau.
             calibPane.querySelector('#pwaCamCalibRst').onclick = function() {
                 reliefZoom = 1; reliefVOff = 0;
@@ -2868,16 +2908,16 @@
                 enterCalib(calibAz);
                 showToast('Calage du relief reinitialise', 2500);
             };
-            // Etat visuel du bouton Relief : actif et verrouille en mode calage
+            // Etat visuel du bouton Relief: actif et verrouille en mode calage
             var b = hud.querySelector('#pwaCamRelief');
             if (b) b.style.background = 'rgba(255,100,180,0.65)';
             schedule();
         }
         if (calibAz != null) enterCalib(calibAz);
-        // Calibrage : choisir un element visible que l'utilisateur pointe au
+        // Calibrage: choisir un element visible que l'utilisateur pointe au
         // centre de l'ecran -> on aligne le cap sur sa direction connue.
         hud.querySelector('#pwaCamCal').onclick = function() {
-            // Bascule : si le modal de calibrage est deja ouvert, le refermer
+            // Bascule: si le modal de calibrage est deja ouvert, le refermer
             // au lieu d'en empiler un second a chaque clic.
             var existing = ov.querySelector('#pwaCamCalModal');
             if (existing) { existing.remove(); return; }
@@ -2891,7 +2931,7 @@
             var gl = { peak: '▲', patri: '◆', cible: '●',
                        col: '∨', village: '⌂', lac: '≈', river: '~' };
             // Azimut solaire courant (formule NOAA simplifiee, ~0.5 deg)
-            // Permet de caler le cap meme sans repere identifie : il suffit
+            // Permet de caler le cap meme sans repere identifie: il suffit
             // de pointer le soleil (ou sa direction sous nuages legers).
             var sun = _vsSunAzEl(new Date(), res.lat, res.lon);
             var sunRow = '';
@@ -2904,7 +2944,7 @@
                     + '<span style="width:14px;color:' + sCol + ';font-size:16px;">☼</span>'
                     + '<span style="flex:1;"><b>Aligner sur le Soleil</b>'
                     + '<div style="font-size:11px;opacity:0.85;">Pointe le téléphone '
-                    + 'vers le soleil et tape ici. Azimut calcule : '
+                    + 'vers le soleil et tape ici. Azimut calcule: '
                     + sun.az.toFixed(1) + '° · hauteur '
                     + sun.alt.toFixed(1) + '°' + (sun.alt < 0 ? ' (sous l\'horizon)' : '')
                     + '</div></span></div>';
@@ -2928,7 +2968,7 @@
                 + '(camera vers l\'avant) et marche en ligne droite. Le GPS deduit le cap '
                 + 'de la trajectoire — aucun repere ni soleil necessaire.'
                 + '</div></span></div>';
-            // Calage sur la silhouette du relief calcule : disponible des que
+            // Calage sur la silhouette du relief calcule: disponible des que
             // la vue porte un viewshed (res.rayProf). Azimut = perspective de
             // la vue (res.perspAz) si definie, sinon le cap courant.
             var hasRelief = !!(res.rayProf && res.rayProf.length);
@@ -2973,7 +3013,7 @@
                 + 'border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;">'
                 + 'Reinitialiser (offset 0°)</button>'
                 + '<span style="flex:1"></span>'
-                + '<button id="pwaCamCalX" style="background:#f0ebe3;color:#5a3a1a;border:none;'
+                + '<button id="pwaCamCalX" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;'
                 + 'border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;">'
                 + 'Annuler</button></div>';
             ov.appendChild(cm);
@@ -2995,7 +3035,7 @@
             var vrow = cm.querySelector('#pwaCamCalView');
             if (vrow) vrow.onclick = function() {
                 closeCal();
-                enterCalib(calibViewAz != null ? calibViewAz : heading);
+                enterCalib(calibViewAz != null ? calibViewAz: heading);
             };
             cm.querySelectorAll('.pwaCamCalRow').forEach(function(rw) {
                 if (!rw.hasAttribute('data-i')) return;
@@ -3023,7 +3063,7 @@
                 }).catch(function() {});
             } catch(_e) {}
         }
-        // Cap magneto memorise juste avant le passage en XR : sert a caler
+        // Cap magneto memorise juste avant le passage en XR: sert a caler
         // ARCore sur la boussole a la 1ere frame (pre-calage automatique).
         var xrInitTargetMag = null;
         function _xrLoop(t, frame) {
@@ -3045,7 +3085,7 @@
                     var hf = Math.atan(1 / v0.projectionMatrix[0]) * 2 * 180 / Math.PI;
                     if (hf > 30 && hf < 100) hfov = hf;
                 }
-                // Pre-calage : a la 1ere frame valide, on aligne l'offset
+                // Pre-calage: a la 1ere frame valide, on aligne l'offset
                 // pour que le cap affiche = cap magneto memorise.
                 if (xrInitTargetMag != null) {
                     headingOffset = ((xrInitTargetMag - yawDeg + 540) % 360) - 180;
@@ -3066,10 +3106,10 @@
         function startXR() {
             if (!navigator.xr) return;
             // Memorise l'etat magneto AVANT que les listeners soient retires.
-            // - savedMagOffset : offset magneto persistant -> sera restaure a la fin de session
+            // - savedMagOffset: offset magneto persistant -> sera restaure a la fin de session
             // - magCapNow : cap corrige courant -> servira de cible pour pre-caler ARCore
             var savedMagOffset = headingOffset;
-            var magCapNow = haveHeading ? heading : null;
+            var magCapNow = haveHeading ? heading: null;
             navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['local'],
                 optionalFeatures: ['dom-overlay'],
@@ -3090,7 +3130,7 @@
                 smX = null; smY = null; smPitch = null; lastShownCap = null;
                 xrInitTargetMag = magCapNow;
                 headingOffset = 0; // valeur intermediaire, ecrasee a la 1ere frame
-                // Smoothing tres faible en XR : ARCore est deja stable, le
+                // Smoothing tres faible en XR: ARCore est deja stable, le
                 // gros lissage casse la reactivite. 0.45 = ~3 frames de lag.
                 smoothBeforeXR = SMOOTH; SMOOTH = 0.45;
                 // Couche WebGL minimale (XR exige une baseLayer GL meme avec
@@ -3106,7 +3146,7 @@
                     xrGl.makeXRCompatible().then(function() { _xrFinish(sess); })
                         .catch(function() { _xrFinish(sess); });
                 } else { _xrFinish(sess); }
-                // Bandeau d'invite : si la boussole etait deja calee (offset
+                // Bandeau d'invite: si la boussole etait deja calee (offset
                 // magneto sauve), l'AR demarre dans le meme cap -> on n'invite
                 // a recalibrer qu'au besoin. Sinon, indiquer comment caler.
                 var hint = document.createElement('div');
@@ -3116,7 +3156,7 @@
                     + 'border-radius:6px;z-index:3;max-width:90%;text-align:center;';
                 hint.textContent = (magCapNow != null)
                     ? 'Mode AR — cale sur la boussole. Tape "Calibrer" pour affiner.'
-                    : 'Mode AR — pas de boussole : tape "Calibrer" et choisis Soleil ou Repere.';
+                    : 'Mode AR — pas de boussole: tape "Calibrer" et choisis Soleil ou Repere.';
                 ov.appendChild(hint);
                 setTimeout(function() { try { hint.remove(); } catch(_e) {} }, 6500);
                 var xrBtn = hud.querySelector('#pwaCamXR');
@@ -3150,7 +3190,7 @@
                     startOri();
                 });
             }).catch(function(e) {
-                alert('Mode AR indisponible : ' + (e && e.message || e));
+                alert('Mode AR indisponible: ' + (e && e.message || e));
             });
         }
         hud.querySelector('#pwaCamXR').onclick = function() {
@@ -3173,7 +3213,7 @@
         hud.querySelector('#pwaCamX').onclick = close;
     }
 
-    // IndexedDB : vues sauvegardees
+    // IndexedDB: vues sauvegardees
     function _vsDbPut(v) {
         return openDb().then(function(db) {
             return new Promise(function(res, rej) {
@@ -3259,7 +3299,7 @@
                 if (typeof l.getChildCount === 'function') return;  // amas de cluster
                 if (_vsLayer && _vsLayer.hasLayer && _vsLayer.hasLayer(l)) return;
                 var isPerso = (l._customCategory != null);
-                if (isPerso ? !showPerso : !showTopo) return;
+                if (isPerso ? !showPerso: !showTopo) return;
                 var ll = l.getLatLng();
                 if (!ll) return;
                 var d = _vsDist(lat, lon, ll.lat, ll.lng);
@@ -3349,7 +3389,7 @@
                         else if (tg.natural === 'volcano') nature = 'volcano';
                         else if (tg.natural === 'peak') nature = 'peak';
                         else return;
-                        // Position : noeud -> coords ; cours d'eau -> point le
+                        // Position: noeud -> coords ; cours d'eau -> point le
                         // plus proche de la ligne ; surface -> centroide.
                         var pt;
                         if (el.type === 'node') pt = [el.lat, el.lon];
@@ -3359,15 +3399,15 @@
                         var lat = pt[0], lon = pt[1];
                         var osmEle = parseFloat(tg.ele);
                         if (!isFinite(osmEle)) osmEle = null;
-                        // Libelle : col non nomme -> "Col <alt> m" ; les autres
-                        // exigent un nom (eleInName : altitude deja dans le nom).
+                        // Libelle: col non nomme -> "Col <alt> m" ; les autres
+                        // exigent un nom (eleInName: altitude deja dans le nom).
                         if (nature === 'col') {
                             if (!nm && osmEle != null) {
                                 nm = 'Col ' + Math.round(osmEle) + ' m'; eleInName = true;
                             }
                             if (!nm) return;
                         } else if (!nm) {
-                            return;  // sommet / village / eau non nomme : ignore
+                            return;  // sommet / village / eau non nomme: ignore
                         }
                         var d = _vsDist(res.lat, res.lon, lat, lon);
                         if (d < 25 || d > res.radiusM) return;       // hors rayon
@@ -3381,7 +3421,7 @@
                     });
                     // Un meme cours d'eau / plan d'eau est souvent decoupe en
                     // plusieurs troncons OSM portant le meme nom -> on ne garde,
-                    // par nom, que le point le plus proche : un seul marqueur
+                    // par nom, que le point le plus proche: un seul marqueur
                     // (qu'il soit visible ou masque).
                     var bestWater = {};
                     cand.forEach(function(c) {
@@ -3402,7 +3442,7 @@
                 }).catch(function() { clearTimeout(to); tryHost(idx + 1); });
         }
         function onCand(cand) {
-            // Altimetrie : on reutilise l'altitude OSM quand elle existe (la
+            // Altimetrie: on reutilise l'altitude OSM quand elle existe (la
             // plupart des sommets/cols) et on n'interroge l'IGN que pour les
             // points qui n'en ont pas -> limite les requetes (risque de 429).
             var needIdx = [], needPts = [];
@@ -3438,7 +3478,7 @@
         tryHost(0);
     }
 
-    // Points Patrimoine (donnees locales de la carte : window.getPatrimoine),
+    // Points Patrimoine (donnees locales de la carte: window.getPatrimoine),
     // dans le rayon/secteur, projetes sur la vue. Altimetrie pour l'angle.
     function _vsFetchPatrimoine(res, done) {
         function fin(arr) { res.patrimoine = arr || []; if (done) done(res.patrimoine); }
@@ -3490,29 +3530,29 @@
 
     function _vsStart() {
         if ((typeof isAppOffline === 'function') && isAppOffline()) {
-            showToast('Champ de visibilite : connexion requise (altimetrie IGN).', 5000);
+            showToast('Champ de visibilite: connexion requise (altimetrie IGN).', 5000);
             return;
         }
         var map = findLeafletMap();
         if (!map) { showToast('Carte non detectee.', 4000); return; }
-        // Choix de l'origine : un point sur la carte OU la position GPS.
-        // C'est important pour l'AR caméra : si l'utilisateur compte aller
+        // Choix de l'origine: un point sur la carte OU la position GPS.
+        // C'est important pour l'AR caméra: si l'utilisateur compte aller
         // sur le terrain, lancer depuis le GPS rend la projection AR exacte
         // a l'endroit ou il se trouve (sinon parallaxe).
         var m = document.createElement('div');
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100065;'
             + 'display:flex;align-items:center;justify-content:center;padding:16px;'
-            + 'font-family:Segoe UI,sans-serif;';
+            + 'font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         m.innerHTML = '<div style="background:#fff;border-radius:10px;max-width:360px;'
             + 'width:100%;padding:18px 20px;">'
-            + '<h2 style="margin:0 0 8px;font-size:16px;color:#5a3a1a;">Origine du champ '
+            + '<h2 style="margin:0 0 8px;font-size:16px;color:var(--ink2,#5a3a1a);">Origine du champ '
             + 'de visibilite</h2>'
             + '<div style="font-size:12px;color:#7a5a3a;margin-bottom:14px;">'
             + 'Tous les caps, distances et la vue AR sont calcules depuis ce point.</div>'
             + '<button id="pwaVSorigMap" style="width:100%;background:#ecdcbe;'
-            + 'color:#5a3a1a;border:1px solid #dcc596;padding:11px 12px;border-radius:6px;'
+            + 'color:var(--ink2,#5a3a1a);border:1px solid #dcc596;padding:11px 12px;border-radius:6px;'
             + 'cursor:pointer;font:600 13px Segoe UI;margin-bottom:8px;text-align:left;">'
             + 'Choisir un point sur la carte'
             + '<div style="font-weight:400;font-size:11px;color:#8a6a44;margin-top:2px;">'
@@ -3526,7 +3566,7 @@
             + 'Pour une vue AR exacte la ou tu te trouves sur le terrain</div>'
             + '</button>'
             + '<div style="display:flex;justify-content:flex-end;">'
-            + '<button id="pwaVSorigX" style="background:#f0ebe3;color:#5a3a1a;border:none;'
+            + '<button id="pwaVSorigX" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;'
             + 'padding:7px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">'
             + 'Annuler</button></div></div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
@@ -3570,19 +3610,19 @@
     function _vsParamsModal(lat, lon) {
         var m = document.createElement('div');
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100065;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:380px;width:100%;padding:18px 20px;">' +
-            '<h2 style="margin:0 0 12px;font-size:16px;color:#5a3a1a;">Champ de visibilite</h2>' +
-            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
-            'Rayon : <span id="pwaVSrv">2.0</span> km<br>' +
+            '<h2 style="margin:0 0 12px;font-size:16px;color:var(--ink2,#5a3a1a);">Champ de visibilite</h2>' +
+            '<label style="display:block;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:10px;">' +
+            'Rayon: <span id="pwaVSrv">2.0</span> km<br>' +
             '<input type="range" id="pwaVSr" min="0.5" max="60" step="0.5" value="2" style="width:100%;"></label>' +
-            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
+            '<label style="display:block;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:10px;">' +
             'Hauteur observateur (m)<br>' +
             '<input type="number" id="pwaVSh" value="1.7" min="0" max="80" step="0.1" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;"></label>' +
-            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:8px;">' +
+            '<label style="display:block;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:8px;">' +
             'Ouverture<br>' +
             '<select id="pwaVSw" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;">' +
             '<option value="360" selected>Tout autour (360 deg)</option>' +
@@ -3592,16 +3632,16 @@
             '<option value="60">Secteur 60 deg</option>' +
             '<option value="45">Secteur 45 deg</option>' +
             '</select></label>' +
-            '<label id="pwaVSazL" style="display:none;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+            '<label id="pwaVSazL" style="display:none;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:12px;">' +
             'Azimut central (deg, 0=N, 90=E) : <span id="pwaVSazv">0</span><br>' +
             '<input type="range" id="pwaVSaz" min="0" max="350" step="10" value="0" style="width:100%;"></label>' +
-            '<div style="font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+            '<div style="font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:12px;">' +
             'Points a projeter sur la vue<br>' +
             '<label style="display:inline-flex;align-items:center;gap:5px;margin:5px 14px 0 0;cursor:pointer;">' +
             '<input type="checkbox" id="pwaVStpPerso"> Points perso</label>' +
             '<label style="display:inline-flex;align-items:center;gap:5px;margin-top:5px;cursor:pointer;">' +
             '<input type="checkbox" id="pwaVStpTopo"> Toponymes</label></div>' +
-            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
+            '<label style="display:block;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:10px;">' +
             'Grain du rendu (taille des mailles)<br>' +
             '<select id="pwaVSgrain" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;">' +
             '<option value="15">Tres fin (~15 m)</option>' +
@@ -3610,7 +3650,7 @@
             '<option value="70">Gros (~70 m, zones)</option>' +
             '<option value="110">Tres gros (~110 m, zones)</option>' +
             '</select></label>' +
-            '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:10px;">' +
+            '<label style="display:block;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:10px;">' +
             'Style du rendu<br>' +
             '<select id="pwaVSstyle" style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;">' +
             '<option value="points">Points (semis)</option>' +
@@ -3618,8 +3658,8 @@
             '</select></label>' +
             '<div style="font-size:11px;color:#999;margin-bottom:12px;">MNT IGN (RGE ALTI/LiDAR HD) + courbure terrestre. Grain = finesse d\'echantillonnage (fin = plus detaille, plus de requetes, plus lent). Style Zones = les mailles fusionnent en aplat continu meme en tres fin. Au-dela d\'une dizaine de km le pas s\'espace de toute facon.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-            '<button id="pwaVSx" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
-            '<button id="pwaVSgo" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
+            '<button id="pwaVSx" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Annuler</button>' +
+            '<button id="pwaVSgo" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Lancer</button>' +
             '</div></div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
             L.DomEvent.disableClickPropagation(m);
@@ -3636,10 +3676,10 @@
         var grSel = m.querySelector('#pwaVSgrain');
         var stSel = m.querySelector('#pwaVSstyle');
         try {
-            ckP.checked = (localStorage.getItem('pwaVSshowPerso') !== '0');  // defaut : actif
-            ckT.checked = (localStorage.getItem('pwaVSshowTopo') === '1');   // defaut : inactif
-            grSel.value = localStorage.getItem('pwaVSgrain') || '40';        // defaut : Moyen (vue 14:01)
-            stSel.value = localStorage.getItem('pwaVSstyle') || 'points';    // defaut : Points (= rendu d'origine)
+            ckP.checked = (localStorage.getItem('pwaVSshowPerso') !== '0');  // defaut: actif
+            ckT.checked = (localStorage.getItem('pwaVSshowTopo') === '1');   // defaut: inactif
+            grSel.value = localStorage.getItem('pwaVSgrain') || '40';        // defaut: Moyen (vue 14:01)
+            stSel.value = localStorage.getItem('pwaVSstyle') || 'points';    // defaut: Points (= rendu d'origine)
         } catch(_e) { ckP.checked = true; ckT.checked = false; grSel.value = '40'; stSel.value = 'points'; }
         m.querySelector('#pwaVSx').onclick = function() { m.remove(); };
         m.onclick = function(e) { if (e.target === m) m.remove(); };
@@ -3668,7 +3708,7 @@
         var lat = P.lat, lon = P.lon, radiusM = P.radiusM, obsH = P.obsH;
         var full = (P.azW >= 360);
         var az0 = full ? 0 : (P.azC - P.azW / 2);
-        // Allocation ISOTROPE du budget : on equilibre rayons (angulaire) ET
+        // Allocation ISOTROPE du budget: on equilibre rayons (angulaire) ET
         // anneaux (radial) pour un meme espacement au sol. Avant, 180 rayons
         // fixes -> a 60 km, 2 km entre rayons = rendu tres grossier malgre un
         // pas radial fin. Le POST gros lots rend ~45000 echantillons abordable.
@@ -3697,7 +3737,7 @@
         var targets = _vsCollectTargets(map, lat, lon, radiusM,
             P.showPerso !== false, P.showTopo === true);
 
-        // pts : [observateur] + targets + samples (ray-major)
+        // pts: [observateur] + targets + samples (ray-major)
         var pts = [[lat, lon]];
         targets.forEach(function(t) { pts.push([t.lat, t.lon]); });
         var bearings = [];
@@ -3719,9 +3759,9 @@
             var sBase = 1 + T;
             // Visibilite par echantillon + skyline par rayon (pour panorama)
             var visPts = [];                 // {lat,lon,d} visibles (planimetrique)
-            var rayProf = [];                // par rayon : {bearing, sky, maxAng[], vis[], bandMax[]}
+            var rayProf = [];                // par rayon: {bearing, sky, maxAng[], vis[], bandMax[]}
             // Tranches de distance (pour la superposition des reliefs sur la
-            // vue tangentielle : couches peintes arriere->avant + estompage).
+            // vue tangentielle: couches peintes arriere->avant + estompage).
             // Bandes proches plus fines (perception de profondeur).
             var BANDS = [0.05, 0.12, 0.25, 0.45, 0.70, 1.0].map(function(f) {
                 return f * radiusM;
@@ -3755,7 +3795,7 @@
                 rayProf.push({ bearing: bearings[r], sky: sky, maxAng: maxAngAt,
                                vis: visArr, bandMax: bandMax });
             }
-            // Cibles : bearing/dist/elev + visible ? (via le rayon le plus proche)
+            // Cibles: bearing/dist/elev + visible ? (via le rayon le plus proche)
             var tgt = [];
             for (var ti = 0; ti < T; ti++) {
                 var tt = targets[ti];
@@ -3770,7 +3810,7 @@
                 }
                 var ki = Math.min(N - 1, Math.max(0, Math.round(tt.dist / stepM) - 1));
                 var blockAng = (best && best.maxAng[ki] != null) ? best.maxAng[ki] : -90;
-                // STRICT : rayon vraiment proche (<= 1 pas angulaire) ET cible
+                // STRICT: rayon vraiment proche (<= 1 pas angulaire) ET cible
                 // qui depasse nettement le relief bloquant (marge +0.05 deg,
                 // plus de tolerance negative qui laissait passer du masque).
                 var vis = (bd <= Math.max(rayStep, 1.5)) && (tang >= blockAng + 0.05);
@@ -3795,7 +3835,7 @@
             _vsProgHide();
             showToast('Champ de visibilite calcule.', 4000);
             _vsResultModal(res);
-            // Lancement depuis position GPS : on enchaine direct sur la
+            // Lancement depuis position GPS: on enchaine direct sur la
             // Camera AR pour eviter a l'utilisateur de naviguer + on ouvre
             // le modal de calibrage automatiquement (Soleil/Marche/Repere).
             if (window._vsAutoCam) {
@@ -3808,7 +3848,7 @@
                     }, 600);
                 }, 300);
             }
-            // Enrichissement asynchrone : sommets nommes (OSM) puis Patrimoine
+            // Enrichissement asynchrone: sommets nommes (OSM) puis Patrimoine
             // (sequentiel pour ne pas cumuler deux series d'altimetrie).
             _vsFetchPeaks(res, function(pk) {
                 if (pk && pk.length && _vsLayer) {
@@ -3850,11 +3890,11 @@
             });
         }).catch(function(err) {
             _vsProgHide();
-            showToast('Echec du calcul : ' + (err && err.message ? err.message : 'erreur reseau'), 6000);
+            showToast('Echec du calcul: ' + (err && err.message ? err.message: 'erreur reseau'), 6000);
         });
     }
 
-    // Rendu planimetrique : raster canvas (style Pixscape) en imageOverlay
+    // Rendu planimetrique: raster canvas (style Pixscape) en imageOverlay
     function _vsRenderPlani(res) {
         var map = findLeafletMap();
         if (!map) return;
@@ -3919,7 +3959,7 @@
         try { map.fitBounds(res.bounds, { padding: [20, 20] }); } catch(_e) {}
     }
 
-    // Vue tangentielle : panorama (X=azimut, Y=angle vertical), colore distance,
+    // Vue tangentielle: panorama (X=azimut, Y=angle vertical), colore distance,
     // + cibles proches projetees (visible/masque). Renvoie un dataURL.
     function _vsBuildPanorama(res) {
         var rp = res.rayProf;
@@ -3944,7 +3984,7 @@
         var ctx = cv.getContext('2d'); ctx.lineJoin = 'round';
         function X(az) { return PAD + ((az - azStart + 360) % 360) / azSpan * PW; }
         function Y(a) { return (topA - a) / (topA - botA) * H; }
-        // Meta : mapping curseur <-> azimut/angle (sync vue planimetrique)
+        // Meta: mapping curseur <-> azimut/angle (sync vue planimetrique)
         res.panoMeta = { W: W, H: H, PAD: PAD, azStart: azStart, azSpan: azSpan,
                          PW: PW, topA: topA, botA: botA };
         var R = res.radiusM;
@@ -3952,7 +3992,7 @@
             return 'rgb(' + Math.round(46 + 70 * f) + ',' + Math.round(168 - 96 * f)
                 + ',' + Math.round(84 + 150 * f) + ')';
         }
-        // Ciel : degrade
+        // Ciel: degrade
         var sky = ctx.createLinearGradient(0, 0, 0, Y(0));
         sky.addColorStop(0, '#cfe0ee'); sky.addColorStop(1, '#eaf2f8');
         ctx.fillStyle = sky; ctx.fillRect(PAD, 0, PW, H);
@@ -3961,9 +4001,9 @@
         var hasBands = !!(rp[0] && rp[0].bandMax && res.bandOut);
         function clY(a) { return Math.max(0, Math.min(H, Y(Math.min(a, topA)))); }
         if (hasBands) {
-            // RELIEFS SUPERPOSES : une couche de silhouette par tranche de
+            // RELIEFS SUPERPOSES: une couche de silhouette par tranche de
             // distance, peinte de l'ARRIERE vers l'AVANT. Estompage
-            // atmospherique : loin = pale/bleute, proche = soutenu/vert.
+            // atmospherique: loin = pale/bleute, proche = soutenu/vert.
             var NB = res.bandOut.length;
             var bandFill = function(t, al) {
                 return 'rgba(' + Math.round(46 + 104 * t) + ',' + Math.round(120 + 60 * t)
@@ -4000,7 +4040,7 @@
                 ctx.stroke();
             }
         } else {
-            // Repli : silhouette unique (anciens res sans bandMax)
+            // Repli: silhouette unique (anciens res sans bandMax)
             var grd = ctx.createLinearGradient(0, Y(maxA), 0, H);
             grd.addColorStop(0, '#6b8e4e'); grd.addColorStop(1, '#3d5230');
             ctx.fillStyle = grd; ctx.beginPath();
@@ -4041,7 +4081,7 @@
             ctx.fillText(mk[1], Math.min(W - 26, xx + 3), 12);
         });
         var lblRects = [];  // anti-chevauchement des etiquettes (3 types)
-        // Cibles projetees : UNIQUEMENT celles strictement visibles depuis le
+        // Cibles projetees: UNIQUEMENT celles strictement visibles depuis le
         // point de vue (les masquees ne sont pas positionnees sur la vue).
         res.targets.slice().sort(_vsByDist).forEach(function(t) {
             if (!t.visible) return;
@@ -4107,7 +4147,7 @@
             _vsPlaceLabel(ctx, lblRects, x, y, (p.name || 'Patrimoine'),
                 '10px Segoe UI', '#c0317a', W, H);
         });
-        // Legende profondeur (meme echelle que les couches de relief :
+        // Legende profondeur (meme echelle que les couches de relief:
         // proche = vert soutenu -> loin = bleu pale / estompe)
         var lgX = PAD + 8, lgY = H - 14, lgW = 130;
         var lg = ctx.createLinearGradient(lgX, 0, lgX + lgW, 0);
@@ -4123,8 +4163,8 @@
         return cv.toDataURL('image/png');
     }
 
-    // 2e vue tangentielle : PROJECTION RECTILIGNE (pinhole / "appareil photo").
-    // Perspective reelle : droites conservees, ecartement naturel. Centree sur
+    // 2e vue tangentielle: PROJECTION RECTILIGNE (pinhole / "appareil photo").
+    // Perspective reelle: droites conservees, ecartement naturel. Centree sur
     // l'axe du secteur (ou la direction du relief le plus haut en 360),
     // champ de vision limite. Uniquement les elements strictement visibles.
     function _vsBuildPanoramaPerspective(res) {
@@ -4183,7 +4223,7 @@
             return 'rgb(' + Math.round(46 + 70 * fr) + ',' + Math.round(168 - 96 * fr)
                 + ',' + Math.round(84 + 150 * fr) + ')';
         }
-        // Projection pinhole : x = cx + f*tan(a) ; y = cy - f*tan(e)/cos(a)
+        // Projection pinhole: x = cx + f*tan(a) ; y = cy - f*tan(e)/cos(a)
         function projX(a) { return cx + f * Math.tan(a * D2R); }
         function projY(a, e) { return cy - f * Math.tan(e * D2R) / Math.cos(a * D2R); }
         var horizonY = cy;  // e=0 -> y=cy (droite)
@@ -4334,7 +4374,7 @@
         return cv.toDataURL('image/png');
     }
 
-    // Enregistre la vue SUR LA CARTE collaborative : polygone du champ
+    // Enregistre la vue SUR LA CARTE collaborative: polygone du champ
     // visible (contour exterieur approx) + point d'observation, via
     // custom_features (compatible file hors-ligne, partage avec tous).
     function _vsSaveToMap(res) {
@@ -4342,7 +4382,7 @@
         if (!SU || !SK) { showToast('Partage indisponible (Supabase absent).', 5000); return; }
         if (!confirm('Enregistrer ce champ de visibilite sur la carte collaborative '
             + '(visible par tous) ?')) return;
-        // Empreinte FIDELE : MultiPolygon des cellules reellement visibles
+        // Empreinte FIDELE: MultiPolygon des cellules reellement visibles
         // (meme condition stricte que le rendu : les 2 rayons voisins voient
         // le bord exterieur). Les vallees masquees restent en creux -> pas de
         // contour englobant qui surestimerait la zone visible.
@@ -4404,12 +4444,12 @@
                     setTimeout(function() { window.loadCustomFeatures(); }, 600);
                 }
             } else if (r && r.status === 202) {
-                showToast('Hors-ligne : enregistrement en file, publie au retour reseau.', 6000);
+                showToast('Hors-ligne: enregistrement en file, publie au retour reseau.', 6000);
             } else {
-                showToast('Echec de l\'enregistrement (HTTP ' + (r ? r.status : '?') + ').', 6000);
+                showToast('Echec de l\'enregistrement (HTTP ' + (r ? r.status: '?') + ').', 6000);
             }
         }).catch(function(e) {
-            showToast('Echec : ' + (e && e.message ? e.message : 'erreur reseau'), 6000);
+            showToast('Echec: ' + (e && e.message ? e.message: 'erreur reseau'), 6000);
         });
     }
 
@@ -4417,9 +4457,9 @@
         var m = document.createElement('div');
         m.id = 'pwaVSres';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:100070;' +
-            'display:flex;align-items:center;justify-content:center;padding:14px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:14px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         var nVis = (res.targets || []).filter(function(t) { return t.visible; }).length;
         var canMap = !!(res.rayProf && res.stepM && res.N);
         var hasMini = !!(res.bounds && res.planiURL);
@@ -4428,26 +4468,26 @@
         var _vsEnlarged = false;  // fenetre tangentielle agrandie (plein ecran)
         function _curPanoURL() {
             return (_vsMode === 'persp' && res.perspectiveURL)
-                ? res.perspectiveURL : res.panoramaURL;
+                ? res.perspectiveURL: res.panoramaURL;
         }
         m.innerHTML =
             '<div id="pwaVScard" style="background:#fff;border-radius:12px;max-width:96vw;max-height:92vh;overflow:auto;padding:16px 18px;box-sizing:border-box;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px;">' +
-            '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Vue tangentielle</h2>' +
-            '<button id="pwaVSc" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:16px;color:var(--ink2,#5a3a1a);">Vue tangentielle</h2>' +
+            '<button id="pwaVSc" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
             '<div style="font-size:11px;color:#666;margin-bottom:8px;">Azimut horizontal x angle vertical. Couleur = distance. '
-            + (res.targets ? res.targets.length : 0) + ' point(s) proche(s) · ' + nVis + ' visible(s)'
+            + (res.targets ? res.targets.length: 0) + ' point(s) proche(s) · ' + nVis + ' visible(s)'
             + ((res.peaks && res.peaks.length) ? ' · ' + res.peaks.length + ' repere(s) (sommets, cols, villages, lacs, rivieres)' : '') + '.</div>' +
             (res.perspectiveURL ? '<div style="display:flex;gap:6px;margin-bottom:8px;">' +
-            '<button id="pwaVSmCyl" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#8b4513;color:#fff;">Panoramique</button>' +
-            '<button id="pwaVSmPersp" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:#f0ebe3;color:#5a3a1a;">Perspective</button>' +
+            '<button id="pwaVSmCyl" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:var(--prim,#8b4513);color:#fff;">Panoramique</button>' +
+            '<button id="pwaVSmPersp" style="border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);">Perspective</button>' +
             '</div>' +
-            '<div id="pwaVSpctl" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;font:600 11px Segoe UI;color:#5a3a1a;">' +
+            '<div id="pwaVSpctl" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;font:600 11px Segoe UI;color:var(--ink2,#5a3a1a);">' +
             '<label style="display:flex;align-items:center;gap:5px;">Direction <span id="pwaVSpazv">0</span>°' +
             '<input type="range" id="pwaVSpaz" min="0" max="359" step="1" value="0" style="width:160px;"></label>' +
-            '<button id="pwaVSpazL" title="Pivoter a gauche" style="border:1px solid #d8cdbb;background:#f0ebe3;border-radius:6px;padding:4px 9px;cursor:pointer;font:600 12px Segoe UI;">◄</button>' +
-            '<button id="pwaVSpazR" title="Pivoter a droite" style="border:1px solid #d8cdbb;background:#f0ebe3;border-radius:6px;padding:4px 9px;cursor:pointer;font:600 12px Segoe UI;">►</button>' +
+            '<button id="pwaVSpazL" title="Pivoter a gauche" style="border:1px solid var(--bd,#d8cdbb);background:var(--tagbg,#f0ebe3);border-radius:6px;padding:4px 9px;cursor:pointer;font:600 12px Segoe UI;">◄</button>' +
+            '<button id="pwaVSpazR" title="Pivoter a droite" style="border:1px solid var(--bd,#d8cdbb);background:var(--tagbg,#f0ebe3);border-radius:6px;padding:4px 9px;cursor:pointer;font:600 12px Segoe UI;">►</button>' +
             '<label style="display:flex;align-items:center;gap:5px;">Champ ' +
             '<select id="pwaVSpfov" style="padding:4px;border:1px solid #ccc;border-radius:4px;">' +
             '<option value="60">60°</option><option value="90" selected>90°</option>' +
@@ -4461,15 +4501,15 @@
             '<canvas id="pwaVSmini" style="display:block;border:1px solid #ddd;border-radius:6px;cursor:crosshair;touch-action:none;background:#eef3f6;"></canvas>' +
             '<div style="font-size:10px;color:#999;margin-top:3px;">Vue planimetrique</div></div>' : '') +
             '</div>' +
-            '<div id="pwaVSread" style="font-size:12px;color:#5a3a1a;margin-top:8px;min-height:16px;">Survoler une vue pour se reperer sur l\'autre.</div>' +
+            '<div id="pwaVSread" style="font-size:12px;color:var(--ink2,#5a3a1a);margin-top:8px;min-height:16px;">Survoler une vue pour se reperer sur l\'autre.</div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">' +
-            '<button id="pwaVSbig" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Agrandir</button>' +
-            '<button id="pwaVScam" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Camera</button>' +
-            '<button id="pwaVScamCal" title="Ouvrir la camera en mode calage : superposer la silhouette figee de cette perspective et orienter le telephone pour la faire coincider avec le reel" style="background:#a83a8a;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Camera : caler sur cette vue</button>' +
-            '<button id="pwaVSdl" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Telecharger</button>' +
+            '<button id="pwaVSbig" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Agrandir</button>' +
+            '<button id="pwaVScam" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Camera</button>' +
+            '<button id="pwaVScamCal" title="Ouvrir la camera en mode calage: superposer la silhouette figee de cette perspective et orienter le telephone pour la faire coincider avec le reel" style="background:#a83a8a;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Camera: caler sur cette vue</button>' +
+            '<button id="pwaVSdl" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Telecharger</button>' +
             (canMap ? '<button id="pwaVSmap" style="background:#1e8449;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer sur la carte</button>' : '') +
-            '<button id="pwaVSsave" style="background:#8b4513;color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
-            '<button id="pwaVSclose" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>' +
+            '<button id="pwaVSsave" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Enregistrer cette vue</button>' +
+            '<button id="pwaVSclose" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Fermer</button>' +
             '</div></div>';
         if (typeof L !== 'undefined' && L.DomEvent) { L.DomEvent.disableClickPropagation(m); L.DomEvent.disableScrollPropagation(m); }
         function close() { m.remove(); }
@@ -4479,7 +4519,7 @@
         var mapBtn = m.querySelector('#pwaVSmap');
         if (mapBtn) mapBtn.onclick = function() { _vsSaveToMap(res); };
         m.querySelector('#pwaVSsave').onclick = function() {
-            var nm = prompt('Nom de la vue :', res.name);
+            var nm = prompt('Nom de la vue:', res.name);
             if (nm == null) return;
             res.name = (nm || res.name).trim();
             _vsDbPut({
@@ -4494,7 +4534,7 @@
                 // silhouette de relief et le champ de visibilite sur la
                 // mini-carte quand on "Revoir" + Camera une vue enregistree.
                 // On omet maxAng (gros tableau par cellule, non necessaire
-                // a l'affichage : reliefAt et drawRelief degradent vers sky).
+                // a l'affichage: reliefAt et drawRelief degradent vers sky).
                 bandOut: res.bandOut || [],
                 rayProf: (res.rayProf || []).map(function(r) {
                     return { bearing: r.bearing, sky: r.sky, bandMax: r.bandMax };
@@ -4522,9 +4562,9 @@
                              dist: Math.round(p.dist), nature: p.nature,
                              bearing: p.bearing, ang: p.ang, visible: p.visible };
                 })
-            }).then(function() { showToast('Vue enregistree : ' + res.name, 4000); });
+            }).then(function() { showToast('Vue enregistree: ' + res.name, 4000); });
         };
-        // Agrandir : panorama plein ecran, defilement horizontal (lecture fine)
+        // Agrandir: panorama plein ecran, defilement horizontal (lecture fine)
         // Agrandir : bascule TOUTE la fenetre en quasi plein ecran (panorama
         // OU perspective + mini-carte planimetrique en grand, ensemble), avec
         // recalcul des deux canvas. Re-clic = revenir a la taille normale.
@@ -4539,10 +4579,10 @@
             // Az de la perspective courante (modifiable par le slider direction)
             var az = (typeof res.perspAz === 'number')
                 ? ((res.perspAz % 360) + 360) % 360 : 0;
-            var fov = (typeof res.perspFov === 'number') ? res.perspFov : null;
+            var fov = (typeof res.perspFov === 'number') ? res.perspFov: null;
             _vsCameraView(res, { calibAz: az, calibFov: fov });
         };
-        // Telecharger en local : PNG du panorama + JSON des donnees de la vue
+        // Telecharger en local: PNG du panorama + JSON des donnees de la vue
         m.querySelector('#pwaVSdl').onclick = function() {
             var safe = (res.name || 'vue-tangentielle')
                 .replace(/[^\w\- ]+/g, '_').slice(0, 60);
@@ -4575,7 +4615,7 @@
                                 { type: 'application/json' });
             var ju = URL.createObjectURL(blob);
             setTimeout(function() { dl(ju, safe + '.json', true); }, 300);
-            showToast('Telechargement : ' + (_vsMode === 'persp' ? 'perspective' : 'panorama')
+            showToast('Telechargement: ' + (_vsMode === 'persp' ? 'perspective' : 'panorama')
                 + ' PNG' + (res.planiURL ? ' + vue planimetrique PNG' : '')
                 + ' + donnees JSON.', 4000);
         };
@@ -4586,7 +4626,7 @@
         var readEl = m.querySelector('#pwaVSread');
         var pImg = new Image(), mImg = new Image();
         var pReady = false, mReady = false;
-        // panoMeta : defaut si vue ancienne sans meta
+        // panoMeta: defaut si vue ancienne sans meta
         var pm = res.panoMeta || {
             PAD: 34, azStart: res.full ? 0 : (res.azC - res.azW / 2),
             azSpan: res.full ? 360 : res.azW, topA: null, botA: null
@@ -4614,8 +4654,8 @@
             return { d: dist, ang: a };
         }
         function crestInfo(az) { return reliefAt(az, null); }
-        function crestD(az) { var c = crestInfo(az); return c ? c.d : null; }
-        // Couleur "profondeur" = meme echelle que les couches de relief :
+        function crestD(az) { var c = crestInfo(az); return c ? c.d: null; }
+        // Couleur "profondeur" = meme echelle que les couches de relief:
         // proche = vert, loin = bleu pale -> lecture instinctive proche/loin.
         function _depthCol(d) {
             var t = Math.max(0, Math.min(1, d / (res.radiusM || 1)));
@@ -4644,7 +4684,7 @@
                         / Math.cos(a * Math.PI / 180);
                     crestY = Math.max(0, Math.min(h, pyi / P.H * h));
                 }
-                // Ligne horizontale du viseur : Y du pointeur reprojete en
+                // Ligne horizontale du viseur: Y du pointeur reprojete en
                 // perspective (meme formule que la crete, avec vAng au lieu
                 // de l'angle de crete). Sans ca le viseur n'a qu'un axe.
                 if (vAng != null) {
@@ -4664,7 +4704,7 @@
                     crossY = (pm.topA - vAng) / (pm.topA - pm.botA) * h;
                 }
             }
-            // Viseur en croix : ligne verticale (azimut) + ligne horizontale
+            // Viseur en croix: ligne verticale (azimut) + ligne horizontale
             // (angle vertical), dans les deux modes panoramique et perspective.
             g.strokeStyle = 'rgba(192,57,43,0.85)'; g.lineWidth = 1.5;
             g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
@@ -4676,9 +4716,9 @@
             // Pastille + distance, colorees par profondeur. La distance est
             // celle du point SURVOLE (dist, ex: mini-carte) si fournie ;
             // sinon la crete a cet azimut.
-            var dShown = (dist != null) ? dist : (ci ? ci.d : null);
+            var dShown = (dist != null) ? dist: (ci ? ci.d : null);
             if (dShown != null) {
-                var dy = (crestY != null) ? crestY : 14;
+                var dy = (crestY != null) ? crestY: 14;
                 g.beginPath(); g.arc(x, dy, 6, 0, 2 * Math.PI);
                 g.fillStyle = _depthCol(dShown); g.fill();
                 g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke();
@@ -4706,7 +4746,7 @@
                 var e2 = px(ep[0], ep[1]);
                 g.strokeStyle = 'rgba(192,57,43,0.9)'; g.lineWidth = 1.5;
                 g.beginPath(); g.moveTo(o[0], o[1]); g.lineTo(e2[0], e2[1]); g.stroke();
-                var dd = (dist != null) ? dist : crestD(az);
+                var dd = (dist != null) ? dist: crestD(az);
                 if (dd != null) {
                     var dp = _vsDest(res.lat, res.lon, Math.min(dd, res.radiusM), az);
                     var d2 = px(dp[0], dp[1]);
@@ -4723,7 +4763,7 @@
             if (az == null) { readEl.textContent = 'Survoler une vue pour se reperer sur l\'autre.'; return; }
             var card = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(((az % 360) / 45)) % 8];
             var s = 'Azimut ' + Math.round((az + 360) % 360) + '° (' + card + ')';
-            var dd = (dist != null) ? dist : crestD(az);
+            var dd = (dist != null) ? dist: crestD(az);
             if (dd != null) s += ' · ' + (dd >= 1000 ? (dd / 1000).toFixed(1) + ' km' : Math.round(dd) + ' m');
             if (vAng != null) s += ' · ' + (vAng > 0 ? '+' : '') + vAng.toFixed(1) + '°';
             readEl.textContent = s;
@@ -4736,7 +4776,7 @@
         }
         function onPano(ev) {
             if (!pReady) return;
-            // Mode agrandi panoramique : le panorama deborde en largeur et
+            // Mode agrandi panoramique: le panorama deborde en largeur et
             // defile (touch-action:pan-x). On laisse passer le glissement
             // tactile sans le capturer ; le viseur se pose au tap ou au
             // survol souris. Hors de ce cas, on capture le geste comme avant.
@@ -4769,7 +4809,7 @@
             var az = _vsBearing(res.lat, res.lon, la, lo);
             var dist = _vsDist(res.lat, res.lon, la, lo);
             syncFromAz(az, dist, null);
-            // En mode Perspective : recentrer la vue sur l'azimut pointe
+            // En mode Perspective: recentrer la vue sur l'azimut pointe
             // (immediat au clic/tap, leger differe au survol).
             if (_vsMode === 'persp' && _setPerspAz) {
                 var imm = (ev.type === 'click' || ev.type === 'touchstart'
@@ -4783,7 +4823,7 @@
             var parent = pano.parentElement;
             var ar = pImg.naturalWidth / Math.max(1, pImg.naturalHeight);
             if (_vsEnlarged && _vsMode !== 'persp') {
-                // Agrandi + panoramique : rendu a une HAUTEUR confortable, le
+                // Agrandi + panoramique: rendu a une HAUTEUR confortable, le
                 // panorama deborde en largeur -> defilement horizontal. Sinon
                 // un panorama large force a la largeur de l'ecran est ecrase
                 // et illisible sur mobile.
@@ -4802,7 +4842,7 @@
                 // Centre le defilement sur le milieu du panorama a l'ouverture.
                 parent.scrollLeft = Math.max(0, (pw - (parent.clientWidth || pw)) / 2);
             } else {
-                // Normal, ou agrandi en perspective : ajuste a la largeur.
+                // Normal, ou agrandi en perspective: ajuste a la largeur.
                 var cap = _vsEnlarged ? pImg.naturalWidth * 2 : pImg.naturalWidth;
                 var cw = Math.min(parent.clientWidth || 760, cap);
                 pano.width = Math.max(200, Math.round(cw));
@@ -4822,7 +4862,7 @@
                     window.innerWidth * 0.42)))
                 : 300;
             var ar = (east - west) / (north - south);
-            var mw = ar >= 1 ? maxD : Math.round(maxD * ar);
+            var mw = ar >= 1 ? maxD: Math.round(maxD * ar);
             var mh = ar >= 1 ? Math.round(maxD / ar) : maxD;
             mini.width = mw; mini.height = mh;
             mini.style.width = mw + 'px'; mini.style.height = mh + 'px';
@@ -4864,7 +4904,7 @@
             pImg.onload = function() { pReady = true; fitPano(); };
             pImg.src = _curPanoURL();
         }
-        // Hook : rafraichir quand les sommets arrivent (asynchrone)
+        // Hook: rafraichir quand les sommets arrivent (asynchrone)
         res._setPano = function() { reloadPano(); };
         // Bascule Panoramique <-> Perspective
         var bCyl = m.querySelector('#pwaVSmCyl');
@@ -4873,14 +4913,14 @@
             if (md === 'persp' && !res.perspectiveURL) return;
             _vsMode = md;
             if (bCyl && bPersp) {
-                var on = 'background:#8b4513;color:#fff;', off = 'background:#f0ebe3;color:#5a3a1a;';
-                bCyl.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'cyl' ? on : off);
-                bPersp.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'persp' ? on : off);
+                var on = 'background:var(--prim,#8b4513);color:#fff;', off = 'background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);';
+                bCyl.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'cyl' ? on: off);
+                bPersp.style.cssText = 'border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font:600 12px Segoe UI;' + (md === 'persp' ? on: off);
             }
             if (pctl) pctl.style.display = (md === 'persp' && canPersp) ? 'flex' : 'none';
             reloadPano();
         }
-        // Controles perspective : pivoter (direction) + champ de vision.
+        // Controles perspective: pivoter (direction) + champ de vision.
         // Possible seulement si on peut re-rendre (res.rayProf present).
         var pctl = m.querySelector('#pwaVSpctl');
         var pazEl = m.querySelector('#pwaVSpaz'), pazv = m.querySelector('#pwaVSpazv');
@@ -4985,7 +5025,7 @@
         if (g && map) { try { map.removeLayer(g); } catch(_e) {} }
         delete _vsShownLayers[id];
     }
-    // Re-affiche une vue : l'ajoute sur la carte (sans masquer les autres) + panorama
+    // Re-affiche une vue: l'ajoute sur la carte (sans masquer les autres) + panorama
     function _vsShowSaved(v) {
         _vsAddToMap(v, true);
         if (v.panoramaURL) _vsResultModal(v);
@@ -4994,22 +5034,22 @@
     function _vsManager() {
         var m = document.createElement('div');
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100065;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:480px;width:100%;max-height:85vh;display:flex;flex-direction:column;padding:18px 20px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-            '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Vues enregistrees</h2>' +
-            '<button id="pwaVMx" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:16px;color:var(--ink2,#5a3a1a);">Vues enregistrees</h2>' +
+            '<button id="pwaVMx" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">' +
-            '<button id="pwaVMnew" style="background:#8b4513;color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Nouveau champ de visibilite</button>' +
-            '<button id="pwaVMall" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Tout afficher</button>' +
-            '<button id="pwaVMnone" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Tout masquer</button>' +
+            '<button id="pwaVMnew" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Nouveau champ de visibilite</button>' +
+            '<button id="pwaVMall" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Tout afficher</button>' +
+            '<button id="pwaVMnone" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI;">Tout masquer</button>' +
             '</div>' +
             '<div style="font-size:11px;color:#999;margin-bottom:8px;">Cocher « Sur la carte » pour superposer plusieurs vues simultanement.</div>' +
-            '<div id="pwaVMlist" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:100px;max-height:52vh;font-size:13px;">Chargement...</div>' +
+            '<div id="pwaVMlist" style="flex:1;overflow-y:auto;border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:6px;min-height:100px;max-height:52vh;font-size:13px;">Chargement...</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) { L.DomEvent.disableClickPropagation(m); L.DomEvent.disableScrollPropagation(m); }
         function close() { m.remove(); }
@@ -5031,22 +5071,22 @@
                     var col = _vsViewColor(v.id);
                     var otherProj = (v.projet_id != null && curPid != null
                         && String(v.projet_id) !== String(curPid));
-                    return '<div style="border-bottom:1px solid #f4efe7;padding:8px 6px;">' +
+                    return '<div style="border-bottom:1px solid var(--pan,#f4efe7);padding:8px 6px;">' +
                         '<div style="display:flex;align-items:center;gap:6px;">' +
                         '<span style="width:10px;height:10px;border-radius:50%;background:' + col + ';flex:0 0 auto;"></span>' +
-                        '<span style="font-weight:600;color:#5a3a1a;">' + escapeHtml(v.name || v.id) + '</span>' +
+                        '<span style="font-weight:600;color:var(--ink2,#5a3a1a);">' + escapeHtml(v.name || v.id) + '</span>' +
                         (otherProj ? '<span style="font-size:10px;color:#b06a2b;border:1px solid #e6cdb4;border-radius:4px;padding:0 4px;">autre projet</span>' : '') +
                         '</div>' +
                         '<div style="color:#999;font-size:11px;margin:2px 0 6px;">rayon ' + (v.radiusM / 1000)
                         + ' km · ' + (v.full ? '360 deg' : ('secteur ' + v.azW + ' deg')) + ' · '
-                        + (v.targets ? v.targets.length : 0) + ' pts (' + nv + ' vis.)'
+                        + (v.targets ? v.targets.length: 0) + ' pts (' + nv + ' vis.)'
                         + ((v.peaks && v.peaks.length) ? ' · ' + v.peaks.length + ' sommets' : '')
                         + ' · ' + new Date(v.date).toLocaleDateString('fr-FR') + '</div>' +
                         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">' +
-                        '<label style="display:inline-flex;align-items:center;gap:4px;font:600 11px Segoe UI;color:#5a3a1a;cursor:pointer;">' +
+                        '<label style="display:inline-flex;align-items:center;gap:4px;font:600 11px Segoe UI;color:var(--ink2,#5a3a1a);cursor:pointer;">' +
                         '<input type="checkbox" class="pwaVMon" data-id="' + v.id + '"' + (on ? ' checked' : '') + '> Sur la carte</label>' +
-                        '<button class="pwaVMshow" data-id="' + v.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Revoir</button>' +
-                        '<button class="pwaVMren" data-id="' + v.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
+                        '<button class="pwaVMshow" data-id="' + v.id + '" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Revoir</button>' +
+                        '<button class="pwaVMren" data-id="' + v.id + '" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
                         '<button class="pwaVMdel" data-id="' + v.id + '" style="background:#fff;color:#c0392b;border:1px solid #e8c8c4;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Supprimer</button>' +
                         '</div></div>';
                 }).join('');
@@ -5065,7 +5105,7 @@
                     b.onclick = function() {
                         _vsDbGet(b.dataset.id).then(function(v) {
                             if (!v) return;
-                            var nn = prompt('Nom :', v.name);
+                            var nn = prompt('Nom:', v.name);
                             if (nn && nn.trim()) { v.name = nn.trim(); _vsDbPut(v).then(refresh); }
                         });
                     };
@@ -5165,45 +5205,44 @@
         var m = document.createElement('div');
         m.id = 'pwaMenuModal';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
-        // Ton DISCRET, meme palette brun/creme/olive. Hierarchie conservee :
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
+        // Ton DISCRET, meme palette brun/creme/olive. Hierarchie conservee:
         // les actions auparavant en couleur foncee (primary/accent) restent
         // mises en avant via un fond creme plus chaud + texte plus appuye ;
         // les autres en creme tres clair.
-        var _bbase = 'padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;text-align:left;width:100%;transition:background 0.15s;';
+        var _bbase = 'padding:9px 12px;border-radius:6px;cursor:pointer;font:600 12px var(--sans,Segoe UI,sans-serif);text-align:left;width:100%;transition:background 0.15s;';
         // Emphase (ex-#8b4513) : fond creme chaud, bordure ambree, texte appuye
-        var btnPrimary = 'background:#efe1cd;color:#5a3a1a;border:1px solid #d8c2a0;font-weight:700;' + _bbase;
-        // Secondaire : creme tres clair
-        var btnSecondary = 'background:#f7f3ec;color:#5a3a1a;border:1px solid #e3dac8;' + _bbase;
+        var btnPrimary = 'background:#efe1cd;color:var(--ink2,#5a3a1a);border:1px solid #d8c2a0;font-weight:700;' + _bbase;
+        // Secondaire: creme tres clair
+        var btnSecondary = 'background:var(--pan,#f7f3ec);color:var(--ink2,#5a3a1a);border:1px solid var(--bd2,#e3dac8);' + _bbase;
         // Accent (ex-#5a3a1a, le plus fonce) : meme emphase que primary
         var btnAccent = btnPrimary;
-        // Danger : rouge sobre, fond clair
+        // Danger: rouge sobre, fond clair
         var btnDanger = 'background:#fcf1ef;color:#c0392b;border:1px solid #e8c8c4;' + _bbase;
-        // Test : actif = teal doux ; inactif = secondaire discret
+        // Test: actif = teal doux ; inactif = secondaire discret
         var btnTest = isForcedOffline()
-            ? 'background:#e6f4f0;color:#0e7a68;border:1px solid #bfe3da;' + _bbase
-            : 'background:#f7f3ec;color:#5a3a1a;border:1px solid #e3dac8;' + _bbase;
-        var sectionTitle = 'font:700 10px Segoe UI,sans-serif;text-transform:uppercase;letter-spacing:0.6px;color:#8b7355;margin:14px 0 6px 2px;border-bottom:1px solid #f0ebe3;padding-bottom:4px;';
+            ? 'background:#e6f4f0;color:#0e7a68;border:1px solid #bfe3da;' + _bbase: 'background:var(--pan,#f7f3ec);color:var(--ink2,#5a3a1a);border:1px solid var(--bd2,#e3dac8);' + _bbase;
+        var sectionTitle = 'font:700 10px var(--sans,Segoe UI,sans-serif);text-transform:uppercase;letter-spacing:0.6px;color:var(--ink3,#8b7355);margin:14px 0 6px 2px;border-bottom:1px solid var(--tagbg,#f0ebe3);padding-bottom:4px;';
 
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:88vh;overflow-y:auto;padding:20px 22px;box-shadow:0 4px 24px rgba(0,0,0,0.3);">' +
 
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;font-family:Segoe UI,sans-serif;">Mode hors-ligne</h2>' +
-            '<button id="pwaMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;line-height:1;padding:0 4px;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);font-family:var(--sans,Segoe UI,sans-serif);">Mode hors-ligne</h2>' +
+            '<button id="pwaMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);line-height:1;padding:0 4px;">&times;</button>' +
             '</div>' +
 
-            '<div id="pwaMStats" style="font-size:11px;color:#5a3a1a;background:#faf7f2;padding:9px 11px;border-radius:6px;margin-bottom:8px;border:1px solid #f0ebe3;line-height:1.5;">Chargement des statistiques...</div>' +
+            '<div id="pwaMStats" style="font-size:11px;color:var(--ink2,#5a3a1a);background:var(--pan,#faf7f2);padding:9px 11px;border-radius:6px;margin-bottom:8px;border:1px solid var(--tagbg,#f0ebe3);line-height:1.5;">Chargement des statistiques...</div>' +
 
-            // Section : INSTALLATION
+            // Section: INSTALLATION
             '<div style="' + sectionTitle + '">Installation</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             '<button id="pwaMInstall" style="' + btnPrimary + '">Installer cette carte sur l\'ecran d\'accueil</button>' +
             '</div>' +
 
-            // Section : HORS-LIGNE
+            // Section: HORS-LIGNE
             '<div style="' + sectionTitle + '">Donnees hors-ligne</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             '<button id="pwaMPrecache" style="' + btnPrimary + '">Pre-charger ou ajuster une zone</button>' +
@@ -5214,7 +5253,7 @@
             '<button id="pwaMClear" style="' + btnSecondary + '">Consulter / gerer le cache hors-ligne</button>' +
             '</div>' +
 
-            // Position & parcours : regroupes dans la fenetre du bouton Position
+            // Position & parcours: regroupes dans la fenetre du bouton Position
             // (flottant, au-dessus du badge). Plus de doublon dans ce menu.
 
             // Section : SYNCHRONISATION
@@ -5227,7 +5266,7 @@
             '</button>' +
             '</div>' +
 
-            // Section : MAINTENANCE
+            // Section: MAINTENANCE
             '<div style="' + sectionTitle + '">Maintenance</div>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             '<button id="pwaMReload" style="' + btnSecondary + '">Actualiser la page</button>' +
@@ -5249,11 +5288,11 @@
             if (!s) { statsEl.textContent = 'Service Worker non actif. Recharge la page en HTTPS.'; return; }
             statsEl.innerHTML =
                 '<strong>Cache local (' + s.version + ')</strong><br>' +
-                'Tuiles : ' + s.tiles + '<br>' +
+                'Tuiles: ' + s.tiles + '<br>' +
                 (s.context ? 'Contexte Corse (installe) : ' + s.context + ' tuiles<br>' : '') +
-                'Photos : ' + s.photos + '<br>' +
-                'API : ' + s.api + '<br>' +
-                'Cartes HTML : ' + s.html;
+                'Photos: ' + s.photos + '<br>' +
+                'API: ' + s.api + '<br>' +
+                'Cartes HTML: ' + s.html;
         });
 
         document.getElementById('pwaMInstall').onclick = function() { m.remove(); openInstallFlow(); };
@@ -5262,10 +5301,10 @@
             m.remove();
             if (isPrecachedZoneVisible()) {
                 hidePrecachedZoneOnMap();
-                _setZoneHidden(true);  // memorise : ne plus afficher au reload
+                _setZoneHidden(true);  // memorise: ne plus afficher au reload
                 showToast('Zone hors-ligne masquee (ne reapparaitra plus au rechargement).');
             } else if (getStoredZone()) {
-                _setZoneHidden(false);  // memorise : reafficher au reload
+                _setZoneHidden(false);  // memorise: reafficher au reload
                 showPrecachedZoneOnMap(false);
                 showToast('Zone hors-ligne affichee. Restera visible au rechargement (en ligne et hors-ligne).', 5000);
             } else {
@@ -5313,7 +5352,7 @@
                 : Promise.resolve();
             Promise.all([swPromise, cachePromise]).then(function() {
                 // flag contexte Corse CONSERVE (le cache CTX n'a pas ete vide)
-                showToast('Mise a jour : rechargement (contexte Corse conserve)...');
+                showToast('Mise a jour: rechargement (contexte Corse conserve)...');
                 setTimeout(function() { location.reload(true); }, 800);
             });
         };
@@ -5323,7 +5362,7 @@
         };
     }
 
-    // ===== Helpers : selection par commune (Corse 2A/2B) =====
+    // ===== Helpers: selection par commune (Corse 2A/2B) =====
     // Source : geo.api.gouv.fr (API publique gratuite, contours officiels IGN).
     // Liste des ~360 communes 2A/2B mise en cache localStorage 30j.
     var _communesCorseCache = null;
@@ -5396,23 +5435,23 @@
         var m = document.createElement('div');
         m.id = 'pwaCommuneModal';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
 
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:480px;width:100%;max-height:90vh;display:flex;flex-direction:column;padding:20px 24px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Selection par commune</h2>' +
-            '<button id="pwaCCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);">Selection par commune</h2>' +
+            '<button id="pwaCCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
             '<input id="pwaCSearch" type="search" placeholder="Rechercher une commune" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">' +
             '<div id="pwaCStatus" style="font-size:11px;color:#999;margin-bottom:6px;">Chargement...</div>' +
-            '<div id="pwaCList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:200px;max-height:50vh;font-size:13px;"></div>' +
-            '<div id="pwaCSelected" style="font-size:11px;color:#5a3a1a;margin-top:8px;min-height:18px;"></div>' +
+            '<div id="pwaCList" style="flex:1;overflow-y:auto;border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:6px;min-height:200px;max-height:50vh;font-size:13px;"></div>' +
+            '<div id="pwaCSelected" style="font-size:11px;color:var(--ink2,#5a3a1a);margin-top:8px;min-height:18px;"></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">' +
-            '<button id="pwaCCancel2" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
-            '<button id="pwaCValidate" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;" disabled>Valider</button>' +
+            '<button id="pwaCCancel2" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
+            '<button id="pwaCValidate" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;" disabled>Valider</button>' +
             '</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
@@ -5467,7 +5506,7 @@
             }
             var names = codes.map(function(code) {
                 var c = allCommunes.find(function(x) { return x.code === code; });
-                return c ? c.nom : code;
+                return c ? c.nom: code;
             });
             selEl.innerHTML = '<strong>' + n + ' commune' + (n > 1 ? 's' : '') + ' :</strong> ' + escapeHtml(names.slice(0, 5).join(', ')) + (n > 5 ? ' + ' + (n - 5) + ' autre(s)' : '');
         }
@@ -5478,7 +5517,7 @@
             renderList('');
         }).catch(function(err) {
             statusEl.style.color = '#c0392b';
-            statusEl.textContent = 'Erreur de chargement : ' + err.message + '. Re-essaye plus tard.';
+            statusEl.textContent = 'Erreur de chargement: ' + err.message + '. Re-essaye plus tard.';
             listEl.innerHTML = '<div style="color:#c0392b;padding:8px;text-align:center;">Reseau requis pour charger la liste des communes.</div>';
         });
 
@@ -5563,10 +5602,10 @@
         var bounds = customBounds || (existingZone ? L.latLngBounds(existingZone.bounds[0], existingZone.bounds[1]) : map.getBounds());
         var isCustom = !!customBounds;
         var curZoom = map.getZoom();
-        // Defaults : si une zone existe deja, repartir de ses zooms ; sinon
+        // Defaults: si une zone existe deja, repartir de ses zooms ; sinon
         // valeurs par defaut min 14 / max 18.
-        var minZ = existingZone ? existingZone.zmin : 14;
-        var maxZ = existingZone ? existingZone.zmax : 18;
+        var minZ = existingZone ? existingZone.zmin: 14;
+        var maxZ = existingZone ? existingZone.zmax: 18;
         // Afficher la zone existante sur la carte en arriere-plan pendant qu'on
         // ajuste, pour faciliter l'ajustement visuel.
         if (existingZone && !customBounds) showPrecachedZoneOnMap(true);
@@ -5574,9 +5613,9 @@
         var m = document.createElement('div');
         m.id = 'pwaPrecacheModal';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
 
         var allLayers = listAvailableLayers(map);
         var allProjects = listAvailableProjects();
@@ -5606,12 +5645,12 @@
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto;padding:20px 24px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Pre-charger une zone</h2>' +
-            '<button id="pwaPCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);">Pre-charger une zone</h2>' +
+            '<button id="pwaPCancel" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
 
-            '<div style="margin-bottom:14px;font-size:12px;color:#5a3a1a;">' +
-            '<div style="font-weight:600;margin-bottom:6px;">Source de la zone :</div>' +
+            '<div style="margin-bottom:14px;font-size:12px;color:var(--ink2,#5a3a1a);">' +
+            '<div style="font-weight:600;margin-bottom:6px;">Source de la zone:</div>' +
             '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;">' +
             '<input type="radio" name="pwaZoneSrc" value="visible"' + (isCustom ? '' : ' checked') + '> Zone visible courante' +
             '</label>' +
@@ -5624,25 +5663,25 @@
             (_pendingCommunePolys ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">' + _pendingCommunePolys.length + ' commune(s) selectionnee(s) : ' +
                 escapeHtml(_pendingCommunePolys.map(function(p){return p.nom;}).slice(0,5).join(', ')) +
                 (_pendingCommunePolys.length > 5 ? ' + ' + (_pendingCommunePolys.length - 5) + ' autre(s)' : '') + '</div>' : '') +
-            (isCustom && !_pendingCommunePolys ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">Rectangle defini : ' +
+            (isCustom && !_pendingCommunePolys ? '<div style="font-size:11px;color:#16a085;margin-top:4px;">Rectangle defini: ' +
                 bounds.getSouth().toFixed(3) + ',' + bounds.getWest().toFixed(3) + ' - ' +
                 bounds.getNorth().toFixed(3) + ',' + bounds.getEast().toFixed(3) + '</div>' : '') +
             '</div>' +
 
             '<div style="display:flex;gap:10px;margin-bottom:14px;">' +
-            '<label style="flex:1;font-size:12px;color:#5a3a1a;">Zoom min<br><input type="number" id="pwaZmin" min="6" max="20" value="' + minZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
-            '<label style="flex:1;font-size:12px;color:#5a3a1a;">Zoom max<br><input type="number" id="pwaZmax" min="6" max="20" value="' + maxZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
+            '<label style="flex:1;font-size:12px;color:var(--ink2,#5a3a1a);">Zoom min<br><input type="number" id="pwaZmin" min="6" max="20" value="' + minZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
+            '<label style="flex:1;font-size:12px;color:var(--ink2,#5a3a1a);">Zoom max<br><input type="number" id="pwaZmax" min="6" max="20" value="' + maxZ + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;"></label>' +
             '</div>' +
 
-            '<details open style="margin-bottom:14px;border:1px solid #f0ebe3;border-radius:6px;padding:6px 12px;">' +
-            '<summary style="font-size:12px;color:#5a3a1a;font-weight:600;cursor:pointer;padding:4px 0;">Couches a pre-cacher (' + allLayers.filter(function(l){return l.active;}).length + '/' + allLayers.length + ' actives)</summary>' +
+            '<details open style="margin-bottom:14px;border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:6px 12px;">' +
+            '<summary style="font-size:12px;color:var(--ink2,#5a3a1a);font-weight:600;cursor:pointer;padding:4px 0;">Couches a pre-cacher (' + allLayers.filter(function(l){return l.active;}).length + '/' + allLayers.length + ' actives)</summary>' +
             '<div style="max-height:140px;overflow-y:auto;margin-top:6px;">' + layersHtml + '</div>' +
             '</details>' +
 
-            '<details style="margin-bottom:14px;border:1px solid #f0ebe3;border-radius:6px;padding:6px 12px;">' +
-            '<summary style="font-size:12px;color:#5a3a1a;font-weight:600;cursor:pointer;padding:4px 0;">Projets a pre-cacher (' + allProjects.filter(function(p){return p.current;}).length + '/' + allProjects.length + ')</summary>' +
+            '<details style="margin-bottom:14px;border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:6px 12px;">' +
+            '<summary style="font-size:12px;color:var(--ink2,#5a3a1a);font-weight:600;cursor:pointer;padding:4px 0;">Projets a pre-cacher (' + allProjects.filter(function(p){return p.current;}).length + '/' + allProjects.length + ')</summary>' +
             '<div style="max-height:140px;overflow-y:auto;margin-top:6px;">' + projectsHtml + '</div>' +
-            '<div style="font-size:10px;color:#999;margin-top:4px;">Pour chaque projet coche : les features (points/polygones) et photos seront mis en cache pour consultation offline.</div>' +
+            '<div style="font-size:10px;color:#999;margin-top:4px;">Pour chaque projet coche: les features (points/polygones) et photos seront mis en cache pour consultation offline.</div>' +
             '</details>' +
 
             (corseLvl
@@ -5652,7 +5691,7 @@
                   (corseLvl === 'full' ? 'fond complet zooms 8-14' : 'zooms 8-10') +
                   '). Inutile de le re-telecharger.</span>' +
                   '</div>'
-                : '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+                : '<label style="display:block;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:12px;">' +
                   'Contexte Corse (vue ile entiere hors-ligne)<br>' +
                   '<select id="pwaCorseCtx" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-top:3px;">' +
                   '<option value="" selected>Aucun</option>' +
@@ -5661,17 +5700,17 @@
                   '</select></label>') +
 
             (_pendingCommunePolys
-                ? ''  // selection commune : le nom est auto-derive des communes
-                : '<label style="display:block;font-size:12px;color:#5a3a1a;margin-bottom:12px;">' +
+                ? ''  // selection commune: le nom est auto-derive des communes
+                : '<label style="display:block;font-size:12px;color:var(--ink2,#5a3a1a);margin-bottom:12px;">' +
                   'Nom de cette selection (pour la retrouver dans la liste)<br>' +
                   '<input type="text" id="pwaPName" maxlength="50" placeholder="Nom de la selection" ' +
                   'style="width:100%;padding:7px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;margin-top:3px;"></label>') +
 
-            '<div id="pwaPEstim" style="font-size:11px;color:#666;background:#faf7f2;padding:8px;border-radius:4px;margin-bottom:12px;"></div>' +
-            '<div id="pwaPProgress" style="display:none;margin-bottom:12px;"><div style="background:#eee;border-radius:4px;overflow:hidden;height:20px;"><div id="pwaPBar" style="background:#8b4513;height:100%;width:0%;transition:width 0.2s;"></div></div><div id="pwaPLabel" style="font-size:11px;color:#666;margin-top:4px;text-align:center;">0%</div></div>' +
+            '<div id="pwaPEstim" style="font-size:11px;color:#666;background:var(--pan,#faf7f2);padding:8px;border-radius:4px;margin-bottom:12px;"></div>' +
+            '<div id="pwaPProgress" style="display:none;margin-bottom:12px;"><div style="background:#eee;border-radius:4px;overflow:hidden;height:20px;"><div id="pwaPBar" style="background:var(--prim,#8b4513);height:100%;width:0%;transition:width 0.2s;"></div></div><div id="pwaPLabel" style="font-size:11px;color:#666;margin-top:4px;text-align:center;">0%</div></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-            '<button id="pwaPCancel2" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
-            '<button id="pwaPStart" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Telecharger</button>' +
+            '<button id="pwaPCancel2" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
+            '<button id="pwaPStart" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Telecharger</button>' +
             '</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
@@ -5727,7 +5766,7 @@
             var nProjects = getCheckedProjects().length;
             var estMo = (totalTiles * 0.04).toFixed(1);
 
-            // Estimation du temps : ~10 tuiles/sec en 4G avec parallelisme x8 SW
+            // Estimation du temps: ~10 tuiles/sec en 4G avec parallelisme x8 SW
             // (debit reel limite par le serveur tuile, pas par la bande passante).
             // Si online : utiliser ~12 tuiles/s ; si reseau lent (Save-Data) : ~5/s.
             var rate = 10;
@@ -5745,7 +5784,7 @@
 
             var summary = '<strong>' + totalTiles + ' tuiles</strong> · ~' + estMo + ' Mo · ' + nLayers + ' couche(s)';
             if (includeCorse) summary += ' + contexte Corse';
-            summary += '<br><strong>Duree estimee : ' + timeStr + '</strong>';
+            summary += '<br><strong>Duree estimee: ' + timeStr + '</strong>';
             summary += ' <span style="color:#999;">(' + rate + ' tuiles/s)</span>';
             if (nProjects > 0) {
                 summary += '<br>+ <strong>' + nProjects + ' projet(s)</strong> (data + photos, +qq sec a +qq min selon volume)';
@@ -5803,7 +5842,7 @@
             if (c.totalAll > 5000) {
                 if (!confirm('Telecharger ' + c.totalAll + ' tuiles ? Ca peut prendre plusieurs minutes et utiliser ~' + (c.totalAll * 0.04).toFixed(0) + ' Mo de stockage.')) return;
             }
-            // Nom personnalise (ignore pour une selection commune : auto-nom)
+            // Nom personnalise (ignore pour une selection commune: auto-nom)
             var _nameEl = document.getElementById('pwaPName');
             var _label = (_nameEl && _nameEl.value.trim()) ? _nameEl.value.trim() : null;
             // Verif quota navigateur avant de lancer (~45 Ko/tuile, conservateur)
@@ -5820,7 +5859,7 @@
         updateEstim();
     }
 
-    // ===== Outil : tracer un rectangle pour la zone a pre-cacher =====
+    // ===== Outil: tracer un rectangle pour la zone a pre-cacher =====
     // Strategie : Leaflet.Draw a un mauvais support tactile sur smartphone
     // (gele souvent l'UI). On utilise donc TOUJOURS l'implementation native
     // sur mobile, et Leaflet.Draw uniquement sur desktop si dispo.
@@ -5883,7 +5922,7 @@
         b.style.cssText =
             'position:fixed;top:60px;left:50%;transform:translateX(-50%);' +
             'z-index:100070;background:#e74c3c;color:#fff;border:none;' +
-            'padding:10px 20px;border-radius:22px;font:600 13px Segoe UI,sans-serif;' +
+            'padding:10px 20px;border-radius:22px;font:600 13px var(--sans,Segoe UI,sans-serif);' +
             'cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.25);';
         b.onclick = function() {
             hideDrawCancelButton();
@@ -5898,7 +5937,7 @@
         if (b) b.remove();
     }
 
-    // Implementation 2-clics : comme le dessin de polygone Leaflet.Draw.
+    // Implementation 2-clics: comme le dessin de polygone Leaflet.Draw.
     // Tap 1 = premier coin du rectangle, tap 2 = coin oppose.
     // Bien plus fiable sur mobile que le drag (pas de probleme de touchstart/move).
     // La carte reste navigable entre les 2 taps (pan/zoom OK).
@@ -5922,7 +5961,7 @@
                 'position:fixed;top:110px;left:50%;transform:translateX(-50%);' +
                 'z-index:100065;background:rgba(40,40,40,0.95);color:#fff;' +
                 'padding:8px 16px;border-radius:18px;' +
-                'font:600 12px Segoe UI,sans-serif;max-width:88vw;text-align:center;';
+                'font:600 12px var(--sans,Segoe UI,sans-serif);max-width:88vw;text-align:center;';
             bannerEl.textContent = text;
             (document.body || document.documentElement).appendChild(bannerEl);
         }
@@ -5938,13 +5977,13 @@
                 showInfoBanner('Tap 2 ailleurs sur la carte pour le COIN OPPOSE');
                 showToast('Premier coin pose. Tape le coin oppose.', 3000);
             } else {
-                // Deuxieme clic : valider
+                // Deuxieme clic: valider
                 var b = L.latLngBounds(firstCorner, e.latlng);
                 var nePt = map.latLngToContainerPoint(b.getNorthEast());
                 var swPt = map.latLngToContainerPoint(b.getSouthWest());
                 var dx = Math.abs(nePt.x - swPt.x), dy = Math.abs(nePt.y - swPt.y);
                 if (dx < 5 || dy < 5) {
-                    // Rectangle minuscule : probable double-tap accidentel
+                    // Rectangle minuscule: probable double-tap accidentel
                     showInfoBanner('Trop petit (' + dx + 'x' + dy + 'px). Tape plus loin.');
                     showToast('Rectangle trop petit, tape plus loin', 2500);
                     return;
@@ -6023,7 +6062,7 @@
     }
 
     // Liste TOUS les TileLayer disponibles via le LayerControl (actifs + inactifs).
-    // Folium attache les couches inactives au layer control. On parcourt :
+    // Folium attache les couches inactives au layer control. On parcourt:
     // - map._layers (actifs)
     // - le LayerControl Leaflet (actifs + inactifs)
     // - aussi les layers refs dans les variables globales Folium (layer_xxx)
@@ -6054,7 +6093,7 @@
             if (l instanceof L.TileLayer) tryAdd(l, null, true);
         });
 
-        // 2. LayerControl Leaflet : cherche les references aux layers (actifs + inactifs)
+        // 2. LayerControl Leaflet: cherche les references aux layers (actifs + inactifs)
         // Folium genere une variable globale type `layer_control_xxx` qui contient
         // les overlays et basemaps via `.options` ou `._layers`.
         var controls = [];
@@ -6062,9 +6101,9 @@
             try {
                 var ctl = window[k];
                 if (!ctl || typeof ctl !== 'object') continue;
-                // Pattern Folium : variable nommee 'layer_control_*'
+                // Pattern Folium: variable nommee 'layer_control_*'
                 if (k.indexOf('layer_control') === 0 && ctl._layers) controls.push(ctl);
-                // Sinon : detection generique par presence de _layers + addBaseLayer/addOverlay
+                // Sinon: detection generique par presence de _layers + addBaseLayer/addOverlay
                 else if (ctl._layers && (typeof ctl.addBaseLayer === 'function' || typeof ctl.addOverlay === 'function')) controls.push(ctl);
             } catch(e) {}
         }
@@ -6072,7 +6111,7 @@
             try {
                 var entries = ctl._layers;
                 if (!entries) return;
-                // Differents formats selon version Leaflet : array ou object
+                // Differents formats selon version Leaflet: array ou object
                 var iter = Array.isArray(entries) ? entries : Object.keys(entries).map(function(k) { return entries[k]; });
                 iter.forEach(function(e) {
                     if (!e || !e.layer) return;
@@ -6083,7 +6122,7 @@
             } catch(e) {}
         });
 
-        // 3. Backup : parcourir aussi les variables globales `tile_layer_*` Folium
+        // 3. Backup: parcourir aussi les variables globales `tile_layer_*` Folium
         for (var k2 in window) {
             try {
                 var v = window[k2];
@@ -6093,7 +6132,7 @@
             } catch(e) {}
         }
 
-        // 4. Fallback : calques Corse-specifiques connus. Permet de pre-cacher
+        // 4. Fallback: calques Corse-specifiques connus. Permet de pre-cacher
         // MEME si le calque n'est pas (encore) dans la map (cas du MNT LiDAR HD
         // ajoute en differe via setTimeout). On ajoute juste l'URL connue, sans
         // nettoyer du LayerControl. La detection par URL evite les doublons.
@@ -6129,7 +6168,7 @@
                 key: 'cadastre-ign'
             },
             {
-                // Plan Terrier Corse XVIIIe (WMTS : STYLE=nolegend, TMS=PM_6_18,
+                // Plan Terrier Corse XVIIIe (WMTS: STYLE=nolegend, TMS=PM_6_18,
                 // zooms 6-18 uniquement). La carte l'affiche en WMS -> non
                 // cacheable ; le proposer ici en XYZ permet de le pre-cacher.
                 name: 'Plan Terrier (XVIIIe)',
@@ -6146,7 +6185,7 @@
             // Ne pas ajouter si une URL identique existe deja (dedupe par contenu)
             var alreadyHas = out.some(function(o) {
                 // Comparaison par segment unique de l'URL (identifie le layer)
-                // MNT LiDAR + Plan Terrier : TOUJOURS proposes en entree nommee
+                // MNT LiDAR + Plan Terrier: TOUJOURS proposes en entree nommee
                 // (suppression dedup desactivee -> visibles meme si une variante
                 //  WMS / chargee en differe / mal nommee existe deja).
                 if (fb.key === 'lidar-hd-shadow') return false;
@@ -6187,7 +6226,7 @@
         if (/1965-1980/i.test(l._url)) return 'Ortho 1965-1980';
         if (/raster-tiles-corse/i.test(l._url)) {
             var m = /raster-tiles-corse\/([^\/]+)/.exec(l._url);
-            return m ? 'Raster : ' + m[1] : 'Raster Corse';
+            return m ? 'Raster: ' + m[1] : 'Raster Corse';
         }
         return l._url.split('/')[2] || 'Couche';
     }
@@ -6195,7 +6234,7 @@
     // Liste les projets disponibles depuis le scope global Folium-injecte.
     function listAvailableProjects() {
         var projets = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
-        var currentId = typeof window.PROJET_ID !== 'undefined' ? window.PROJET_ID : null;
+        var currentId = typeof window.PROJET_ID !== 'undefined' ? window.PROJET_ID: null;
         return projets.map(function(p) {
             return {
                 id: p.id,
@@ -6223,7 +6262,7 @@
         } catch(_e) {}
     }
 
-    // ===== Anti-eviction : stockage persistant + verif quota =====
+    // ===== Anti-eviction: stockage persistant + verif quota =====
     // navigator.storage.persist() : si accorde, le navigateur n'evince PLUS
     // automatiquement (seul un vidage manuel supprime). Accorde sans prompt
     // pour une PWA installee sur Android Chrome.
@@ -6239,10 +6278,10 @@
                 return true;
             }
             return navigator.storage.persist().then(function(granted) {
-                console.log('[PWA] Stockage persistant : ' + (granted ? 'ACCORDE' : 'refuse'));
+                console.log('[PWA] Stockage persistant: ' + (granted ? 'ACCORDE' : 'refuse'));
                 if (verbose) {
                     showToast(granted
-                        ? 'Stockage persistant active : tes tuiles ne seront plus evincees automatiquement.'
+                        ? 'Stockage persistant active: tes tuiles ne seront plus evincees automatiquement.'
                         : 'Stockage persistant refuse. Installe la carte sur l\'ecran d\'accueil pour l\'obtenir.', 6000);
                 }
                 return granted;
@@ -6265,14 +6304,14 @@
     // true = continuer (OK ou utilisateur confirme malgre l'avertissement).
     function _checkQuotaBeforeDownload(estimatedBytes) {
         return _storageEstimate().then(function(est) {
-            if (!est || !est.quota) return true;  // API indispo : ne pas bloquer
+            if (!est || !est.quota) return true;  // API indispo: ne pas bloquer
             if (estimatedBytes > est.available * 0.9) {
                 var needMo = Math.round(estimatedBytes / 1e6);
                 var freeMo = Math.round(est.available / 1e6);
                 return confirm(
                     'Espace de stockage potentiellement insuffisant.\n\n' +
-                    'Telechargement estime : ~' + needMo + ' Mo\n' +
-                    'Espace disponible : ~' + freeMo + ' Mo\n\n' +
+                    'Telechargement estime: ~' + needMo + ' Mo\n' +
+                    'Espace disponible: ~' + freeMo + ' Mo\n\n' +
                     'Le navigateur risque de refuser ou d\'evincer des tuiles en cours de route.\n' +
                     'Telecharger quand meme ?');
             }
@@ -6298,7 +6337,7 @@
     function clearStoredZone() {
         try { localStorage.removeItem(_zoneKey()); } catch(_e) {}
     }
-    // Flag : l'utilisateur a-t-il explicitement masque la zone ?
+    // Flag: l'utilisateur a-t-il explicitement masque la zone ?
     // Par defaut la zone est AFFICHEE (en ligne comme hors-ligne). Si l'utilisateur
     // clique "Masquer", on memorise pour ne plus l'afficher au prochain chargement.
     function _zoneHiddenKey() {
@@ -6330,7 +6369,7 @@
         if (_zoneLayer) try { map.removeLayer(_zoneLayer); } catch(_e) {}
         var bb = L.latLngBounds(zone.bounds[0], zone.bounds[1]);
         var hasCommunes = zone.communes && zone.communes.length > 0;
-        // Contour purement visuel : PAS de popup (inutile au clic) et
+        // Contour purement visuel: PAS de popup (inutile au clic) et
         // interactive:false -> les clics passent a travers vers la carte.
         if (hasCommunes) {
             var group = L.featureGroup();
@@ -6362,7 +6401,7 @@
         return _zoneLayer !== null;
     }
 
-    // deepLayerSpec : { url, zmax } -> une couche precise (ex: Plan IGN J+1,
+    // deepLayerSpec: { url, zmax } -> une couche precise (ex: Plan IGN J+1,
     // tuiles legeres) cachee plus profond que les autres sur la meme emprise.
     async function startPrecache(map, bounds, zmin, zmax, includeCorse, customLayerUrls, projectIds, precacheTag, precacheLabel, deepLayerSpec) {
         if (!navigator.serviceWorker.controller) {
@@ -6420,7 +6459,7 @@
         //    (nombre) ; true historique => 10. Zooms 8..ctxZmax sur la Corse.
         if (includeCorse) {
             var ctxZmax = (typeof includeCorse === 'number' && includeCorse >= 8)
-                ? includeCorse : 10;
+                ? includeCorse: 10;
             for (var cz = 8; cz <= ctxZmax; cz++) {
                 if (cz >= zmin && cz <= zmax) continue;
                 addTilesForBounds(cz, CORSE_BOUNDS.north, CORSE_BOUNDS.south, CORSE_BOUNDS.west, CORSE_BOUNDS.east);
@@ -6444,10 +6483,10 @@
             }
         }
 
-        // 3. Pre-cache des projets : on doit fetch EXACTEMENT les memes URLs
+        // 3. Pre-cache des projets: on doit fetch EXACTEMENT les memes URLs
         // que l'app a l'execution (loadCustomFeatures / loadModifications),
         // sinon la cle de cache du SW ne matche pas -> rien hors-ligne.
-        //   loadCustomFeatures : /custom_features?select=*&order=created_at.desc
+        //   loadCustomFeatures: /custom_features?select=*&order=created_at.desc
         //                        [&projet_id=eq.<pid>]&limit=1000&offset=<n>
         //   loadModifications  : /corrections?select=*&projet_id=eq.<pid>
         var projectPhotoUrls = [];
@@ -6502,7 +6541,7 @@
             var d = ev.data;
             if (d.progress === undefined) return;
             var pct = d.total ? Math.round((d.progress / d.total) * 100) : 0;
-            // Progression : barre dans la modale si ouverte, sinon bandeau leger
+            // Progression: barre dans la modale si ouverte, sinon bandeau leger
             // (cas du pre-cache declenche a l'installation, sans modale).
             if (modal) {
                 modal.querySelector('#pwaPBar').style.width = pct + '%';
@@ -6510,7 +6549,7 @@
             } else {
                 _updatePrecacheBanner(d.progress, d.total, pct, d.errors, d.done);
             }
-            // Completion : TOUJOURS executee (independante de la modale) sinon
+            // Completion: TOUJOURS executee (independante de la modale) sinon
             // la zone n'est jamais sauvegardee quand on pre-cache depuis l'install.
             if (d.done) {
                 var zone = {
@@ -6530,7 +6569,7 @@
                     _pendingCommunePolys = null;
                 }
                 setStoredZone(zone);
-                _setZoneHidden(false);  // nouvelle zone : afficher par defaut
+                _setZoneHidden(false);  // nouvelle zone: afficher par defaut
                 // Memoriser le niveau de contexte Corse pour ne plus le reproposer
                 if (precacheTag === 'corse-full') _setCorseContextLevel('full');
                 else if (precacheTag === 'corse-light') _setCorseContextLevel('light');
@@ -6544,7 +6583,7 @@
                                 ? 'Contexte Corse complet (8-14)'
                                 : 'Contexte Corse leger (8-10)';
                         } else if (zone.communes && zone.communes.length) {
-                            _lbl = 'Communes : ' + zone.communes.map(function(c){return c.nom;})
+                            _lbl = 'Communes: ' + zone.communes.map(function(c){return c.nom;})
                                 .slice(0, 3).join(', ') +
                                 (zone.communes.length > 3 ? ' +' + (zone.communes.length - 3) : '');
                         } else {
@@ -6561,7 +6600,7 @@
                         count: allUrls.length,
                         urls: _isCtxB ? [] : allUrls  // context = cache dedie, pas besoin des urls
                     });
-                } catch(_e) { console.warn('[PWA] Enregistrement batch echoue :', _e); }
+                } catch(_e) { console.warn('[PWA] Enregistrement batch echoue:', _e); }
                 try { showPrecachedZoneOnMap(true); } catch(_e) {}
                 // Nouveau zoom max cache -> re-caler le maxNativeZoom adaptatif
                 setTimeout(function() {
@@ -6569,7 +6608,7 @@
                 }, 800);
                 setTimeout(function() {
                     if (modal && modal.parentNode) modal.remove();
-                    showToast('Pre-cache termine : ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
+                    showToast('Pre-cache termine: ' + d.progress + ' elements' + (d.errors ? ' (' + d.errors + ' erreurs)' : ''));
                 }, 500);
             }
         };
@@ -6593,7 +6632,7 @@
                 'transform:translateX(-50%);z-index:100045 !important;' +
                 'display:flex;align-items:center;gap:10px;padding:8px 16px;' +
                 'background:rgba(40,40,40,0.95);color:#fff;border-radius:20px;' +
-                'box-shadow:0 4px 14px rgba(0,0,0,0.25);font:600 12px Segoe UI,sans-serif;' +
+                'box-shadow:0 4px 14px rgba(0,0,0,0.25);font:600 12px var(--sans,Segoe UI,sans-serif);' +
                 'max-width:90vw;';
             (document.body || document.documentElement).appendChild(b);
         }
@@ -6653,7 +6692,7 @@
         var zmax = (kind === 'full') ? 14 : 10;
         // Plan IGN J+1 reste a z14 comme le satellite (pas de z15 : trop lourd).
         var _deepSpec = null;
-        // Estimation : light (sat+plan 8-10) ~10 Mo ; full (sat+plan 8-14) ~280 Mo.
+        // Estimation: light (sat+plan 8-10) ~10 Mo ; full (sat+plan 8-14) ~280 Mo.
         var _estBytes = (kind === 'full' ? 280 : 10) * 1e6;
         _checkQuotaBeforeDownload(_estBytes).then(function(okq) {
             if (!okq) { showToast('Telechargement annule (espace insuffisant).', 5000); return; }
@@ -6693,7 +6732,7 @@
         var customName = '';
         try { customName = (localStorage.getItem('pwaCustomName_' + fn) || '').trim(); }
         catch(_e) {}
-        if (!customName) return;  // pas de nom perso : ne rien forcer
+        if (!customName) return;  // pas de nom perso: ne rien forcer
         try { document.title = customName; } catch(_e) {}
         try {
             var am = document.getElementById('pwaAppleTitle')
@@ -6734,9 +6773,9 @@
             link.rel = 'manifest';
             link.href = url;
             document.head.appendChild(link);
-            console.log('[PWA] Nom raccourci applique via pwa-ui.js : ' + customName);
+            console.log('[PWA] Nom raccourci applique via pwa-ui.js: ' + customName);
         } catch(_e) {
-            console.warn('[PWA] _applyCustomShortcutName echoue :', _e);
+            console.warn('[PWA] _applyCustomShortcutName echoue:', _e);
         }
     }
     // Execution immediate (pas dans un listener load) pour devancer l'install.
@@ -6751,22 +6790,22 @@
         var m = document.createElement('div');
         m.id = 'pwaRenameModal';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:460px;width:100%;padding:20px 24px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Nom du raccourci</h2>' +
-            '<button id="pwaRClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);">Nom du raccourci</h2>' +
+            '<button id="pwaRClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
             '<p style="margin:0 0 14px;font-size:12px;color:#666;line-height:1.5;">Nom du raccourci sur l\'ecran d\'accueil (max 12 caracteres).</p>' +
             '<input type="text" id="pwaRInput" maxlength="60" value="' + escapeHtml(defaultName) + '" placeholder="Nom du raccourci" style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-bottom:6px;">' +
             '<div id="pwaRPreview" style="font-size:11px;color:#888;margin-bottom:14px;"></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-            '<button id="pwaRReset" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Defaut</button>' +
-            '<button id="pwaRCancel" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
-            '<button id="pwaRSave" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Sauvegarder</button>' +
+            '<button id="pwaRReset" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Defaut</button>' +
+            '<button id="pwaRCancel" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Annuler</button>' +
+            '<button id="pwaRSave" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Sauvegarder</button>' +
             '</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
@@ -6778,7 +6817,7 @@
         function updatePreview() {
             var v = (input.value || '').trim();
             var sn = v.length > 12 ? v.slice(0, 12) : v;
-            preview.innerHTML = 'Apparaitra sur l\'ecran d\'accueil : <strong>' + escapeHtml(sn || '(vide)') + '</strong>' +
+            preview.innerHTML = 'Apparaitra sur l\'ecran d\'accueil: <strong>' + escapeHtml(sn || '(vide)') + '</strong>' +
                 (v.length > 12 ? ' <span style="color:#c0392b;">(tronque de "' + escapeHtml(v) + '")</span>' : '');
         }
         input.addEventListener('input', updatePreview);
@@ -6847,11 +6886,11 @@
             'transform:translateX(-50%);z-index:100040 !important;' +
             'display:flex;align-items:center;gap:8px;padding:8px 14px;' +
             'background:rgba(40,40,40,0.95);color:#fff;border-radius:24px;' +
-            'box-shadow:0 4px 14px rgba(0,0,0,0.25);font:600 12px Segoe UI,sans-serif;' +
+            'box-shadow:0 4px 14px rgba(0,0,0,0.25);font:600 12px var(--sans,Segoe UI,sans-serif);' +
             'cursor:pointer;max-width:90vw;';
         b.innerHTML =
             '<span>Installer cette carte sur l\'ecran d\'accueil</span>' +
-            '<button id="pwaInstallBtnGo" style="background:#27ae60;color:#fff;border:none;padding:5px 12px;border-radius:14px;font:600 11px Segoe UI,sans-serif;cursor:pointer;">Installer</button>' +
+            '<button id="pwaInstallBtnGo" style="background:#27ae60;color:#fff;border:none;padding:5px 12px;border-radius:14px;font:600 11px var(--sans,Segoe UI,sans-serif);cursor:pointer;">Installer</button>' +
             '<button id="pwaInstallBtnClose" title="Masquer jusqu\'au prochain rechargement" style="background:none;color:#bbb;border:none;font-size:18px;cursor:pointer;padding:0 4px;line-height:1;">&times;</button>';
         (document.body || document.documentElement).appendChild(b);
         document.getElementById('pwaInstallBtnGo').onclick = function(e) {
@@ -6881,7 +6920,7 @@
         showToast('Carte installee sur l\'ecran d\'accueil');
     });
 
-    // Au load : afficher le bandeau si applicable (iOS Safari OU prompt deja capture)
+    // Au load: afficher le bandeau si applicable (iOS Safari OU prompt deja capture)
     window.addEventListener('load', function() {
         setTimeout(function() {
             if (isPwaInstalled()) return;
@@ -6899,10 +6938,10 @@
             showToast('App deja installee sur l\'ecran d\'accueil. Pour renommer, desinstalle d\'abord.', 6000);
             return;
         }
-        // iOS : aucune install programmatique possible (Apple). On renomme (le
+        // iOS: aucune install programmatique possible (Apple). On renomme (le
         // nom est applique au meta apple-mobile-web-app-title des la sauvegarde,
         // sans reload) puis on montre les instructions "Partager -> Sur l'ecran
-        // d'accueil". PAS d'etape telechargement des fonds ici : sur iPhone un
+        // d'accueil". PAS d'etape telechargement des fonds ici: sur iPhone un
         // pre-cache fait dans l'onglet Safari ne suit pas dans l'app installee.
         // Les fonds sont proposes a la 1re ouverture DEPUIS le raccourci (plus bas).
         if (isIosSafari()) {
@@ -6912,20 +6951,20 @@
             return;
         }
         openRenameShortcutModal(function(newName) {
-            // Apres le choix du nom : proposer de pre-charger les fonds Corse.
+            // Apres le choix du nom: proposer de pre-charger les fonds Corse.
             openInstallTilesModal(function(tileChoice) {
                 _proceedInstall(newName, tileChoice);
             });
         });
     }
 
-    // Modale : proposer le telechargement des fonds de carte Corse a l'install.
-    // 3 choix : leger (8-10, ~qq Mo) / complet (8-14, ~350 Mo) / plus tard.
+    // Modale: proposer le telechargement des fonds de carte Corse a l'install.
+    // 3 choix: leger (8-10, ~qq Mo) / complet (8-14, ~350 Mo) / plus tard.
     function openInstallTilesModal(onChoice) {
         var existing = document.getElementById('pwaInstallTilesModal');
         if (existing) existing.remove();
         var map = findLeafletMap();
-        // Jeu deterministe : Satellite HD + Plan IGN J+1 (independant des
+        // Jeu deterministe: Satellite HD + Plan IGN J+1 (independant des
         // calques affiches). Estimations Corse entiere fixes.
         var lightMo = 10;   // sat + plan, 8-10
         var fullMo = 280;   // sat + plan, 8-14
@@ -6933,21 +6972,21 @@
         var m = document.createElement('div');
         m.id = 'pwaInstallTilesModal';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:460px;width:100%;padding:20px 24px;">' +
-            '<h2 style="margin:0 0 6px;font-size:17px;color:#5a3a1a;">Fonds de carte hors-ligne</h2>' +
+            '<h2 style="margin:0 0 6px;font-size:17px;color:var(--ink2,#5a3a1a);">Fonds de carte hors-ligne</h2>' +
             '<p style="margin:0 0 16px;font-size:12px;color:#666;line-height:1.5;">' +
             'Fonds de la Corse pour l\'usage hors-ligne. Une zone precise reste pre-cachable plus tard.</p>' +
-            '<button id="pwaTilesLight" style="display:block;width:100%;text-align:left;background:#f0ebe3;color:#5a3a1a;border:1px solid #d8cdb8;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
-            'Leger — Satellite + Plan IGN <span style="color:#8b7355;">(zooms 8-10, ~' + lightMo + ' Mo)</span><br>' +
+            '<button id="pwaTilesLight" style="display:block;width:100%;text-align:left;background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:1px solid #d8cdb8;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px var(--sans,Segoe UI,sans-serif);margin-bottom:8px;">' +
+            'Leger — Satellite + Plan IGN <span style="color:var(--ink3,#8b7355);">(zooms 8-10, ~' + lightMo + ' Mo)</span><br>' +
             '<span style="font-weight:400;font-size:11px;color:#888;">Vue ile entiere + grands axes. Rapide.</span></button>' +
-            '<button id="pwaTilesFull" style="display:block;width:100%;text-align:left;background:#8b4513;color:#fff;border:none;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI,sans-serif;margin-bottom:8px;">' +
+            '<button id="pwaTilesFull" style="display:block;width:100%;text-align:left;background:var(--prim,#8b4513);color:#fff;border:none;padding:11px 14px;border-radius:8px;cursor:pointer;font:600 13px var(--sans,Segoe UI,sans-serif);margin-bottom:8px;">' +
             'Complet — Satellite + Plan IGN J+1 <span style="opacity:.85;">(zooms 8-14, ~' + fullMo + ' Mo)</span><br>' +
             '<span style="font-weight:400;font-size:11px;opacity:.85;">Se reperer routes/chemins partout. ~10-15 min en 4G.</span></button>' +
-            '<button id="pwaTilesNone" style="display:block;width:100%;text-align:left;background:#fff;color:#8b7355;border:1px solid #e0d8c8;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">' +
+            '<button id="pwaTilesNone" style="display:block;width:100%;text-align:left;background:#fff;color:var(--ink3,#8b7355);border:1px solid #e0d8c8;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 12px var(--sans,Segoe UI,sans-serif);">' +
             'Plus tard — installer sans telecharger</button>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
@@ -6982,7 +7021,7 @@
                 return;
             }
         }
-        // Pas de reload : install direct puis pre-cache Corse en parallele
+        // Pas de reload: install direct puis pre-cache Corse en parallele
         triggerInstall();
         if (tileChoice === 'light' || tileChoice === 'full') {
             setTimeout(function() { _startCorsePrecache(tileChoice); }, 1200);
@@ -6993,7 +7032,7 @@
         if (_deferredInstallPrompt) {
             _deferredInstallPrompt.prompt();
             _deferredInstallPrompt.userChoice.then(function(choice) {
-                console.log('[PWA] Install choice :', choice.outcome);
+                console.log('[PWA] Install choice:', choice.outcome);
                 if (choice.outcome === 'accepted') {
                     showToast('Raccourci installe');
                 } else {
@@ -7014,18 +7053,18 @@
     function showIosInstallModal() {
         var m = document.createElement('div');
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:100060;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         (document.body || document.documentElement).appendChild(m);
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:380px;width:100%;padding:20px 24px;">' +
-            '<h2 style="margin:0 0 10px;font-size:16px;color:#5a3a1a;">Installer sur iPhone / iPad</h2>' +
+            '<h2 style="margin:0 0 10px;font-size:16px;color:var(--ink2,#5a3a1a);">Installer sur iPhone / iPad</h2>' +
             '<ol style="margin:0 0 14px;padding-left:22px;font-size:13px;line-height:1.7;color:#333;">' +
             '<li>Tape le bouton <strong>Partager</strong> en bas de Safari (carre avec fleche vers le haut)</li>' +
             '<li>Fais defiler et choisis <strong>Sur l\'ecran d\'accueil</strong></li>' +
             '<li>Confirme avec <strong>Ajouter</strong> en haut a droite</li>' +
             '</ol>' +
             '<div style="display:flex;justify-content:flex-end;">' +
-            '<button id="pwaIosOk" style="background:#8b4513;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Compris</button>' +
+            '<button id="pwaIosOk" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Compris</button>' +
             '</div>' +
             '</div>';
         m.onclick = function(e) { if (e.target === m) m.remove(); };
@@ -7042,7 +7081,7 @@
                 _pollInstallPrompt();
             }
             // Reprise du pre-cache Corse choisi avant le reload (le download ne
-            // pouvait pas survivre au reload, on le lance maintenant : SW actif).
+            // pouvait pas survivre au reload, on le lance maintenant: SW actif).
             var pcChoice = sessionStorage.getItem('pwaPrecacheChoice');
             if (pcChoice === 'light' || pcChoice === 'full') {
                 sessionStorage.removeItem('pwaPrecacheChoice');
@@ -7053,7 +7092,7 @@
 
     // Ouverte DEPUIS le raccourci installe (mode standalone) : proposer UNE
     // fois le telechargement des fonds hors-ligne. C'est le bon moment sur
-    // iPhone : le pre-cache est alors stocke dans l'app installee (donc dispo
+    // iPhone: le pre-cache est alors stocke dans l'app installee (donc dispo
     // hors-ligne), contrairement a un pre-cache fait dans l'onglet Safari.
     // iOS uniquement (Android propose deja les fonds pendant l'install).
     // setTimeout direct (pwa-ui.js en defer -> DOM pret) et PAS 'load' : sur une
@@ -7088,9 +7127,9 @@
                 } else if (isIosSafari()) {
                     showIosInstallModal();
                 } else {
-                    // Chrome / Android : afficher instructions manuelles
+                    // Chrome / Android: afficher instructions manuelles
                     alert('L\'installation n\'a pas ete proposee automatiquement.\n\n' +
-                          'Pour installer manuellement :\n' +
+                          'Pour installer manuellement:\n' +
                           '1. Ouvre le menu Chrome (3 points en haut a droite)\n' +
                           '2. Choisis "Installer l\'application" ou "Ajouter a l\'ecran d\'accueil"\n' +
                           '3. Confirme avec ton nom personnalise');
@@ -7120,7 +7159,7 @@
     function restoreOfflineMarkersFromQueue() {
         var map = findLeafletMap();
         if (!map) {
-            // Map pas encore prete : retry differé
+            // Map pas encore prete: retry differé
             setTimeout(restoreOfflineMarkersFromQueue, 500);
             return;
         }
@@ -7138,14 +7177,14 @@
                         count++;
                     }
                 } catch(e) {
-                    console.warn('[PWA] Restoration marker offline echoue :', e);
+                    console.warn('[PWA] Restoration marker offline echoue:', e);
                 }
             });
             if (count > 0) {
                 console.log('[PWA] ' + count + ' marker(s) offline restaure(s) depuis la queue');
             }
         }).catch(function(e) {
-            console.warn('[PWA] dbAll echoue au reload :', e);
+            console.warn('[PWA] dbAll echoue au reload:', e);
         });
     }
 
@@ -7186,7 +7225,7 @@
             }).addTo(layer);
             line.bindPopup(labelHtml);
         }
-        console.log('[PWA] Point offline ajoute a la carte :', name);
+        console.log('[PWA] Point offline ajoute a la carte:', name);
     }
 
     function clearOfflineLayer() {
@@ -7205,7 +7244,7 @@
         t.style.cssText =
             'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
             'background:rgba(40,40,40,0.92);color:#fff;padding:10px 18px;' +
-            'border-radius:22px;font:600 13px/1.3 Segoe UI,sans-serif;' +
+            'border-radius:22px;font:600 13px/1.3 var(--sans,Segoe UI,sans-serif);' +
             'box-shadow:0 4px 14px rgba(0,0,0,0.28);z-index:10600;' +
             'max-width:80vw;text-align:center;opacity:0;transition:opacity 0.25s;';
         t.textContent = msg;
@@ -7224,20 +7263,20 @@
         var m = document.createElement('div');
         m.id = 'pwaQueueModal';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10500;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
 
         m.innerHTML =
             '<div style="background:#fff;border-radius:10px;max-width:600px;width:100%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;padding:18px 22px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Modifications en attente</h2>' +
-            '<button id="pwaQClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);">Modifications en attente</h2>' +
+            '<button id="pwaQClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
-            '<div id="pwaQList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;margin-bottom:10px;"></div>' +
+            '<div id="pwaQList" style="flex:1;overflow-y:auto;border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;margin-bottom:10px;"></div>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-            '<button id="pwaQRefresh" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Rafraichir</button>' +
-            '<button id="pwaQReplay" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Tout synchroniser</button>' +
+            '<button id="pwaQRefresh" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Rafraichir</button>' +
+            '<button id="pwaQReplay" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">Tout synchroniser</button>' +
             '</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
@@ -7261,7 +7300,7 @@
                     var tableMatch = /\/rest\/v1\/([^?]+)/.exec(it.url);
                     var table = tableMatch ? tableMatch[1] : '?';
                     var label = it.summary || ('Operation sur ' + table);
-                    return '<div style="padding:10px 12px;border-bottom:1px solid #f0ebe3;display:flex;align-items:center;gap:10px;">' +
+                    return '<div style="padding:10px 12px;border-bottom:1px solid var(--tagbg,#f0ebe3);display:flex;align-items:center;gap:10px;">' +
                         '<span style="background:' + (methodColor[it.method]||'#888') + ';color:#fff;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:700;">' + it.method + '</span>' +
                         '<div style="flex:1;min-width:0;">' +
                         '<div style="font-size:13px;color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(label) + '</div>' +
@@ -7395,7 +7434,7 @@
         return L.latLngBounds([minLat, minLon], [maxLat, maxLon]);
     }
 
-    // ===== Modal : gerer / supprimer les caches par DL lance =====
+    // ===== Modal: gerer / supprimer les caches par DL lance =====
     // Liste chaque pre-cache lance par l'utilisateur (zone, communes, contexte
     // Corse...) + suppression selective. La suppression d'un batch n'efface
     // QUE ses tuiles non partagees avec un batch conserve.
@@ -7405,22 +7444,22 @@
         var m = document.createElement('div');
         m.id = 'pwaCacheMgr';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:520px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:20px 22px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Mes telechargements hors-ligne</h2>' +
-            '<button id="pwaCMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);">Mes telechargements hors-ligne</h2>' +
+            '<button id="pwaCMClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
-            '<div id="pwaCMTotal" style="font-size:12px;color:#5a3a1a;background:#faf7f2;border:1px solid #f0ebe3;border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>' +
-            '<div id="pwaCMList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:120px;max-height:48vh;font-size:13px;">Chargement...</div>' +
+            '<div id="pwaCMTotal" style="font-size:12px;color:var(--ink2,#5a3a1a);background:var(--pan,#faf7f2);border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:8px 10px;margin-bottom:10px;"></div>' +
+            '<div id="pwaCMList" style="flex:1;overflow-y:auto;border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:6px;min-height:120px;max-height:48vh;font-size:13px;">Chargement...</div>' +
             '<div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px;flex-wrap:wrap;">' +
-            '<button id="pwaCMWipeAll" style="background:#fff;color:#c0392b;border:1px solid #e8a8a0;padding:8px 12px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">Tout supprimer</button>' +
+            '<button id="pwaCMWipeAll" style="background:#fff;color:#c0392b;border:1px solid #e8a8a0;padding:8px 12px;border-radius:6px;cursor:pointer;font:600 12px var(--sans,Segoe UI,sans-serif);">Tout supprimer</button>' +
             '<div style="display:flex;gap:8px;">' +
-            '<button id="pwaCMCancel" style="background:#f0ebe3;color:#5a3a1a;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;">Fermer</button>' +
-            '<button id="pwaCMDelete" style="background:#8b4513;color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px Segoe UI,sans-serif;" disabled>Supprimer la selection</button>' +
+            '<button id="pwaCMCancel" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px var(--sans,Segoe UI,sans-serif);">Fermer</button>' +
+            '<button id="pwaCMDelete" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font:600 12px var(--sans,Segoe UI,sans-serif);" disabled>Supprimer la selection</button>' +
             '</div></div></div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
             L.DomEvent.disableClickPropagation(m);
@@ -7452,7 +7491,7 @@
                     var mo = ((b.count || 0) * 0.04).toFixed(b.count > 250 ? 0 : 1);
                     var dt = b.date ? new Date(b.date).toLocaleDateString('fr-FR') +
                         ' ' + new Date(b.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
-                    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid #f4efe7;">' +
+                    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--pan,#f4efe7);">' +
                         '<label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;">' +
                         '<input type="checkbox" class="pwaCMcb" data-id="' + b.id + '">' +
                         '<span style="flex:1;">' +
@@ -7460,7 +7499,7 @@
                         (b.kind === 'context' ? ' <span style="color:#16a085;font-size:10px;">(contexte, preserve au vidage)</span>' : '') +
                         '<br><span style="color:#999;font-size:11px;">' + (b.count || 0) + ' elements · ~' + mo + ' Mo · ' + dt + '</span>' +
                         '</span></label>' +
-                        '<button class="pwaCMfocus" data-id="' + b.id + '" style="flex:none;background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:6px 10px;font:600 11px Segoe UI;cursor:pointer;">Centrer</button>' +
+                        '<button class="pwaCMfocus" data-id="' + b.id + '" style="flex:none;background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;border-radius:6px;padding:6px 10px;font:600 11px Segoe UI;cursor:pointer;">Centrer</button>' +
                         '</div>';
                 }).join('');
                 listEl.querySelectorAll('input.pwaCMcb').forEach(function(cb) {
@@ -7534,7 +7573,7 @@
         };
 
         m.querySelector('#pwaCMWipeAll').onclick = function() {
-            if (!confirm('Tout supprimer : TOUS les caches (tuiles, contexte Corse, photos, donnees). La carte ne sera plus disponible hors-ligne tant qu\'elle n\'est pas rechargee en ligne. Continuer ?')) return;
+            if (!confirm('Tout supprimer: TOUS les caches (tuiles, contexte Corse, photos, donnees). La carte ne sera plus disponible hors-ligne tant qu\'elle n\'est pas rechargee en ligne. Continuer ?')) return;
             clearCache(true).then(function() {
                 _setCorseContextLevel('');
                 // Retirer le contour de zone (localStorage, hors cache)
@@ -7586,7 +7625,7 @@
     function _trkWakeWarn() {
         if (_trkWakeWarned) return;
         _trkWakeWarned = true;
-        showToast('Verrou ecran indisponible : regler le delai de mise en veille du '
+        showToast('Verrou ecran indisponible: regler le delai de mise en veille du '
             + 'telephone sur long/jamais et desactiver l\'economie de batterie '
             + 'pendant l\'enregistrement (sinon verrouillage auto -> GPS suspendu).', 9000);
     }
@@ -7622,7 +7661,7 @@
         try { if (_trkWake) { _trkWake.release(); _trkWake = null; } } catch(_e) {}
     }
     document.addEventListener('visibilitychange', function() {
-        // Le Wake Lock est libere quand la page passe en arriere-plan :
+        // Le Wake Lock est libere quand la page passe en arriere-plan:
         // le re-acquerir au retour si un enregistrement est en cours.
         if (document.visibilityState === 'visible' && _trk && _trk.status === 'recording') {
             _trkAcquireWake();
@@ -7754,7 +7793,7 @@
         _trkHideWidget();
         if (_trkPoly) { try { findLeafletMap().removeLayer(_trkPoly); } catch(_e) {} _trkPoly = null; }
         _trk = null;
-        showToast('Parcours enregistre : ' + _trkFmtDist(saved.distance)
+        showToast('Parcours enregistre: ' + _trkFmtDist(saved.distance)
             + ' en ' + _trkFmtDur(saved.activeMs) + '.', 6000);
         _trkOpenManager(saved.id);
     }
@@ -7780,7 +7819,7 @@
             'position:fixed !important;top:12px !important;left:50% !important;' +
             'transform:translateX(-50%);z-index:100075 !important;' +
             'background:rgba(30,30,30,0.96);color:#fff;border-radius:14px;' +
-            'box-shadow:0 4px 16px rgba(0,0,0,0.35);font:600 12px Segoe UI,sans-serif;' +
+            'box-shadow:0 4px 16px rgba(0,0,0,0.35);font:600 12px var(--sans,Segoe UI,sans-serif);' +
             'padding:8px 12px;display:flex;align-items:center;justify-content:center;' +
             'flex-wrap:wrap;gap:8px 10px;max-width:94vw;box-sizing:border-box;';
         (document.body || document.documentElement).appendChild(w);
@@ -7818,7 +7857,7 @@
         };
     }
 
-    // ===== Mode veille eco : ecran quasi-noir (OLED ~= eteint) =====
+    // ===== Mode veille eco: ecran quasi-noir (OLED ~= eteint) =====
     // L'enregistrement continue dessous (watch + Wake Lock inchanges). Sur
     // ecran OLED/AMOLED le noir consomme quasi rien. Tap = retour a la carte.
     var _trkEcoEl = null;
@@ -7830,7 +7869,7 @@
             'position:fixed !important;inset:0 !important;z-index:2000000 !important;' +
             'background:#000 !important;color:#1c1c1c;' +
             'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-            'gap:18px;font:600 13px Segoe UI,sans-serif;-webkit-tap-highlight-color:transparent;' +
+            'gap:18px;font:600 13px var(--sans,Segoe UI,sans-serif);-webkit-tap-highlight-color:transparent;' +
             'user-select:none;text-align:center;';
         _trkEcoEl.innerHTML =
             '<div id="pwaTrkEcoTxt" style="color:#222;font-size:15px;line-height:2;"></div>' +
@@ -7845,7 +7884,7 @@
             'align-items:center;justify-content:center;font:700 18px Segoe UI;">&#9654;</div>' +
             '</div>';
         // Sortie par GLISSEMENT du curseur d'un bord a l'autre (deverrouillage).
-        // Doit DEMARRER sur le curseur + glisser en continu jusqu'au bout :
+        // Doit DEMARRER sur le curseur + glisser en continu jusqu'au bout:
         // un effleurement / contact en poche ne peut pas le declencher.
         var _drag = false, _grab = 0;
         function _slideEls() {
@@ -7903,7 +7942,7 @@
         _trkEcoEl.addEventListener('mouseup', _pEnd);
         _trkEcoEl.addEventListener('mouseleave', _pEnd);
         (document.body || document.documentElement).appendChild(_trkEcoEl);
-        // Plein ecran : masque la barre d'URL / chrome du navigateur.
+        // Plein ecran: masque la barre d'URL / chrome du navigateur.
         // Le clic sur "Veille eco" est un geste utilisateur -> autorise.
         try {
             var rfs = _trkEcoEl.requestFullscreen || _trkEcoEl.webkitRequestFullscreen
@@ -7912,7 +7951,7 @@
         } catch(_e) {}
         _trkAcquireWake();           // s'assurer que l'ecran reste alloue
         _trkUpdateEco();
-        showToast('Veille eco : ecran noir, glisser le curseur pour revenir.', 4000);
+        showToast('Veille eco: ecran noir, glisser le curseur pour revenir.', 4000);
     }
     function _trkExitEco() {
         try {
@@ -8001,7 +8040,7 @@
     // --- Partage du parcours sur la carte collaborative (Supabase) ---
     // Le parcours devient un custom_features de type 'polyline' (LineString),
     // visible par tous les utilisateurs de cette carte. Passe par le wrapper
-    // fetch : hors-ligne -> mis en file et synchronise au retour reseau.
+    // fetch: hors-ligne -> mis en file et synchronise au retour reseau.
     function _trkSimplify(points, maxN) {
         if (!points || points.length <= maxN) return points || [];
         var step = Math.ceil(points.length / maxN);
@@ -8069,16 +8108,16 @@
                     setTimeout(function() { window.loadCustomFeatures(); }, 600);
                 }
             } else if (r && r.status === 202) {
-                // wrapper offline : mis en file
+                // wrapper offline: mis en file
                 track.shared = true;
                 dbTrackPut(track);
-                showToast('Hors-ligne : parcours mis en file, partage au retour reseau.', 6000);
+                showToast('Hors-ligne: parcours mis en file, partage au retour reseau.', 6000);
             } else {
-                showToast('Echec du partage (HTTP ' + (r ? r.status : '?') + ').', 6000);
+                showToast('Echec du partage (HTTP ' + (r ? r.status: '?') + ').', 6000);
             }
             if (typeof done === 'function') done();
         }).catch(function(e) {
-            showToast('Echec du partage : ' + (e && e.message ? e.message : 'erreur reseau'), 6000);
+            showToast('Echec du partage: ' + (e && e.message ? e.message: 'erreur reseau'), 6000);
         });
     }
 
@@ -8089,17 +8128,17 @@
         var m = document.createElement('div');
         m.id = 'pwaTrkMgr';
         m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100060;' +
-            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+            'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-        (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+        (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
         m.innerHTML =
             '<div style="background:#fff;border-radius:12px;max-width:540px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:20px 22px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-            '<h2 style="margin:0;font-size:17px;color:#5a3a1a;">Mes parcours</h2>' +
-            '<button id="pwaTrkClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+            '<h2 style="margin:0;font-size:17px;color:var(--ink2,#5a3a1a);">Mes parcours</h2>' +
+            '<button id="pwaTrkClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
             '</div>' +
-            '<button id="pwaTrkNew" style="background:#8b4513;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI;margin-bottom:12px;">Demarrer un nouveau parcours</button>' +
-            '<div id="pwaTrkList" style="flex:1;overflow-y:auto;border:1px solid #f0ebe3;border-radius:6px;padding:6px;min-height:120px;max-height:55vh;font-size:13px;">Chargement...</div>' +
+            '<button id="pwaTrkNew" style="background:var(--prim,#8b4513);color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font:600 13px Segoe UI;margin-bottom:12px;">Demarrer un nouveau parcours</button>' +
+            '<div id="pwaTrkList" style="flex:1;overflow-y:auto;border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:6px;min-height:120px;max-height:55vh;font-size:13px;">Chargement...</div>' +
             '</div>';
         if (typeof L !== 'undefined' && L.DomEvent) {
             L.DomEvent.disableClickPropagation(m);
@@ -8124,17 +8163,17 @@
                     var hl = (t.id === highlightId) ? 'background:#fdf6ec;' : '';
                     var st = t.status !== 'done' ? ' <span style="color:#e67e22;">(interrompu)</span>' : '';
                     if (t.shared) st += ' <span style="color:#16a085;">(partage)</span>';
-                    return '<div data-id="' + t.id + '" style="border-bottom:1px solid #f4efe7;padding:8px 6px;' + hl + '">' +
-                        '<div style="font-weight:600;color:#5a3a1a;">' + escapeHtml(t.name) + st + '</div>' +
+                    return '<div data-id="' + t.id + '" style="border-bottom:1px solid var(--pan,#f4efe7);padding:8px 6px;' + hl + '">' +
+                        '<div style="font-weight:600;color:var(--ink2,#5a3a1a);">' + escapeHtml(t.name) + st + '</div>' +
                         '<div style="color:#999;font-size:11px;margin:2px 0 6px;">' +
                         _trkFmtDist(t.distance || 0) + ' · ' + _trkFmtDur(t.activeMs || 0) +
-                        ' · ' + (t.points ? t.points.length : 0) + ' pts' +
+                        ' · ' + (t.points ? t.points.length: 0) + ' pts' +
                         (t.gain ? ' · D+ ' + Math.round(t.gain) + ' m' : '') + '</div>' +
                         '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                        '<button class="pwaTrkView" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Voir sur la carte</button>' +
-                        '<button class="pwaTrkRen" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
-                        '<button class="pwaTrkGpx" data-id="' + t.id + '" style="background:#f0ebe3;color:#5a3a1a;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Export GPX</button>' +
-                        '<button class="pwaTrkShare" data-id="' + t.id + '" style="background:#8b4513;color:#fff;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Partager</button>' +
+                        '<button class="pwaTrkView" data-id="' + t.id + '" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Voir sur la carte</button>' +
+                        '<button class="pwaTrkRen" data-id="' + t.id + '" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Renommer</button>' +
+                        '<button class="pwaTrkGpx" data-id="' + t.id + '" style="background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Export GPX</button>' +
+                        '<button class="pwaTrkShare" data-id="' + t.id + '" style="background:var(--prim,#8b4513);color:#fff;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Partager</button>' +
                         (t.status !== 'done' ? '<button class="pwaTrkResumeT" data-id="' + t.id + '" style="background:#27ae60;color:#fff;border:none;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Reprendre</button>' : '') +
                         '<button class="pwaTrkDel" data-id="' + t.id + '" style="background:#fff;color:#c0392b;border:1px solid #e8a8a0;border-radius:6px;padding:5px 9px;font:600 11px Segoe UI;cursor:pointer;">Supprimer</button>' +
                         '</div></div>';
@@ -8158,7 +8197,7 @@
                     b.onclick = function() {
                         dbTrackGet(b.dataset.id).then(function(t) {
                             if (!t) return;
-                            var nn = prompt('Nom du parcours :', t.name);
+                            var nn = prompt('Nom du parcours:', t.name);
                             if (nn && nn.trim()) {
                                 t.name = nn.trim();
                                 dbTrackPut(t).then(refresh);
@@ -8198,7 +8237,7 @@
             setTimeout(function() {
                 var go = confirm('Un parcours interrompu a ete trouve ('
                     + _trkFmtDist(live.distance || 0) + ', '
-                    + (live.points ? live.points.length : 0) + ' points).\n\n'
+                    + (live.points ? live.points.length: 0) + ' points).\n\n'
                     + 'OK = reprendre l\'enregistrement\n'
                     + 'Annuler = le conserver tel quel (consultable dans Mes parcours)');
                 if (go) {
@@ -8239,7 +8278,7 @@
         );
     }
     // A — Publie un point "Position de ..." sur la carte collaborative.
-    // Passe par le wrapper fetch -> hors-ligne : mis en file + marqueur orange.
+    // Passe par le wrapper fetch -> hors-ligne: mis en file + marqueur orange.
     function _shareMyPositionOnMap() {
         var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
         if (!SU || !SK) {
@@ -8279,12 +8318,12 @@
                         setTimeout(function() { window.loadCustomFeatures(); }, 600);
                     }
                 } else if (r && r.status === 202) {
-                    showToast('Hors-ligne : position mise en file, publiee au retour reseau.', 6000);
+                    showToast('Hors-ligne: position mise en file, publiee au retour reseau.', 6000);
                 } else {
-                    showToast('Echec de la publication (HTTP ' + (r ? r.status : '?') + ').', 6000);
+                    showToast('Echec de la publication (HTTP ' + (r ? r.status: '?') + ').', 6000);
                 }
             }).catch(function(e) {
-                showToast('Echec : ' + (e && e.message ? e.message : 'erreur reseau'), 6000);
+                showToast('Echec: ' + (e && e.message ? e.message: 'erreur reseau'), 6000);
             });
         });
     }
@@ -8294,10 +8333,10 @@
             var lat = c.latitude.toFixed(6), lon = c.longitude.toFixed(6);
             var mapsUrl = 'https://www.google.com/maps?q=' + lat + ',' + lon;
             var carteUrl = location.href.split('#')[0].split('?')[0] + '#' + lat + ',' + lon;
-            var txt = 'Ma position : ' + lat + ', ' + lon
+            var txt = 'Ma position: ' + lat + ', ' + lon
                 + ' (precision ~' + Math.round(c.accuracy || 0) + ' m)'
-                + '\nCarte : ' + carteUrl;
-            // navigator.share exige un geste utilisateur RECENT : impossible
+                + '\nCarte: ' + carteUrl;
+            // navigator.share exige un geste utilisateur RECENT: impossible
             // de l'appeler directement apres le fix GPS asynchrone (activation
             // expiree -> rejet silencieux). On affiche un panneau ; le tap sur
             // "Partager" devient un geste valide.
@@ -8306,21 +8345,21 @@
             var m = document.createElement('div');
             m.id = 'pwaPosShareModal';
             m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100070;' +
-                'display:flex;align-items:center;justify-content:center;padding:16px;font-family:Segoe UI,sans-serif;';
+                'display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--sans,Segoe UI,sans-serif);';
             var fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement;
-            (fsEl && !fsEl.contains(document.body) ? fsEl : document.body).appendChild(m);
+            (fsEl && !fsEl.contains(document.body) ? fsEl: document.body).appendChild(m);
             m.innerHTML =
                 '<div style="background:#fff;border-radius:12px;max-width:420px;width:100%;padding:20px 22px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-                '<h2 style="margin:0;font-size:16px;color:#5a3a1a;">Ma position</h2>' +
-                '<button id="pwaPSClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:#8b7355;">&times;</button>' +
+                '<h2 style="margin:0;font-size:16px;color:var(--ink2,#5a3a1a);">Ma position</h2>' +
+                '<button id="pwaPSClose" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink3,#8b7355);">&times;</button>' +
                 '</div>' +
-                '<div style="font-size:12px;color:#5a3a1a;background:#faf7f2;border:1px solid #f0ebe3;border-radius:6px;padding:8px 10px;margin-bottom:12px;word-break:break-all;line-height:1.5;">'
+                '<div style="font-size:12px;color:var(--ink2,#5a3a1a);background:var(--pan,#faf7f2);border:1px solid var(--tagbg,#f0ebe3);border-radius:6px;padding:8px 10px;margin-bottom:12px;word-break:break-all;line-height:1.5;">'
                 + lat + ', ' + lon + ' (~' + Math.round(c.accuracy || 0) + ' m)<br>'
                 + '<a href="' + mapsUrl + '" target="_blank" rel="noopener" style="color:#1a73e8;">Ouvrir dans Maps</a></div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-                (navigator.share ? '<button id="pwaPSshare" style="flex:1;background:#8b4513;color:#fff;border:none;border-radius:8px;padding:10px;font:600 13px Segoe UI;cursor:pointer;">Partager</button>' : '') +
-                '<button id="pwaPScopy" style="flex:1;background:#f0ebe3;color:#5a3a1a;border:none;border-radius:8px;padding:10px;font:600 13px Segoe UI;cursor:pointer;">Copier</button>' +
+                (navigator.share ? '<button id="pwaPSshare" style="flex:1;background:var(--prim,#8b4513);color:#fff;border:none;border-radius:8px;padding:10px;font:600 13px Segoe UI;cursor:pointer;">Partager</button>' : '') +
+                '<button id="pwaPScopy" style="flex:1;background:var(--tagbg,#f0ebe3);color:var(--ink2,#5a3a1a);border:none;border-radius:8px;padding:10px;font:600 13px Segoe UI;cursor:pointer;">Copier</button>' +
                 '</div></div>';
             function close() { m.remove(); }
             m.querySelector('#pwaPSClose').onclick = close;
@@ -8331,7 +8370,7 @@
                     .then(close)
                     .catch(function(err) {
                         if (err && err.name === 'AbortError') return;  // annule par l'utilisateur
-                        showToast('Partage indisponible : utiliser Copier.', 5000);
+                        showToast('Partage indisponible: utiliser Copier.', 5000);
                     });
             };
             m.querySelector('#pwaPScopy').onclick = function() {
@@ -8339,9 +8378,9 @@
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText(full).then(function() {
                         showToast('Position copiee.', 4000); close();
-                    }).catch(function() { prompt('Copier la position :', full); });
+                    }).catch(function() { prompt('Copier la position:', full); });
                 } else {
-                    prompt('Copier la position :', full);
+                    prompt('Copier la position:', full);
                 }
             };
         });
@@ -8395,7 +8434,7 @@
             updated_at: new Date(now).toISOString(),
             expires_at: new Date(now + LIVE_TTL_MS).toISOString()
         }];
-        // _origFetch : ne PAS passer par la file offline (positions perimees
+        // _origFetch: ne PAS passer par la file offline (positions perimees
         // inutiles). on_conflict=id + merge-duplicates = upsert.
         _origFetch(cr.u + '/rest/v1/live_positions?on_conflict=id', {
             method: 'POST',
@@ -8410,7 +8449,7 @@
                 r.text().then(function(t) {
                     if (/live_positions/.test(t) && /does not exist|relation/.test(t)) {
                         _liveTableMissing = true;
-                        showToast('Partage live : table absente. Executer sql/live_positions.sql dans Supabase.', 8000);
+                        showToast('Partage live: table absente. Executer sql/live_positions.sql dans Supabase.', 8000);
                         _liveStop(true);
                     }
                 }).catch(function(){});
@@ -8424,7 +8463,7 @@
         var nm = _liveName();
         if (!nm) {
             nm = (window.CONTRIBUTEUR || window.contributeurActuel || '').trim();
-            nm = prompt('Nom affiche aux autres pour le partage en direct :', nm || '');
+            nm = prompt('Nom affiche aux autres pour le partage en direct:', nm || '');
             if (nm == null) return;          // annule
             nm = (nm || 'Anonyme').trim().slice(0, 40);
             try { localStorage.setItem('pwaLiveName', nm); } catch(_e) {}
@@ -8465,7 +8504,7 @@
         _liveUpdateIndicator();
         if (!silent) showToast('Partage en direct arrete.', 4000);
     }
-    // Best-effort : retirer ma ligne a la fermeture (sinon le TTL s'en charge)
+    // Best-effort: retirer ma ligne a la fermeture (sinon le TTL s'en charge)
     window.addEventListener('pagehide', function() { if (_liveOn) _liveStop(true); });
 
     function _liveEnsureLayer() {
@@ -8543,7 +8582,7 @@
         if (!pb) return;
         var lbl = document.getElementById('pwaPosLbl');
         var dot = document.getElementById('pwaPosDot');
-        // Live actif : libelle "Position (live)" + bouton bleu (comme avant).
+        // Live actif: libelle "Position (live)" + bouton bleu (comme avant).
         if (lbl) lbl.textContent = _liveOn ? 'Position (live)' : 'Position';
         if (dot) { dot.style.display = 'none'; dot.style.animation = ''; }
         pb.style.setProperty('background',
@@ -8562,18 +8601,18 @@
     // car le module GPS doit s'allumer et acquerir un fix satellite. Si la
     // permission est deja accordee, on declenche un fix silencieux au load
     // pour qu'il soit deja disponible quand l'utilisateur clique sur le bouton
-    // de geolocalisation. Resultat : reponse quasi-instantanee au 1er click.
+    // de geolocalisation. Resultat: reponse quasi-instantanee au 1er click.
     if (navigator.geolocation && navigator.permissions) {
         navigator.permissions.query({ name: 'geolocation' })
             .then(function(result) {
                 if (result.state === 'granted') {
-                    // Permission deja accordee : warm-up silencieux apres 3s
+                    // Permission deja accordee: warm-up silencieux apres 3s
                     // (laisse la carte se charger d'abord pour ne pas competir
                     // sur les ressources)
                     setTimeout(function() {
                         navigator.geolocation.getCurrentPosition(
                             function() { console.log('[GPS] Warm-up reussi'); },
-                            function(e) { console.log('[GPS] Warm-up echec :', e.message); },
+                            function(e) { console.log('[GPS] Warm-up echec:', e.message); },
                             { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
                         );
                     }, 3000);
@@ -8599,7 +8638,7 @@
                 'transform:translateX(-50%);z-index:100070 !important;' +
                 'display:flex;align-items:center;gap:10px;padding:9px 16px;' +
                 'background:rgba(40,40,40,0.95);color:#fff;border-radius:22px;' +
-                'box-shadow:0 4px 14px rgba(0,0,0,0.28);font:600 12px Segoe UI,sans-serif;' +
+                'box-shadow:0 4px 14px rgba(0,0,0,0.28);font:600 12px var(--sans,Segoe UI,sans-serif);' +
                 'max-width:90vw;';
             (document.body || document.documentElement).appendChild(_geoIndEl);
         }
@@ -8644,16 +8683,16 @@
         _geoRetryDone = false;
         var offline = (typeof isAppOffline === 'function') ? isAppOffline() : !navigator.onLine;
         _geoShowIndicator(offline
-            ? 'Acquisition GPS… (hors-ligne : peut prendre jusqu\'a 1-2 min, ciel degage)'
+            ? 'Acquisition GPS… (hors-ligne: peut prendre jusqu\'a 1-2 min, ciel degage)'
             : 'Acquisition GPS en cours…');
         if (_geoHardTimer) clearTimeout(_geoHardTimer);
-        // Cap dur : si rien apres 2min30, on abandonne avec un message
+        // Cap dur: si rien apres 2min30, on abandonne avec un message
         _geoHardTimer = setTimeout(function() {
             _geoFinalMessage('Position GPS introuvable. Va a ciel degage et reessaie.');
         }, 150000);
     }
 
-    // Repli : le LocateControl a echoue (timeout 8s trop court). On tente un
+    // Repli: le LocateControl a echoue (timeout 8s trop court). On tente un
     // fix long nous-memes puis on re-clique le bouton (position chaude).
     function _geoLongRetry(locateAnchor) {
         if (_geoRetryDone || !navigator.geolocation) return;
@@ -8665,11 +8704,11 @@
         navigator.geolocation.getCurrentPosition(
             function() {
                 // Position desormais chaude (cachee par l'OS). Re-declencher le
-                // bouton : le LocateControl la recupere via maximumAge -> instant.
+                // bouton: le LocateControl la recupere via maximumAge -> instant.
                 if (locateAnchor) {
                     try { locateAnchor.click(); } catch(_e) {}
                 }
-                // Filet : si le plugin ne reagit pas vite, on hide quand meme apres 6s
+                // Filet: si le plugin ne reagit pas vite, on hide quand meme apres 6s
                 setTimeout(function() {
                     if (_geoIndEl) _geoHideIndicator();
                 }, 6000);
@@ -8694,7 +8733,7 @@
         if (!map || !ctl) return;
         var anchor = ctl.querySelector('a') || ctl;
 
-        // Clic utilisateur : si ca DEMARRE une acquisition (le plugin ajoute la
+        // Clic utilisateur: si ca DEMARRE une acquisition (le plugin ajoute la
         // classe 'requesting'/'active' juste apres), afficher l'indicateur.
         anchor.addEventListener('click', function() {
             setTimeout(function() {
@@ -8705,10 +8744,10 @@
             }, 60);
         });
 
-        // Succes : le plugin a trouve la position
+        // Succes: le plugin a trouve la position
         map.on('locationfound', function() { _geoHideIndicator(); });
 
-        // Echec : timeout 8s du plugin trop court -> repli fix long
+        // Echec: timeout 8s du plugin trop court -> repli fix long
         map.on('locationerror', function(e) {
             if (!_geoIndEl) return;  // pas d'acquisition en cours, ignorer
             if (!_geoRetryDone) {
@@ -8757,7 +8796,7 @@
     //  - mobile + sidebar ouverte (bottom-sheet) : remonter le badge au-dessus
     //  - desktop + sidebar ouverte (370px a gauche) : decaler le badge a droite
     //    de la sidebar (le badge est en bas-GAUCHE, donc masque sinon)
-    //  - sinon : position par defaut (bas 10 / gauche 10)
+    //  - sinon: position par defaut (bas 10 / gauche 10)
     function _watchSidebarForBadge(attempt) {
         attempt = attempt || 0;
         var sidebar = document.getElementById('searchContainer');
@@ -8783,7 +8822,7 @@
             }
             badge.style.setProperty('bottom', bottom + 'px', 'important');
             badge.style.setProperty('left', left + 'px', 'important');
-            // Bouton Position : juste au-dessus du badge (~36 px plus haut)
+            // Bouton Position: juste au-dessus du badge (~36 px plus haut)
             if (pb) {
                 pb.style.setProperty('bottom', (bottom + 36) + 'px', 'important');
                 pb.style.setProperty('left', left + 'px', 'important');
@@ -8807,10 +8846,10 @@
     // ===== Bootstrap + auto-sync robuste =====
     // L'event 'online' ne tire que si la page est OUVERTE pendant la transition
     // offline -> online. Insuffisant car l'utilisateur ferme souvent l'app
-    // entre la modif offline et le retour reseau. On ajoute donc :
+    // entre la modif offline et le retour reseau. On ajoute donc:
     //   - replay au load si queue non vide
     //   - replay au focus (utilisateur revient sur l'onglet)
-    //   - replay au visibilitychange (Android : passe en avant-plan)
+    //   - replay au visibilitychange (Android: passe en avant-plan)
     //   - polling toutes les 30s tant que queue non vide
     //   - register Background Sync (SW prend le relais meme app fermee)
     var _queuePollInterval = null;
@@ -8847,7 +8886,7 @@
             _requestPersistentStorage(false);
             // 0. Mettre en cache la page courante (HTML) si en ligne, pour
             //    qu'elle soit lancable hors-ligne. Le 1er chargement n'est PAS
-            //    intercepte par le SW -> sans ca : "Offline" au lancement.
+            //    intercepte par le SW -> sans ca: "Offline" au lancement.
             try {
                 if (navigator.onLine && navigator.serviceWorker && navigator.serviceWorker.controller) {
                     navigator.serviceWorker.controller.postMessage({
@@ -8865,11 +8904,11 @@
             //       (l'utilisateur peut la masquer via le menu si besoin)
             try {
                 if (getStoredZone() && !_zoneHiddenByUser()) {
-                    showPrecachedZoneOnMap(true);  // persistent=true : pas de fitBounds
+                    showPrecachedZoneOnMap(true);  // persistent=true: pas de fitBounds
                 }
             } catch(_e) {}
             // 1. Restaurer les markers orange "en attente" depuis la queue IndexedDB
-            //    (avant le replay : si on est online, le replay videra la queue et
+            //    (avant le replay: si on est online, le replay videra la queue et
             //    les markers seront remplaces par les vraies features ; si on est
             //    offline, ils resteront visibles jusqu'au retour reseau)
             restoreOfflineMarkersFromQueue();
@@ -8886,11 +8925,11 @@
     window.addEventListener('online', function() {
         updateStatusBadge();
         setTimeout(autoReplay, 500);
-        _applyAdaptiveNativeZoom();  // en ligne : detail reseau complet
+        _applyAdaptiveNativeZoom();  // en ligne: detail reseau complet
     });
     window.addEventListener('offline', function() {
         updateStatusBadge();
-        _applyAdaptiveNativeZoom();  // hors-ligne : cap au zoom cache (upscale)
+        _applyAdaptiveNativeZoom();  // hors-ligne: cap au zoom cache (upscale)
     });
     window.addEventListener('focus', autoReplay);
     document.addEventListener('visibilitychange', function() {
@@ -8902,7 +8941,7 @@
         navigator.serviceWorker.addEventListener('message', function(e) {
             var d = e.data || {};
             if (d.type === 'QUEUE_SYNCED') {
-                console.log('[PWA Sync] BG terminee : ' + d.processed + ' traitee(s), ' +
+                console.log('[PWA Sync] BG terminee: ' + d.processed + ' traitee(s), ' +
                             d.dropped + ' droppee(s), ' + d.remaining + ' restante(s)');
                 updateQueueBadge();
                 if (d.processed > 0) {
@@ -8946,21 +8985,21 @@
         if (isMobile) {
             modal.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:40vh;'
                 + 'background:rgba(255,255,255,0.96);border-top-left-radius:14px;border-top-right-radius:14px;'
-                + 'box-shadow:0 -3px 18px rgba(0,0,0,0.25);z-index:10100;font-family:Segoe UI,sans-serif;'
+                + 'box-shadow:0 -3px 18px rgba(0,0,0,0.25);z-index:10100;font-family:var(--sans,Segoe UI,sans-serif);'
                 + 'font-size:13px;display:flex;flex-direction:column;overflow:hidden;';
         } else {
             var top = 100, right = 10, mb = document.getElementById('rasterMgrBtn');
             if (mb) { var br = mb.getBoundingClientRect(); top = br.bottom + 6; right = window.innerWidth - br.right; }
             modal.style.cssText = 'position:fixed;top:' + top + 'px;right:' + right + 'px;width:300px;max-height:80vh;'
                 + 'background:white;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.15);z-index:10100;'
-                + 'font-family:Segoe UI,sans-serif;font-size:13px;overflow:hidden;display:flex;flex-direction:column;';
+                + 'font-family:var(--sans,Segoe UI,sans-serif);font-size:13px;overflow:hidden;display:flex;flex-direction:column;';
         }
         var header = document.createElement('div');
-        header.style.cssText = 'padding:10px 16px;font-size:10px;color:#8b7355;text-transform:uppercase;'
+        header.style.cssText = 'padding:10px 16px;font-size:10px;color:var(--ink3,#8b7355);text-transform:uppercase;'
             + 'letter-spacing:0.6px;font-weight:700;display:flex;justify-content:space-between;align-items:center;'
-            + 'border-bottom:1px solid #f0ebe3;background:#faf7f2;';
+            + 'border-bottom:1px solid var(--tagbg,#f0ebe3);background:var(--pan,#faf7f2);';
         header.innerHTML = '<span>Rasters (' + layers.length + ')</span>'
-            + '<span id="rasterMgrClose" style="cursor:pointer;font-size:20px;color:#8b7355;padding:0 8px;line-height:1">&times;</span>';
+            + '<span id="rasterMgrClose" style="cursor:pointer;font-size:20px;color:var(--ink3,#8b7355);padding:0 8px;line-height:1">&times;</span>';
         var body = document.createElement('div');
         body.style.cssText = 'padding:10px;overflow-y:auto;flex:1;';
         modal.appendChild(header); modal.appendChild(body);
@@ -8974,7 +9013,7 @@
             layer._rasterMeta = layer._rasterMeta || {};
             layer._rasterMeta.blend_mode = mode;
         }
-        // Ordre d'empilement = ordre de window._rasterLayers : 1er de la liste = AU-DESSUS.
+        // Ordre d'empilement = ordre de window._rasterLayers: 1er de la liste = AU-DESSUS.
         function assignZ() {
             var arr = window._rasterLayers || [];
             var n = arr.length;
@@ -9000,16 +9039,16 @@
                 var groupLayers = grouped[g];
                 var head = document.createElement('div');
                 head.style.cssText = 'display:flex;align-items:center;gap:7px;margin:4px 2px 6px;'
-                    + 'border-bottom:1px solid #e5ddd0;padding-bottom:4px;';
+                    + 'border-bottom:1px solid var(--bd2,#e5ddd0);padding-bottom:4px;';
                 var caret = document.createElement('span');
                 caret.textContent = '▾';
-                caret.style.cssText = 'cursor:pointer;color:#8b7355;font-size:11px;width:11px;text-align:center;user-select:none;';
+                caret.style.cssText = 'cursor:pointer;color:var(--ink3,#8b7355);font-size:11px;width:11px;text-align:center;user-select:none;';
                 var pcb = document.createElement('input');
                 pcb.type = 'checkbox';
                 pcb.style.cssText = 'cursor:pointer;margin:0';
                 var lab = document.createElement('span');
                 lab.textContent = g + ' (' + groupLayers.length + ')';
-                lab.style.cssText = 'font-size:10px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;'
+                lab.style.cssText = 'font-size:10px;color:var(--ink3,#8b7355);text-transform:uppercase;letter-spacing:0.5px;'
                     + 'font-weight:700;cursor:pointer;flex:1';
                 head.appendChild(caret); head.appendChild(pcb); head.appendChild(lab);
                 body.appendChild(head);
@@ -9050,18 +9089,18 @@
         function card(layer, idx, n, container) {
             var m = layer._rasterMeta || {};
             var visible = leafletMap.hasLayer(layer);
-            var op = layer.options.opacity != null ? layer.options.opacity : 0.85;
+            var op = layer.options.opacity != null ? layer.options.opacity: 0.85;
             var blend = m.blend_mode || 'normal';
             var row = document.createElement('div');
-            row.style.cssText = 'background:#faf7f2;border:1px solid ' + (visible ? '#8b4513' : '#f0ebe3')
+            row.style.cssText = 'background:var(--pan,#faf7f2);border:1px solid ' + (visible ? '#8b4513' : '#f0ebe3')
                 + ';border-radius:6px;padding:9px 10px;margin-bottom:7px;';
             row.innerHTML =
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">'
-                + '<div style="font-weight:600;color:#5a3a1a;font-size:12px">' + (m.name || m.safe_name || 'raster') + '</div>'
+                + '<div style="font-weight:600;color:var(--ink2,#5a3a1a);font-size:12px">' + (m.name || m.safe_name || 'raster') + '</div>'
                 + '<span style="display:flex;align-items:center;gap:5px">'
-                + '<button class="dynRUp" title="Monter (au-dessus)"' + (idx === 0 ? ' disabled' : '') + ' style="border:1px solid #c0a080;background:' + (idx === 0 ? '#eee' : '#fff') + ';border-radius:4px;cursor:' + (idx === 0 ? 'default' : 'pointer') + ';padding:1px 7px;color:#5a3a1a">&#9650;</button>'
-                + '<button class="dynRDown" title="Descendre (en-dessous)"' + (idx === n - 1 ? ' disabled' : '') + ' style="border:1px solid #c0a080;background:' + (idx === n - 1 ? '#eee' : '#fff') + ';border-radius:4px;cursor:' + (idx === n - 1 ? 'default' : 'pointer') + ';padding:1px 7px;color:#5a3a1a">&#9660;</button>'
-                + '<label style="cursor:pointer;font-size:11px;color:#8b7355"><input type="checkbox" class="dynRVis"' + (visible ? ' checked' : '') + '> Vis.</label>'
+                + '<button class="dynRUp" title="Monter (au-dessus)"' + (idx === 0 ? ' disabled' : '') + ' style="border:1px solid #c0a080;background:' + (idx === 0 ? '#eee' : '#fff') + ';border-radius:4px;cursor:' + (idx === 0 ? 'default' : 'pointer') + ';padding:1px 7px;color:var(--ink2,#5a3a1a)">&#9650;</button>'
+                + '<button class="dynRDown" title="Descendre (en-dessous)"' + (idx === n - 1 ? ' disabled' : '') + ' style="border:1px solid #c0a080;background:' + (idx === n - 1 ? '#eee' : '#fff') + ';border-radius:4px;cursor:' + (idx === n - 1 ? 'default' : 'pointer') + ';padding:1px 7px;color:var(--ink2,#5a3a1a)">&#9660;</button>'
+                + '<label style="cursor:pointer;font-size:11px;color:var(--ink3,#8b7355)"><input type="checkbox" class="dynRVis"' + (visible ? ' checked' : '') + '> Vis.</label>'
                 + '</span>'
                 + '</div>'
                 + '<div style="display:flex;gap:8px;align-items:center;font-size:11px;color:#666">'
@@ -9071,7 +9110,7 @@
                 + ['normal', 'multiply', 'darken', 'screen', 'overlay', 'lighten'].map(function(b) {
                     return '<option value="' + b + '"' + (b === blend ? ' selected' : '') + '>' + b + '</option>';
                 }).join('') + '</select>'
-                + '<button class="dynRCenter" title="Centrer" style="border:1px solid #c0a080;background:#fff;border-radius:4px;cursor:pointer;padding:3px 7px;color:#5a3a1a">&#9678;</button>'
+                + '<button class="dynRCenter" title="Centrer" style="border:1px solid #c0a080;background:#fff;border-radius:4px;cursor:pointer;padding:3px 7px;color:var(--ink2,#5a3a1a)">&#9678;</button>'
                 + '</div>';
             (container || body).appendChild(row);
             row.querySelector('.dynRVis').onchange = function(e) {
@@ -9146,7 +9185,7 @@
     })();
 
     // ===== Rasters attaches a un PROJET (overlay) =====
-    // DECOUPLE de la liste de projets de la carte : on charge TOUS les rasters
+    // DECOUPLE de la liste de projets de la carte: on charge TOUS les rasters
     // de projet (lecture publique RLS) et on affiche ceux dont l'emprise recoupe
     // la carte. Un overlay apparait donc sur TOUTE carte couvrant sa zone, meme
     // si elle ne liste pas son projet dans PROJETS_DISPONIBLES (l'ancien filtre
@@ -9222,7 +9261,7 @@
         // tout puis on SCOPE aux projets de la whitelist de CETTE carte
         // (PROJETS_DISPONIBLES) : un raster de projet n'apparait plus sur une
         // carte qui ne montre pas ce projet. L'emprise (in-view) filtre ensuite.
-        // Fallback : whitelist inconnue -> comportement historique (tout par emprise).
+        // Fallback: whitelist inconnue -> comportement historique (tout par emprise).
         fetch(SU + '/rest/v1/projet_rasters?select=*&order=ordre', {
             headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
         }).then(function(r) { return r.ok ? r.json() : []; }).then(function(rows) {
@@ -9238,7 +9277,7 @@
             if (!rows.length) return;
             window._projetRasterRows = rows;
             _applyProjetRasters(map, rows);
-            // Re-evalue a chaque deplacement : un overlay hors vue initiale
+            // Re-evalue a chaque deplacement: un overlay hors vue initiale
             // s'ajoute des qu'on navigue sur sa zone (dedoublonne via les cles).
             if (!map._projetRastersHooked) {
                 map._projetRastersHooked = true;
@@ -9332,7 +9371,7 @@
         });
     }
 
-    /* Formulaire d'EDITION : #editPhotoInput1/2 dans une zone .edit-photo-empty */
+    /* Formulaire d'EDITION: #editPhotoInput1/2 dans une zone .edit-photo-empty */
     function patchEdit() {
         ['editPhotoInput1', 'editPhotoInput2'].forEach(function (id) {
             var orig = document.getElementById(id);
@@ -9486,9 +9525,9 @@
         window._pwaCompressPatched = true;
 
         window.compressImage = function (file) {
-            var MAXW = (typeof PHOTO_MAX_WIDTH !== 'undefined') ? PHOTO_MAX_WIDTH : 1200;
-            var MAXH = (typeof PHOTO_MAX_HEIGHT !== 'undefined') ? PHOTO_MAX_HEIGHT : 1200;
-            var Q = (typeof PHOTO_QUALITY !== 'undefined') ? PHOTO_QUALITY : 0.75;
+            var MAXW = (typeof PHOTO_MAX_WIDTH !== 'undefined') ? PHOTO_MAX_WIDTH: 1200;
+            var MAXH = (typeof PHOTO_MAX_HEIGHT !== 'undefined') ? PHOTO_MAX_HEIGHT: 1200;
+            var Q = (typeof PHOTO_QUALITY !== 'undefined') ? PHOTO_QUALITY: 0.75;
 
             function canvasToBlob(c) {
                 return new Promise(function (resolve) {
@@ -9553,7 +9592,7 @@
    Fichiers, mode PWA autonome) -> alerte "selectionnez une image" et la
    photo n'est jamais enregistree. Meme accepte, un .heic n'est pas
    decodable par tous les chemins.
-   Correctif sans regeneration : on intercepte le `change` des inputs photo
+   Correctif sans regeneration: on intercepte le `change` des inputs photo
    EN PHASE DE CAPTURE (sur document, donc AVANT les handlers baked). Si le
    fichier est HEIC/HEIF ou de type inconnu, on le transcode en JPEG via
    createImageBitmap (decodeur systeme iOS ; repli <img>), on reinjecte le
@@ -9667,7 +9706,7 @@
             try {
                 setInputFile(inp, jpg);
             } catch (err) {
-                /* DataTransfer indisponible : on ne peut pas reinjecter -> on
+                /* DataTransfer indisponible: on ne peut pas reinjecter -> on
                    previent plutot que d'echouer en silence. */
                 try { inp.value = ''; } catch (e2) {}
                 alert("Photo iPhone (HEIC) non prise en charge par ce navigateur.\n"
@@ -9678,7 +9717,7 @@
         }).catch(function () {
             try { inp.value = ''; } catch (e2) {}
             alert("Cette photo (format iPhone HEIC) n'a pas pu etre lue.\n"
-                + "Sur l'iPhone : Reglages > Appareil photo > Formats > \"Le plus compatible\", "
+                + "Sur l'iPhone: Reglages > Appareil photo > Formats > \"Le plus compatible\", "
                 + "ou choisissez la photo depuis la galerie.");
         });
     }
@@ -9706,7 +9745,7 @@
     function refresh() {
         var SU = window.SUPABASE_URL, SK = window.SUPABASE_KEY;
         if (!SU || !SK) return;
-        var list = (typeof window.PROJETS_DISPONIBLES !== 'undefined') ? window.PROJETS_DISPONIBLES : null;
+        var list = (typeof window.PROJETS_DISPONIBLES !== 'undefined') ? window.PROJETS_DISPONIBLES: null;
         if (!list || !list.length) return;
         var ids = list.map(function (p) { return p && p.id; })
                       .filter(function (id) { return id != null && !isNaN(parseInt(id, 10)) && id > 0; });
@@ -9758,12 +9797,12 @@
    embarque n'applique le defaut QUE dans la whitelist (test inWl) et
    laisse le localStorage (dernier projet OUVERT sur l'appareil) gagner.
    Ici, a CHAQUE chargement, on decide cote serveur, en gagnant sur le
-   localStorage ET la whitelist :
+   localStorage ET la whitelist:
      1. si projet_override (admin) est defini -> ce projet ;
      2. sinon mode "auto" -> default_projet_for_carte = dernier projet
         MODIFIE (le plus actif) associe a la carte ;
      3. si aucun des deux -> on ne touche a rien (comportement embarque).
-   NB : on ne MUTE PAS PROJETS_DISPONIBLES (le hash de carte, donc la cle
+   NB: on ne MUTE PAS PROJETS_DISPONIBLES (le hash de carte, donc la cle
    localStorage, en depend) ; changeProjet tolere un id hors whitelist et
    ajoute lui-meme l'option manquante au select.
    ===================================================================== */
@@ -9799,7 +9838,7 @@
         if (found && found.nom) { go(found.nom); return; }
         fetch(window.SUPABASE_URL + '/rest/v1/projets?select=id,nom&id=eq.' + pid, { headers: _headers() })
             .then(function (r) { return r.ok ? r.json() : []; })
-            .then(function (rows) { go((rows && rows[0] && rows[0].nom) ? rows[0].nom : ('Projet ' + pid)); })
+            .then(function (rows) { go((rows && rows[0] && rows[0].nom) ? rows[0].nom: ('Projet ' + pid)); })
             .catch(function () { try { window.changeProjet(pid); } catch (e2) {} });
     }
     function apply() {
@@ -9811,8 +9850,8 @@
             if (ov) { _applyProjet(ov, 'override admin'); return; }   // 1. projet epingle
             // 2. mode auto -> dernier projet modifie (le plus actif)
             _rpc('default_projet_for_carte', hash).then(function (smart) {
-                if (smart) _applyProjet(smart, 'auto : dernier modifie');
-                // 3. sinon : rien (comportement embarque)
+                if (smart) _applyProjet(smart, 'auto: dernier modifie');
+                // 3. sinon: rien (comportement embarque)
             });
         });
     }
@@ -9821,14 +9860,14 @@
 })();
 
 /* ============================================================
-   Patch runtime : filtre "Periode" dans le panneau Elements
+   Patch runtime: filtre "Periode" dans le panneau Elements
    (au meme titre que Categorie / Couleur / Commune).
    Lit le champ f.periode. TOTALEMENT NEUTRE pour les projets
    sans periode. Idempotent avec la version source.
    ============================================================ */
 (function () {
     function getPeriodeForFeature(f) {
-        return (f && f.periode && String(f.periode).trim()) ? f.periode : 'Non definie';
+        return (f && f.periode && String(f.periode).trim()) ? f.periode: 'Non definie';
     }
     function populatePeriode(full) {
         var sel = document.getElementById('cfPeriodeSelect');
@@ -9878,7 +9917,7 @@
             if (hasP) injectRow();
             var selEl = document.getElementById('cfPeriodeSelect');
             if (selEl && selEl.closest('div')) selEl.closest('div').style.display = hasP ? '' : 'none';
-            var pf = hasP ? window.currentPeriodeFilter : '';
+            var pf = hasP ? window.currentPeriodeFilter: '';
             if (pf) {
                 window.customFeaturesData = full.filter(function (f) {
                     return getPeriodeForFeature(f) === pf;
@@ -9898,7 +9937,7 @@
 })();
 
 /* ============================================================
-   Reduction du "flash" charge-puis-masque : applique l'etat par
+   Reduction du "flash" charge-puis-masque: applique l'etat par
    defaut des calques DES QUE dispo (au lieu d'attendre 1,5 s).
    Utilise la logique existante de la carte (aucun regen requis).
    ============================================================ */
@@ -9914,7 +9953,7 @@
 })();
 
 /* ============================================================
-   Sauts de ligne dans la description du panneau detail :
+   Sauts de ligne dans la description du panneau detail:
    la description (custom_features) est injectee en textContent
    et le CSS de la carte ne conserve pas les retours a la ligne.
    Ce style cible uniquement #detailDescription (pre-line) pour
@@ -9941,13 +9980,13 @@
 })();
 
 /* ============================================================
-   Images complementaires via URL dans la description :
+   Images complementaires via URL dans la description:
    toute URL d'image (jpg/png/webp/gif) presente dans la
    description d'un element personnalise est retiree du texte
    affiche et ajoutee a la galerie Photos du panneau detail
    (ex. plan de l'enceinte, projet 71 Mazet). Meme logique que
    le retrait des liens Sketchfab fait par les cartes.
-   NB : les callbacks MutationObserver s'executent apres le
+   NB: les callbacks MutationObserver s'executent apres le
    remplissage complet du panneau (microtask), donc apres le
    reset de #detailPhotos par la carte.
    ============================================================ */
@@ -10008,7 +10047,7 @@
    ============================================================ */
 (function () {
     var IMG_RE = /https?:\/\/[^\s"'<>]+\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]*)?/gi;
-    /* CSS : retours a la ligne dans le bloc description du panneau moderne */
+    /* CSS: retours a la ligne dans le bloc description du panneau moderne */
     function injectCss() {
         if (document.getElementById('pwaModernDescPreLine')) return;
         if (!document.head) return;
@@ -10035,7 +10074,7 @@
         });
         cleaned = cleaned.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
         desc.textContent = cleaned;
-        /* galerie photos : section existante ou creee */
+        /* galerie photos: section existante ou creee */
         var gal = body.querySelector('.cf-photos');
         if (!gal) {
             var sec = document.createElement('div');
@@ -10047,7 +10086,7 @@
         /* liste complete pour la lightbox = photos deja presentes + nouvelles */
         var existing = [].slice.call(gal.querySelectorAll('img')).map(function (i) { return i.src; });
         var all = existing.concat(urls.filter(function (u) { return existing.indexOf(u) === -1; }));
-        /* la consigne "Cliquer pour agrandir" reste EN DERNIER : inserer les images avant elle */
+        /* la consigne "Cliquer pour agrandir" reste EN DERNIER: inserer les images avant elle */
         var hint = gal.querySelector('.napoleon-crop-hint');
         urls.forEach(function (u) {
             if (gal.querySelector('img[src="' + u + '"]')) return;

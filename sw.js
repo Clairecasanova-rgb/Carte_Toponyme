@@ -373,7 +373,7 @@ self.addEventListener('fetch', (event) => {
     // deployes ne parvenaient jamais. Repli cache si hors-ligne (offline OK).
     try {
         const _pu = new URL(url);
-        if (_pu.origin === self.location.origin && /\/pwa-ui\.js$/.test(_pu.pathname)) {
+        if (_pu.origin === self.location.origin && (/\/pwa-ui\.js$/.test(_pu.pathname) || /\/theme-found\.css$/.test(_pu.pathname))) {
             event.respondWith((async () => {
                 const cache = await _getCache(STATIC_CACHE);
                 if (!_isOffline()) {
