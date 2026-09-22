@@ -2216,9 +2216,21 @@ html body .modern-layer-control .layer-subgroup-header h5,html body .modern-laye
    Selecteurs a 2 id : necessaire pour battre `html body #searchContainer input`
    de theme_clair, plus specifique qu'un selecteur a 1 id. */
 /* A2 - Registre : selecteurs renforces (2 id) pour battre theme_clair */
+/* padding-left volontairement SANS !important : le JS y met la largeur de la
+   pastille de commune (input.style.paddingLeft = badgeW) quand un filtre est
+   actif. Un raccourci `padding` en !important ecrasait ce calcul et la pastille
+   se superposait au texte du champ. */
 html body #searchContainer #searchInput{background:transparent!important;background-color:transparent!important;
  border:none!important;border-bottom:1px solid var(--bd)!important;border-radius:0!important;box-shadow:none!important;
- padding:8px 26px 8px 0!important;font-size:15px!important}
+ padding-top:8px!important;padding-right:26px!important;padding-bottom:8px!important;padding-left:0;
+ font-size:15px!important}
+/* Pastille masquee : on reprend la main, sinon le JS laisse 14px et le texte
+   n'est plus aligne sur le reste du panneau. */
+html body #searchContainer #communeFilterBadge[style*="display: none"] + #searchInput,
+html body #searchContainer #communeFilterBadge[style*="display:none"] + #searchInput{padding-left:0!important}
+/* Pastille de commune : elle etait restee olive (#5a6e2a en style inline) */
+html body #searchContainer #communeFilterBadge{background:var(--prim)!important;color:var(--prim-ink)!important;
+ font-family:var(--sans)!important;font-size:9px!important;font-weight:500!important}
 html body #searchContainer #searchInput:focus{border:none!important;border-bottom:1px solid var(--acc)!important;
  box-shadow:none!important;outline:none!important}
 html body #searchContainer #searchInputWrapper{padding:0 14px!important}
@@ -2378,4 +2390,76 @@ html body #modernDetailPanel .detail-close:hover,
 html body #modernDetailPanel .detail-expand-btn:hover{color:var(--acc-text)!important}
 html body .modern-layer-control .layer-overlay-item:hover,
 html body .modern-layer-control .layer-subgroup-header:hover{background:var(--hover)!important}
+
+/* === Titre de la fiche : trop lourd en capitales sur les noms longs ===
+   22 px en Archivo semi-condense capitales passaient sur trois lignes des que
+   le nom depassait quelques mots (ex. "Position de position partagee"). */
+html body #modernDetailPanel .detail-title,
+html body #detailCustomModal .detail-title{font-size:17px!important;line-height:1.2!important}
+@media (max-width:768px){
+ html body #modernDetailPanel .detail-title,
+ html body #detailCustomModal .detail-title{font-size:15px!important}
+ html body #modernDetailPanel .detail-commune,
+ html body #detailCustomModal .detail-commune{font-size:11px!important}
+}
+
+/* === Modale "element personnalise" (#detailCustomModal) ===
+   Restee en dehors du theme : carte a coins 16 px, ombre portee large, boutons
+   bleus #3b82f6, pastille de categorie et tableau de coordonnees d'origine. */
+html body #detailCustomModalContent{background:var(--pan)!important;border-radius:3px!important;
+ border:1px solid var(--bd)!important;box-shadow:0 8px 32px rgba(38,35,48,.28)!important;
+ font-family:var(--sans)!important;color:var(--ink)!important}
+html body #detailCustomModal .detail-header{border-bottom:1px solid var(--bd2)!important}
+html body #detailCustomModal .detail-title{font-family:var(--name)!important;font-weight:var(--name-w)!important;
+ letter-spacing:var(--name-ls)!important;text-transform:var(--name-tt)!important;font-stretch:var(--name-st)!important;
+ color:var(--ink)!important}
+html body #detailCustomModal .detail-category{background:var(--tagbg)!important;color:var(--ink2)!important;
+ border:none!important;border-radius:12px!important;font-family:var(--sans)!important}
+html body #detailCustomModal .detail-section-title{font-family:var(--sans)!important;font-size:12px!important;
+ font-weight:600!important;text-transform:none!important;letter-spacing:0!important;color:var(--acc-text)!important;
+ border-bottom:none!important;border-left:3px solid var(--acc)!important;padding:0 0 0 8px!important}
+html body #detailCustomModal .detail-section-content{color:var(--ink)!important;font-family:var(--sans)!important}
+html body #detailCustomModal .detail-coords{background:var(--bg)!important;border:1px solid var(--bd2)!important;
+ border-radius:2px!important}
+html body #detailCustomModal .detail-coords-row{border-bottom:1px solid var(--bd2)!important}
+html body #detailCustomModal .detail-coords-label{color:var(--ink2)!important;font-family:var(--sans)!important}
+html body #detailCustomModal .detail-coords-value{color:var(--ink)!important;font-family:var(--mono)!important;
+ font-variant-numeric:tabular-nums}
+html body #detailCustomModal .detail-actions{border-top:1px solid var(--bd2)!important}
+html body #detailCustomModal .detail-btn{border-radius:2px!important;font-family:var(--sans)!important;
+ font-weight:500!important;font-size:12px!important;box-shadow:none!important}
+html body #detailCustomModal .detail-btn.secondary{background:var(--pan)!important;color:var(--ink)!important;
+ border:1px solid var(--bd)!important}
+html body #detailCustomModal .detail-btn.secondary:hover{background:var(--tagbg)!important}
+html body #detailCustomModal .detail-btn.primary{background:var(--prim)!important;color:var(--prim-ink)!important;
+ border:1px solid var(--prim)!important}
+html body #detailCustomModal .detail-btn.primary:hover{background:var(--prim-hover)!important;
+ border-color:var(--prim-hover)!important}
+html body #detailCustomModal .detail-close,html body #detailCustomModal .detail-expand-btn{
+ background:transparent!important;border:none!important;color:var(--ink2)!important;border-radius:2px!important}
+html body #detailCustomModal .detail-close:hover,html body #detailCustomModal .detail-expand-btn:hover{
+ color:var(--acc-text)!important;background:var(--tagbg)!important}
+
+/* === Bulles de la carte (popups Leaflet) ===
+   Leurs contenus sont construits en HTML inline : titre colore par la categorie
+   (conserve, c'est une information), mais boutons verts / bleus / rouges et
+   coins arrondis d'origine a reprendre. */
+html body .leaflet-popup-content-wrapper{border-radius:3px!important}
+html body .leaflet-popup-content button,
+html body .leaflet-popup-content .popup-edit-btn{border-radius:2px!important;font-family:var(--sans)!important;
+ box-shadow:none!important}
+html body .leaflet-popup-content button[style*="background:#4CAF50"],
+html body .leaflet-popup-content button[style*="background: #4CAF50"],
+html body .leaflet-popup-content button[style*="background:#22c55e"]{
+ background:var(--prim)!important;color:var(--prim-ink)!important;border:1px solid var(--prim)!important}
+html body .leaflet-popup-content button[style*="background:#f1f5f9"],
+html body .leaflet-popup-content button[style*="background: #f1f5f9"]{
+ background:var(--pan)!important;color:var(--ink)!important;border:1px solid var(--bd)!important}
+html body .leaflet-popup-content button[style*="background:#e74c3c"],
+html body .leaflet-popup-content button[style*="background: #e74c3c"],
+html body .leaflet-popup-content button[style*="background:#dc2626"]{
+ background:var(--pan)!important;color:var(--danger)!important;border:1px solid var(--danger)!important}
+html body .leaflet-popup-content span[style*="background:#dbeafe"]{
+ background:var(--acc-soft)!important;color:var(--acc-text)!important;border-radius:2px!important}
+html body .leaflet-popup-close-button{color:var(--ink2)!important}
 
