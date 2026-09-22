@@ -337,25 +337,17 @@
                     crayon.title = 'Editer';
                     tete.insertBefore(crayon, vp || null);
                 }
-                var actions = div.lastElementChild;
-                if (actions && !actions.querySelector('.pwaVoirFiche')) {
-                    var b = document.createElement('button');
-                    b.className = 'pwaVoirFiche';
-                    b.type = 'button';
-                    b.textContent = 'Fiche';
-                    b.onclick = function(ev) { ev.stopPropagation(); ouvrirFiche(id); };
-                    // apres "+ Selection" : l'ajout a la selection reste la premiere
-                    // action de la rangee, "Fiche" ferme la marche.
-                    actions.appendChild(b);
-                }
-                // Zoom : centre la carte sur le point, juste a gauche de Partager.
-                if (actions && !actions.querySelector('.pwaZoom')
+                // Zoom : glyphe d'entete a cote du crayon. Les deux agissent sur
+                // l'objet lui-meme ; la rangee du bas garde ses libelles en toutes
+                // lettres pour les actions de fiche, de donnees et d'export.
+                if (tete && !tete.querySelector('.pwaZoom')
                     && typeof window.zoomToCustomFeature === 'function') {
                     var zb = document.createElement('button');
                     zb.className = 'pwaZoom';
                     zb.type = 'button';
-                    zb.textContent = 'Zoom';
+                    zb.textContent = '⊕';
                     zb.title = 'Centrer la carte sur ce point';
+                    zb.setAttribute('aria-label', 'Centrer la carte sur ce point');
                     zb.onclick = function(ev) {
                         ev.stopPropagation();
                         var liste = window.customFeaturesData || [];
@@ -366,7 +358,18 @@
                             }
                         }
                     };
-                    actions.appendChild(zb);
+                    tete.insertBefore(zb, tete.querySelector('.pwaCrayon') || vp || null);
+                }
+                var actions = div.lastElementChild;
+                if (actions && !actions.querySelector('.pwaVoirFiche')) {
+                    var b = document.createElement('button');
+                    b.className = 'pwaVoirFiche';
+                    b.type = 'button';
+                    b.textContent = 'Fiche';
+                    b.onclick = function(ev) { ev.stopPropagation(); ouvrirFiche(id); };
+                    // apres "+ Selection" : l'ajout a la selection reste la premiere
+                    // action de la rangee, "Fiche" ferme la marche.
+                    actions.appendChild(b);
                 }
                 // Partage : nom, coordonnees et altitude, a droite de la rangee.
                 if (actions && !actions.querySelector('.pwaPartage')
@@ -537,7 +540,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = 'c6e9205a64';
+        var THEME_V = '8da4248ef6';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
