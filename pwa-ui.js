@@ -13,6 +13,52 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    // === Altitude : correctif pour les cartes DEJA PUBLIEES ===
+    // Le HTML genere appelle api.open-elevation.com (hors service) et une URL
+    // IGN incorrecte (/calcul/alt/ sans `resource`). On redefinit les deux
+    // fonctions globales ; les cartes regenerees embarquent deja le correctif.
+    (function _fixAltitudeIGN() {
+        var IGN_ALTI = 'https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json';
+        function _ignZ(lats, lons) {
+            var url = IGN_ALTI + '?lon=' + lons.join('|') + '&lat=' + lats.join('|')
+                    + '&zonly=true&resource=ign_rge_alti_wld';
+            return fetch(url).then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(j) { return (j && j.elevations) || null; })
+                .catch(function() { return null; });
+        }
+        function _num(z) {
+            if (z && typeof z === 'object') z = z.z;
+            return (typeof z === 'number' && z !== -99999) ? Math.round(z) : null;
+        }
+        function apply() {
+            window.getElevation = function(lat, lon) {
+                return _ignZ([lat], [lon]).then(function(ev) { return _num(ev && ev[0]); });
+            };
+            window.getAltitudesBatch = function(coordsList) {
+                var valid = (coordsList || []).filter(function(c) { return c && c.lat && c.lon; });
+                if (!valid.length) return Promise.resolve({});
+                var out = {}, chunks = [];
+                for (var i = 0; i < valid.length; i += 50) chunks.push(valid.slice(i, i + 50));
+                return chunks.reduce(function(prev, ch) {
+                    return prev.then(function() {
+                        var lats = ch.map(function(c) { return c.lat; });
+                        var lons = ch.map(function(c) { return c.lon; });
+                        return _ignZ(lats, lons).then(function(ev) {
+                            if (!ev) return;
+                            ch.forEach(function(c, k) {
+                                var z = _num(ev[k]);
+                                if (z !== null) out[c.lat + ',' + c.lon] = z;
+                            });
+                        });
+                    });
+                }, Promise.resolve()).then(function() { return out; });
+            };
+        }
+        apply();
+        setTimeout(apply, 2500);
+    })();
+
+
     // === Theme "Something Found" pour les cartes DEJA PUBLIEES ===
     // Les cartes generees en Moderne Light portent #themeClairOverride. On leur
     // empile theme-found.css (charge depuis la racine du depot) sans les
@@ -43,7 +89,7 @@
             link.href = 'theme-found.css?v=' + THEME_V;
             link.onload = unhide;
             link.onerror = unhide;
-            setTimeout(unhide, 1500);
+            setTimeout(unhide, 5000);
             // Ajoute en FIN de document : l'ordre de cascade le place apres
             // #themeClairOverride, donc il gagne a specificite egale.
             document.documentElement.appendChild(link);
@@ -8805,6 +8851,9 @@
             return;
         }
         function adjust() {
+            // Re-interroge le panneau a chaque passage : celui capture au
+            // demarrage peut avoir ete remplace (chargement d'un projet).
+            sidebar = document.getElementById('searchContainer') || sidebar;
             var badge = document.getElementById('pwaStatusBadge');
             if (!badge) return;
             var pb = document.getElementById('pwaPosBtn');
@@ -8828,6 +8877,7 @@
                 pb.style.setProperty('left', left + 'px', 'important');
             }
         }
+        window._pwaAdjustBadges = adjust;
         adjust();
         window.addEventListener('resize', adjust);
         new MutationObserver(adjust).observe(sidebar, {
@@ -9149,18 +9199,74 @@
     // les passe derriere quand le panneau est ouvert. Et on empeche le FAB geoloc
     // (.leaflet-bottom.leaflet-right) d'etre pousse au MILIEU quand le panneau est
     // agrandi (sa hauteur poussait le FAB a ~55% de l'ecran).
+    var _fabModalIds = ['rasterMgrModal', 'editCustomModal', 'detailCustomModal',
+                        'editModal', 'citationModal'];
+    function _fabVisible(el) {
+        if (!el) return false;
+        // position:fixed -> offsetParent vaut null meme visible : on lit le style.
+        var s = window.getComputedStyle(el);
+        return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+    }
+    function _anyModalOpen() {
+        for (var i = 0; i < _fabModalIds.length; i++) {
+            if (_fabVisible(document.getElementById(_fabModalIds[i]))) return true;
+        }
+        return false;
+    }
+    function _watchFabModals() {
+        _fabModalIds.forEach(function(id) {
+            var m = document.getElementById(id);
+            if (m && !m._fabWatched) {
+                m._fabWatched = true;
+                try {
+                    new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); })
+                        .observe(m, { attributes: true, attributeFilter: ['class', 'style'] });
+                } catch (e) {}
+            }
+        });
+    }
+    var _sbWatched = null;
+    function _watchSidebarLive() {
+        var sb = document.getElementById('searchContainer');
+        if (!sb || sb === _sbWatched) return;
+        _sbWatched = sb;
+        try {
+            new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); })
+                .observe(sb, { attributes: true, attributeFilter: ['class', 'style'] });
+        } catch (e) {}
+        try {
+            if (typeof ResizeObserver !== 'undefined') {
+                new ResizeObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb);
+            }
+        } catch (e) {}
+        requestAnimationFrame(_fabBehindPanel);
+    }
     function _fabBehindPanel() {
+        _watchSidebarLive();
         var sb = document.getElementById('searchContainer');
         // Derriere si le panneau de recherche OU la fenetre raster est ouverte.
-        var open = (sb && !sb.classList.contains('collapsed')) || !!document.getElementById('rasterMgrModal');
+        var open = (sb && !sb.classList.contains('collapsed')) || _anyModalOpen();
         ['pwaPosBtn', 'pwaStatusBadge'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.style.setProperty('z-index', open ? '9990' : '100050', 'important');
         });
+        // FAB geoloc : position recalculee depuis l'etat VIVANT du panneau.
+        // (avant : seulement remis a zero si le panneau depassait 50% de l'ecran,
+        // d'ou un FAB bloque en plein milieu apres reconstruction du panneau)
         var geo = document.querySelector('.leaflet-bottom.leaflet-right');
-        if (geo && sb && open && sb.offsetHeight > window.innerHeight * 0.5) {
-            geo.style.bottom = '';  // panneau agrandi -> FAB revient en bas (pas au milieu)
+        if (geo) {
+            var sbVisible = !!sb && !sb.classList.contains('collapsed')
+                && window.getComputedStyle(sb).display !== 'none' && sb.offsetWidth > 0;
+            if (sbVisible && window.innerWidth <= 768) {
+                var maxB = Math.floor(window.innerHeight * 0.55);
+                geo.style.bottom = Math.min(sb.offsetHeight + 8, maxB) + 'px';
+            } else {
+                geo.style.bottom = '';
+            }
         }
+        // Badges Position / En ligne : meme recalcul (leur observateur est lui
+        // aussi attache au panneau capture au demarrage).
+        if (typeof window._pwaAdjustBadges === 'function') { try { window._pwaAdjustBadges(); } catch (e) {} }
         // Bouton recherche (#panelToggle) : cache quand la FENETRE RASTER est
         // ouverte, reaffiche quand elle est fermee. !important INLINE car la carte
         // tourne en pseudo-plein-ecran ou ".leaflet-pseudo-fullscreen #panelToggle"
@@ -9177,10 +9283,11 @@
         try { new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb, { attributes: true, attributeFilter: ['class', 'style'] }); } catch (_e) {}
         try { if (typeof ResizeObserver !== 'undefined') new ResizeObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb); } catch (_e2) {}
         // Detecte aussi l'ouverture/fermeture de la fenetre raster (ajout/retrait au DOM).
-        try { new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(document.body, { childList: true }); } catch (_e3) {}
+        try { new MutationObserver(function() { _watchFabModals(); _watchSidebarLive(); requestAnimationFrame(_fabBehindPanel); }).observe(document.body, { childList: true, subtree: true }); } catch (_e3) {}
         window.addEventListener('resize', function() { requestAnimationFrame(_fabBehindPanel); });
+        _watchFabModals();
         _fabBehindPanel();
-        setTimeout(_fabBehindPanel, 1200);
+        setTimeout(function() { _watchFabModals(); _fabBehindPanel(); }, 1200);
         setTimeout(_fabBehindPanel, 3000);
     })();
 

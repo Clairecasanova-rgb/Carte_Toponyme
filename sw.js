@@ -373,7 +373,22 @@ self.addEventListener('fetch', (event) => {
     // deployes ne parvenaient jamais. Repli cache si hors-ligne (offline OK).
     try {
         const _pu = new URL(url);
-        if (_pu.origin === self.location.origin && (/\/pwa-ui\.js$/.test(_pu.pathname) || /\/theme-found\.css$/.test(_pu.pathname))) {
+        if (_pu.origin === self.location.origin && /\/theme-found\.css$/.test(_pu.pathname)) {
+            // Feuille de theme : cache d'abord (affichage immediat, pas de
+            // clignotement de l'ancien aspect), revalidation en arriere-plan.
+            event.respondWith((async () => {
+                const cache = await _getCache(STATIC_CACHE);
+                let c = await cache.match(req);
+                if (!c) c = await cache.match(req, { ignoreSearch: true });
+                const net = fetch(req, { cache: 'no-store' }).then((resp) => {
+                    if (resp && resp.ok) cache.put(req, resp.clone()).catch(() => null);
+                    return resp;
+                }).catch(() => null);
+                return c || (await net) || fetch(req);
+            })());
+            return;
+        }
+        if (_pu.origin === self.location.origin && /\/pwa-ui\.js$/.test(_pu.pathname)) {
             event.respondWith((async () => {
                 const cache = await _getCache(STATIC_CACHE);
                 if (!_isOffline()) {

@@ -2463,3 +2463,83 @@ html body .leaflet-popup-content span[style*="background:#dbeafe"]{
  background:var(--acc-soft)!important;color:var(--acc-text)!important;border-radius:2px!important}
 html body .leaflet-popup-close-button{color:var(--ink2)!important}
 
+/* === Loupe flottante : forme d'origine, couleurs du theme (demande de Claire) ===
+   Le carre a angles nets du theme ne convenait pas : on reprend le bouton
+   arrondi blanc avec son ombre, mais en bleu marine et filet gris-bleu. */
+html body #panelToggle,
+html body #lexiqueFloatBtn{width:52px!important;height:52px!important;border-radius:12px!important;
+ background:rgba(255,255,255,.95)!important;color:var(--ink)!important;
+ border:1px solid var(--bd)!important;box-shadow:0 4px 16px rgba(38,35,48,.25)!important;
+ backdrop-filter:blur(6px)!important;-webkit-backdrop-filter:blur(6px)!important;
+ transition:transform .15s ease,box-shadow .15s ease!important}
+html body #panelToggle:hover,
+html body #lexiqueFloatBtn:hover{background:#fff!important;color:var(--acc-text)!important;
+ border-color:var(--acc)!important;box-shadow:0 6px 20px rgba(38,35,48,.30)!important;transform:scale(1.04)!important}
+html body #panelToggle.active,
+html body #lexiqueFloatBtn.active{background:var(--acc-soft)!important;color:var(--ink)!important;
+ border-color:var(--acc)!important}
+
+/* === "+ Selection" en vert (demande de Claire) ===
+   Le vert d'origine #4CAF50 est une couleur SEMANTIQUE (ajouter a la selection),
+   distincte de l'accent rouille du theme : on la garde telle quelle. */
+html body .leaflet-popup-content button[style*="background:#4CAF50"],
+html body .leaflet-popup-content button[style*="background: #4CAF50"]{
+ background:#4CAF50!important;color:#fff!important;border:1px solid #43a047!important}
+html body .leaflet-popup-content button[style*="background:#4CAF50"]:hover,
+html body .leaflet-popup-content button[style*="background: #4CAF50"]:hover{background:#43a047!important}
+
+/* === Bouton "supprimer la selection" : emoji corbeille remplace par un mot ===
+   L'emoji vient du HTML genere (map_collaboration.py) ; sur les cartes deja
+   publiees on ne peut pas changer le texte, on le masque et on pose un libelle. */
+html body #searchContainer #btnDeleteSelected{font-size:0!important;
+ display:inline-flex!important;align-items:center;gap:6px}
+html body #searchContainer #btnDeleteSelected::before{content:"Suppr.";font-size:11px!important;
+ font-family:var(--sans)!important;font-weight:500!important}
+html body #searchContainer #btnDeleteSelected span{font-size:11px!important;font-family:var(--mono)!important}
+
+/* === Plein ecran mobile : garder les boutons d'entete accessibles ===
+   En mode etendu, #panelTabs s'elargit et pousse #panelHeaderActions hors de
+   l'ecran : le bouton reduire devenait inatteignable (mesure : actions a
+   366..450 px pour un ecran de 390). Les onglets defilent, les actions restent
+   collees a droite. */
+@media (max-width: 768px) {
+ html body #panelHeader{display:flex!important;align-items:center!important;gap:0!important}
+ html body #panelTabs{flex:1 1 auto!important;min-width:0!important;overflow-x:auto!important;
+  overflow-y:hidden!important;scrollbar-width:none!important;-webkit-overflow-scrolling:touch}
+ html body #panelTabs::-webkit-scrollbar{display:none!important}
+ html body #panelHeaderActions{flex:0 0 auto!important;position:sticky!important;right:0!important;
+  background:var(--pan)!important;box-shadow:-8px 0 8px -6px rgba(38,35,48,.18)!important;
+  padding-left:6px!important;margin-left:2px!important;z-index:3!important}
+}
+
+/* === Etiquette de categorie du lexique ===
+   Pastille bleu lavande (#e0e7ff) heritee, hors palette. On la ramene a une
+   mention sobre : filet a gauche plutot qu'une pastille pleine. */
+html body .lexique-result-cat{background:transparent!important;color:var(--ink2)!important;
+ border:none!important;border-left:2px solid var(--bd)!important;border-radius:0!important;
+ padding:0 0 0 7px!important;font-family:var(--sans)!important;font-size:11px!important;
+ font-weight:400!important;margin-top:5px!important}
+html body .lexique-modal-cat span{background:transparent!important;color:var(--ink2)!important;
+ border:none!important;border-left:2px solid var(--acc)!important;border-radius:0!important;
+ padding:0 0 0 8px!important;font-family:var(--sans)!important;font-size:12px!important;
+ font-weight:500!important}
+
+/* === Ecran de chargement ===
+   1. Aux couleurs du theme (il etait reste sombre : fond #18191a, barre olive).
+   2. Le panneau restait VISIBLE par-dessus : map_modern_ui pose
+      `#searchContainer{opacity:1!important}` APRES le style de masquage du
+      loader (meme specificite, donc il gagne), et son z-index (100000) depasse
+      celui du loader (99999). On masque tant que le loader est la, et on repasse
+      le loader au-dessus. */
+html body #modernLoader{background:var(--bg)!important;z-index:100001!important}
+html body #modernLoader .loader-bar{background:var(--bd2)!important}
+html body #modernLoader .loader-bar::after{background:var(--acc)!important}
+html body #modernLoader .loader-text{font-family:var(--sans)!important;color:var(--ink2)!important;
+ text-transform:none!important;letter-spacing:0!important;font-size:12px!important}
+html body:has(#modernLoader) #searchContainer,
+html body:has(#modernLoader) #floatingButtons,
+html body:has(#modernLoader) #lexiquePanel,
+html body:has(#modernLoader) .modern-layer-control,
+html body:has(#modernLoader) #pwaPosBtn,
+html body:has(#modernLoader) #pwaStatusBadge{opacity:0!important;pointer-events:none!important}
+
