@@ -2320,14 +2320,62 @@ html body #searchContainer .btn-export-full.primary{
  background:var(--prim)!important;border-color:var(--prim)!important;color:var(--prim-ink)!important}
 html body #searchContainer .btn-modif-action.primary:hover,
 html body #searchContainer .btn-export-full.primary:hover{background:var(--prim-hover)!important;color:var(--prim-ink)!important}
-/* Pictos d'action rapide : cercle supprime, glyphe seul */
+/* === Boutons d'action rapide de l'onglet Selection ===
+   Ce sont des BASCULES (isoler, points seuls, multi-selection) : elles doivent
+   se distinguer entre elles et montrer leur etat actif. Le theme leur donne un
+   rectangle sobre, mais chacune garde une teinte propre, sourdie pour rester
+   dans la palette. Actif = fond teinte + filet de la meme teinte. */
 html body #searchContainer .quick-btn{border-radius:2px!important;border:1px solid var(--bd2)!important;
- background:var(--pan)!important;box-shadow:none!important}
-html body #searchContainer .quick-btn:hover{border-color:var(--acc)!important}
+ background:var(--pan)!important;box-shadow:none!important;color:var(--ink2)!important;transition:all .15s}
+html body #searchContainer .quick-btn:hover{border-color:currentColor!important}
+html body #searchContainer .quick-btn.orange{color:#b8744a!important}
+html body #searchContainer .quick-btn.blue{color:#4a6079!important}
+html body #searchContainer .quick-btn.green{color:#5c7a4a!important}
+html body #searchContainer .quick-btn.red{color:#a33a2a!important}
+html body #searchContainer .quick-btn.purple{color:#6a5878!important}
+html body #searchContainer .quick-btn.orange:hover{background:#f7ece4!important}
+html body #searchContainer .quick-btn.blue:hover{background:#e9edf2!important}
+html body #searchContainer .quick-btn.green:hover{background:#ecf0e8!important}
+html body #searchContainer .quick-btn.red:hover{background:#f7e9e6!important}
+html body #searchContainer .quick-btn.purple:hover{background:#efecf2!important}
+html body #searchContainer .quick-btn.active{border-color:currentColor!important;font-weight:600!important}
+html body #searchContainer .quick-btn.orange.active{background:#f2ddcd!important}
+html body #searchContainer .quick-btn.blue.active{background:#dde4ec!important}
+html body #searchContainer .quick-btn.green.active{background:#e2e9db!important}
+html body #searchContainer .quick-btn.red.active{background:#f2ddd8!important}
+html body #searchContainer .quick-btn.purple.active{background:#e6e0ec!important}
+/* Element coche en mode multi-selection : la regle generique des lignes de
+   registre effacait le fond de l'etat .checked. */
+html body #searchContainer #selectionList .selection-item.multi-mode.checked,
+html body #searchContainer #tabCustom .custom-feature-item.multi-mode.checked{
+ background:var(--acc-soft)!important;box-shadow:inset 3px 0 0 var(--acc)!important}
+/* Liens "Tout afficher" / "Par commune" : le survol ne changeait que la couleur
+   du soulignement, trop discret. */
+html body #searchContainer #searchHints .hint:hover{color:var(--ink)!important;
+ text-decoration-color:var(--acc)!important;background:transparent!important}
 /* Action principale de l'onglet Selection : reste un bouton plein (la regle
    generique ci-dessus l'avait ramene au meme niveau que les exports). */
 html body #searchContainer #btnCopyToProject{background:var(--prim)!important;
  border-color:var(--prim)!important;color:var(--prim-ink)!important}
 html body #searchContainer #btnCopyToProject:hover{background:var(--prim-hover)!important;
  border-color:var(--prim-hover)!important;color:var(--prim-ink)!important}
+
+/* === Survols manquants ===
+   Les regles de base (map_modern_ui / theme_clair) posent leurs :hover SANS
+   !important ; nos regles de repos, elles, en ont un. Resultat : plus aucun
+   retour visuel au survol sur ces elements. On les redonne explicitement. */
+html body #modernDetailPanel .btn-action:hover{background:var(--tagbg)!important;border-color:var(--bd)!important}
+html body #modernDetailPanel .btn-action.primary:hover{background:var(--prim-hover)!important;
+ border-color:var(--prim-hover)!important;color:var(--prim-ink)!important}
+html body #modernDetailPanel .nap-viewer-tab:hover,
+html body #modernDetailPanel .nap-viewer-fsel button:hover{background:var(--tagbg)!important;color:var(--ink)!important}
+html body #modernDetailPanel .nap-viewer-tab.active:hover,
+html body #modernDetailPanel .nap-viewer-fsel button.active:hover{background:var(--prim-hover)!important;
+ color:var(--prim-ink)!important;border-color:var(--prim-hover)!important}
+html body #modernDetailPanel .detail-cluster-btn:hover{background:var(--tagbg)!important;color:var(--ink)!important;
+ border-color:var(--bd)!important}
+html body #modernDetailPanel .detail-close:hover,
+html body #modernDetailPanel .detail-expand-btn:hover{color:var(--acc-text)!important}
+html body .modern-layer-control .layer-overlay-item:hover,
+html body .modern-layer-control .layer-subgroup-header:hover{background:var(--hover)!important}
 
