@@ -13,6 +13,147 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _partageEtCoordonnees() {
+        // 1. Bouton "Partager" dans la bulle : nom, coordonnees et altitude.
+        // 2. Fiche complete : Lambert 93 et altitude, qui n'y figuraient pas
+        //    alors que la bulle et la fenetre resume les affichent deja.
+        function pointParId(id) {
+            var d = window.customFeaturesData || [];
+            for (var i = 0; i < d.length; i++) {
+                if (String(d[i].id) === String(id)) return d[i];
+            }
+            return null;
+        }
+        function centre(g) {
+            if (!g || !g.coordinates) return null;
+            try {
+                if (g.type === 'Point') return { lat: g.coordinates[1], lon: g.coordinates[0] };
+                var plat = null;
+                if (g.type === 'Polygon') plat = g.coordinates[0];
+                else if (g.type === 'LineString') plat = g.coordinates;
+                else if (g.type === 'MultiPolygon') plat = g.coordinates[0][0];
+                if (!plat || !plat.length) return null;
+                var sx = 0, sy = 0;
+                for (var i = 0; i < plat.length; i++) { sx += plat[i][0]; sy += plat[i][1]; }
+                return { lat: sy / plat.length, lon: sx / plat.length };
+            } catch (e) { return null; }
+        }
+        function lambert(lat, lon) {
+            if (typeof window.wgs84ToLambert93 !== 'function') return null;
+            try { return window.wgs84ToLambert93(lon, lat); } catch (e) { return null; }
+        }
+        function altitudeAffichee(id) {
+            // La bulle a deja demande l'altitude : on lit sa valeur plutot que de
+            // relancer une requete, pour rester dans le geste de l'utilisateur
+            // (navigator.share exige une activation recente).
+            var e = document.getElementById('elev-' + id);
+            if (!e) return '';
+            var m = String(e.textContent || '').match(/(-?\d+(?:[.,]\d+)?)\s*m/);
+            return m ? m[1].replace(',', '.') : '';
+        }
+        function texteDuPoint(id) {
+            var p = pointParId(id);
+            if (!p) return null;
+            var c = centre(p.geometry);
+            if (!c) return null;
+            var lignes = [p.name || 'Point'];
+            lignes.push(c.lat.toFixed(6) + ', ' + c.lon.toFixed(6));
+            var lb = lambert(c.lat, c.lon);
+            if (lb) {
+                lignes.push('Lambert 93 : X ' + Math.round(lb.x).toLocaleString('fr-FR')
+                    + ' m, Y ' + Math.round(lb.y).toLocaleString('fr-FR') + ' m');
+            }
+            var alt = altitudeAffichee(id);
+            if (alt) lignes.push('Altitude : ' + alt + ' m');
+            return { titre: p.name || 'Point', texte: lignes.join('\n'),
+                     url: 'https://www.google.com/maps?q=' + c.lat.toFixed(6) + ',' + c.lon.toFixed(6) };
+        }
+        function partager(id, bouton) {
+            var d = texteDuPoint(id);
+            if (!d) return;
+            var reponse = function(mot) {
+                var avant = bouton.textContent;
+                bouton.textContent = mot;
+                setTimeout(function() { bouton.textContent = avant; }, 1600);
+            };
+            if (navigator.share) {
+                navigator.share({ title: d.titre, text: d.texte, url: d.url }).catch(function() {});
+                return;
+            }
+            var complet = d.texte + '\n' + d.url;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(complet).then(function() { reponse('Copie'); },
+                                                            function() { reponse('Echec'); });
+            } else {
+                reponse('Indisponible');
+            }
+        }
+        window._pwaPartagerPoint = partager;
+
+        // --- Fiche complete : Lambert 93 et altitude ---------------------------
+        function champ(titre, valeur, id) {
+            return '<div class="detail-field"><label>' + titre + '</label><div class="value"'
+                + (id ? ' id="' + id + '"' : '') + '>' + valeur + '</div></div>';
+        }
+        function completerFiche() {
+            var corps = document.getElementById('modernDetailBody');
+            if (!corps) return;
+            var grilles = corps.querySelectorAll('.detail-section .detail-grid');
+            for (var i = 0; i < grilles.length; i++) {
+                var g = grilles[i];
+                if (g._coordPosees) continue;
+                var labels = g.querySelectorAll('.detail-field label');
+                var lat = null, lon = null, deja = false;
+                for (var j = 0; j < labels.length; j++) {
+                    var t = String(labels[j].textContent || '').trim().toLowerCase();
+                    var v = labels[j].parentNode.querySelector('.value');
+                    var n = v ? parseFloat(String(v.textContent || '').replace(',', '.')) : NaN;
+                    if (t === 'latitude' && !isNaN(n)) lat = n;
+                    else if (t === 'longitude' && !isNaN(n)) lon = n;
+                    else if (t.indexOf('lambert') === 0 || t === 'altitude') deja = true;
+                }
+                if (lat === null || lon === null || deja) continue;
+                g._coordPosees = true;
+                var lb = lambert(lat, lon);
+                var ajout = '';
+                if (lb) {
+                    ajout += champ('Lambert 93 X', Math.round(lb.x).toLocaleString('fr-FR') + ' m', '');
+                    ajout += champ('Lambert 93 Y', Math.round(lb.y).toLocaleString('fr-FR') + ' m', '');
+                }
+                var idAlt = 'pwaFicheAlt' + i;
+                ajout += champ('Altitude', '…', idAlt);
+                g.insertAdjacentHTML('beforeend', ajout);
+                (function(cible, la, lo) {
+                    var e = document.getElementById(cible);
+                    if (!e) return;
+                    if (typeof window.getElevation !== 'function') { e.textContent = 'non disponible'; return; }
+                    window.getElevation(la, lo).then(function(z) {
+                        e.textContent = (z !== null && z !== undefined) ? (Math.round(z) + ' m') : 'non disponible';
+                    }, function() { e.textContent = 'non disponible'; });
+                })(idAlt, lat, lon);
+            }
+        }
+        function brancher() {
+            var p = document.getElementById('modernDetailPanel') || document.body;
+            if (!p || p._coordObserve) return;
+            p._coordObserve = true;
+            var minuteur = null;
+            try {
+                new MutationObserver(function() {
+                    clearTimeout(minuteur);
+                    minuteur = setTimeout(completerFiche, 150);
+                }).observe(p, { childList: true, subtree: true });
+            } catch (e) {}
+            completerFiche();
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', brancher);
+        } else {
+            brancher();
+        }
+    })();
+
+
     (function _hypothesesToponymeSeul() {
         // Les hypotheses lexicales etaient calculees sur le NOM DU POINT
         // ("Point Test", "Position partagee - 02:09") : correspondances sans
@@ -207,6 +348,17 @@
                     // action de la rangee, "Fiche" ferme la marche.
                     actions.appendChild(b);
                 }
+                // Partage : nom, coordonnees et altitude, a droite de la rangee.
+                if (actions && !actions.querySelector('.pwaPartage')
+                    && typeof window._pwaPartagerPoint === 'function') {
+                    var sp = document.createElement('button');
+                    sp.className = 'pwaPartage';
+                    sp.type = 'button';
+                    sp.textContent = 'Partager';
+                    sp.title = 'Partager les coordonnees de ce point';
+                    sp.onclick = function(ev) { ev.stopPropagation(); window._pwaPartagerPoint(id, sp); };
+                    actions.appendChild(sp);
+                }
                 if (!petitEcran) return;
                 // Sur mobile la fiche ne s'ouvre plus toute seule : le gestionnaire
                 // d'origine la cherche par [data-id], on retire l'attribut le temps
@@ -365,7 +517,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '15056f9415';
+        var THEME_V = 'd9241682e0';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;

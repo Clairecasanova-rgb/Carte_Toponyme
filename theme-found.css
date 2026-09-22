@@ -2771,3 +2771,14 @@ html body .leaflet-popup-close-button{
 html body .leaflet-popup-close-button:hover{color:var(--ink)!important;background:var(--hover)!important}
 html body .leaflet-popup-content [id^="popup-"] > div:first-child{padding-right:24px!important}
 
+/* Bouton "Partager" pose dans la bulle par pwa-ui.js : meme registre que les
+   autres actions, repousse a droite de la rangee. */
+html body .leaflet-popup-content [id^="popup-"] .pwaPartage{
+ background:transparent!important;border:none!important;padding:0!important;box-shadow:none!important;
+ font-family:var(--sans)!important;font-size:12px!important;font-weight:500!important;
+ color:var(--ink2)!important;text-decoration:underline!important;text-underline-offset:3px!important;
+ text-decoration-color:var(--bd)!important;cursor:pointer;margin-left:auto!important;
+ flex:0 0 auto!important;width:auto!important}
+html body .leaflet-popup-content [id^="popup-"] .pwaPartage:hover{
+ color:var(--ink)!important;text-decoration-color:var(--acc)!important}
+
