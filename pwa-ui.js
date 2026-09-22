@@ -13,6 +13,52 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _filtresRepliables() {
+        function compter() {
+            var n = 0;
+            ['cfLayerSelect', 'cfColorSelect', 'cfCommuneSelect', 'cfPeriodeSelect'].forEach(function(id) {
+                var s = document.getElementById(id);
+                if (s && s.value) n++;
+            });
+            var hb = document.getElementById('hiddenCommunesBar');
+            if (hb && hb.style.display !== 'none' && hb.offsetParent !== null) n++;
+            return n;
+        }
+        function poser(essai) {
+            var f = document.getElementById('cfFilters');
+            if (!f || !f.firstElementChild) {
+                if ((essai || 0) < 60) setTimeout(function() { poser((essai || 0) + 1); }, 500);
+                return;
+            }
+            if (f.querySelector('.cfBascule')) return;
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'cfBascule';
+            b.title = 'Afficher ou masquer les filtres';
+            f.firstElementChild.appendChild(b);
+            function etiquette() {
+                var n = compter();
+                b.textContent = 'Filtres' + (n ? ' (' + n + ')' : '');
+                b.classList.toggle('cfActif', n > 0);
+                b.setAttribute('aria-expanded', f.classList.contains('cfReplie') ? 'false' : 'true');
+            }
+            b.addEventListener('click', function() {
+                f.classList.toggle('cfReplie');
+                etiquette();
+            });
+            f.addEventListener('change', etiquette);
+            f.addEventListener('click', function() { setTimeout(etiquette, 0); });
+            if (Math.min(screen.width, screen.height) <= 820) f.classList.add('cfReplie');
+            etiquette();
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { poser(0); });
+        } else {
+            poser(0);
+        }
+    })();
+
+
     // === Bulle : bouton "Fiche", et pas d'ouverture automatique sur mobile ===
     // Le second appui sur un marqueur REFERME la bulle (comportement Leaflet) :
     // il ne peut donc pas servir a ouvrir la fiche. On la rend accessible par un
@@ -47,6 +93,15 @@
                 var vp = tete && tete.querySelector('button');
                 if (vp && /voir/i.test(vp.textContent)) vp.textContent = 'Resume';
                 // Bouton "Fiche" ajoute a la rangee d'actions.
+                // Crayon d'edition : deplace dans l'entete, juste avant "Resume".
+                // On le reconnait a son appel openEditCustomModal et non a son
+                // rang : la rangee d'actions change (bouton "Fiche" ajoute).
+                var crayon = div.querySelector('button[onclick*="openEditCustomModal"]');
+                if (tete && crayon && crayon !== vp && !crayon.classList.contains('pwaCrayon')) {
+                    crayon.classList.add('pwaCrayon');
+                    crayon.title = 'Editer';
+                    tete.insertBefore(crayon, vp || null);
+                }
                 var actions = div.lastElementChild;
                 if (actions && !actions.querySelector('.pwaVoirFiche')) {
                     var b = document.createElement('button');

@@ -2599,8 +2599,13 @@ html body .leaflet-popup-content [id^="popup-"] > div:last-child > button{
  font-family:var(--sans)!important;font-size:12px!important;font-weight:500!important;
  text-decoration:underline!important;text-underline-offset:3px!important;
  text-decoration-color:var(--bd)!important;flex:0 0 auto!important;width:auto!important}
-html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:first-child{color:#4CAF50!important}
-html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:last-child{color:var(--acc-text)!important}
+/* La couleur ne depend PAS du rang : pwa-ui.js insere "Fiche" en tete de
+   rangee, ce qui decalait tout le monde et laissait "+ Selection" avec son
+   color:white en ligne, donc blanc sur blanc. On cible chaque action. */
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button[onclick*="addCustomFeatureToSelection"]{
+ color:#2f7a36!important;text-decoration-color:#9ac79d!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button[onclick*="openEditCustomModal"]{
+ color:var(--acc-text)!important}
 
 /* === Bouton de gestion des rasters ===========================================
    Sa position etait RECOPIEE en JS depuis le controle des calques a un instant
@@ -2619,9 +2624,15 @@ html body.detail-open #rasterMgrBtn{right:430px!important}
    Les deux actions d'edition etaient separees, l'une en haut l'autre en bas.
    Le crayon est pose en absolu dans l'entete, juste a gauche de "voir +". */
 html body .leaflet-popup-content [id^="popup-"]{position:relative!important}
-html body .leaflet-popup-content [id^="popup-"] > div:first-child{padding-right:30px!important}
-html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:last-child{
- position:absolute!important;top:-2px!important;right:52px!important;margin:0!important}
+/* le crayon est DEPLACE dans l'entete par pwa-ui.js (position exacte : plus de
+   decalage devine, donc plus de chevauchement avec "Resume") */
+html body .leaflet-popup-content [id^="popup-"] > div:first-child > button.pwaCrayon{
+ flex:0 0 auto!important;margin:0!important;padding:0 2px!important;width:auto!important;
+ background:transparent!important;border:none!important;box-shadow:none!important;
+ color:var(--acc-text)!important;font-size:15px!important;line-height:1!important;
+ text-decoration:none!important;cursor:pointer}
+html body .leaflet-popup-content [id^="popup-"] > div:first-child > button.pwaCrayon:hover{
+ color:var(--ink)!important}
 
 /* Bouton "Fiche" ajoute dans la bulle par pwa-ui.js : meme aspect que les
    autres actions (lien souligne), en bleu marine puisqu'il mene au dossier. */
@@ -2650,7 +2661,6 @@ html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche:hover{text-decorat
  html body .leaflet-popup-content [id^="popup-"] > div:last-child > button,
  html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche{font-size:11px!important}
  html body .leaflet-popup-content [id^="popup-"] > div:first-child > button{font-size:11px!important}
- html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:last-child{right:44px!important}
 }
 
 /* Bouton "Fiche" : utile sur mobile seulement, ou la fiche ne s'ouvre plus
@@ -2658,4 +2668,93 @@ html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche:hover{text-decorat
 @media (min-width: 769px) {
  html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche{display:none!important}
 }
+
+/* === Onglet Elements, sous-onglet Liste : filtres compactes ==================
+   Chaque filtre empilait libelle (16 px), menu (38 px) et boutons (38 px) sur
+   trois lignes : 91 px par filtre, 464 px pour le bloc, alors que le panneau
+   mobile n'en fait que 285. On met chaque filtre sur UNE ligne
+   [libelle | menu | boutons]. Le champ de recherche et la barre des communes
+   masquees gardent leur mise en page (ils n'ont pas de libelle). */
+html body #searchContainer #cfFilters#cfFilters > div:has(> label){display:grid!important;
+ grid-template-columns:58px minmax(0,1fr) auto!important;align-items:center!important;
+ gap:8px!important;margin:0 0 6px!important;padding:0!important}
+html body #searchContainer #cfFilters#cfFilters > div:has(> label) > label{font-size:10px!important;margin:0!important;
+ padding:0!important;text-transform:none!important;letter-spacing:0!important;
+ color:var(--ink2)!important;line-height:1.2!important}
+html body #searchContainer #cfFilters#cfFilters > div:has(> label) > select{height:30px!important;min-height:0!important;
+ padding:2px 22px 2px 7px!important;font-size:12px!important;margin:0!important}
+html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div{display:flex!important;align-items:center!important;
+ gap:4px!important;height:auto!important;margin:0!important}
+html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > button,
+html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > input,
+html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > span{
+ width:26px!important;height:26px!important;min-width:0!important;max-width:26px!important;
+ padding:0!important;font-size:12px!important;line-height:1!important;flex:0 0 26px!important;
+ display:inline-flex!important;align-items:center!important;justify-content:center!important}
+/* champ de recherche de la liste : meme hauteur que les menus */
+html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)) input{height:30px!important;padding:2px 8px!important;
+ font-size:12px!important}
+html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)){margin-bottom:8px!important}
+/* ligne de recherche de la liste et pastille de couleur : meme gabarit */
+html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)){
+ display:flex!important;align-items:center!important;gap:6px!important}
+html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)) > button{
+ width:26px!important;height:26px!important;min-width:0!important;padding:0!important;
+ flex:0 0 26px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important}
+html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > input[type="color"]{
+ height:26px!important;padding:0!important;border:1px solid var(--bd)!important;border-radius:2px!important}
+
+/* Liste des elements personnalises : meme registre que Selection et
+   Modifications (lignes a filets plutot que cartes encadrees). Le trait de
+   couleur a gauche est pose en style inline par le JS : il porte la categorie,
+   on le conserve. */
+html body #searchContainer #customFeaturesList .custom-feature-item{
+ background:transparent!important;border:none!important;border-radius:0!important;
+ border-bottom:1px solid var(--bd2)!important;box-shadow:none!important;
+ margin:0!important;padding:8px 12px!important}
+html body #searchContainer #customFeaturesList .custom-feature-item:hover{
+ background:var(--hover)!important;box-shadow:none!important}
+html body #searchContainer #customFeaturesList .custom-feature-item .cf-name,
+html body #searchContainer #customFeaturesList .custom-feature-item > div > strong{
+ font-family:var(--name)!important;font-weight:var(--name-w)!important;
+ letter-spacing:var(--name-ls)!important;color:var(--ink)!important}
+/* Glyphes d'action : sur mobile il n'y a pas de survol, ils resteraient
+   indefiniment en demi-teinte. Ils sont donc lisibles au repos. */
+html body #searchContainer #customFeaturesList .custom-feature-item button{
+ background:transparent!important;border:none!important;border-radius:2px!important;
+ color:var(--ink2)!important;box-shadow:none!important;opacity:.8}
+html body #searchContainer #customFeaturesList .custom-feature-item:hover button{opacity:1}
+@media (hover:none){
+ html body #searchContainer #customFeaturesList .custom-feature-item button{opacity:1}
+}
+html body #searchContainer #customFeaturesList .custom-feature-item button:hover{
+ color:var(--acc-text)!important;background:transparent!important}
+
+/* === Onglet Elements : filtres repliables ====================================
+   Cinq rangees de filtres (265 px) precedaient la liste dans un panneau haut de
+   285 px sur mobile : la liste commencait hors ecran. pwa-ui.js pose une
+   bascule dans la ligne de recherche ; ne reste visible que celle-ci. */
+html body #searchContainer #cfFilters#cfFilters .cfBascule{
+ flex:0 0 auto!important;border:1px solid var(--bd)!important;background:var(--pan)!important;
+ color:var(--ink2)!important;font-family:var(--sans)!important;font-size:11px!important;
+ font-weight:500!important;padding:5px 9px!important;border-radius:2px!important;cursor:pointer;
+ white-space:nowrap!important;line-height:1.1!important;height:auto!important;width:auto!important}
+html body #searchContainer #cfFilters#cfFilters .cfBascule::after{content:" \25be";color:var(--ink3)}
+html body #searchContainer #cfFilters#cfFilters.cfReplie .cfBascule::after{content:" \25b8"}
+html body #searchContainer #cfFilters#cfFilters .cfBascule:hover{background:var(--hover)!important;
+ border-color:var(--ink3)!important;color:var(--ink)!important}
+html body #searchContainer #cfFilters#cfFilters .cfBascule.cfActif{border-color:var(--acc)!important;
+ color:var(--acc-text)!important;background:var(--acc-soft)!important}
+html body #searchContainer #cfFilters#cfFilters.cfReplie > div:not(:first-child){display:none!important}
+html body #searchContainer #cfFilters#cfFilters.cfReplie{border-bottom:1px solid var(--bd2)!important}
+/* Les quatre "+" (ajouter a la selection) heritaient d'un aplat sombre qui
+   dominait la rangee ; en contour ils restent reperables sans ecraser le
+   reste. */
+html body #searchContainer #tabCustom #cfFilters#cfFilters .filter-btn.filter-btn-add,
+html body #searchContainer #tabModifs .filter-btn.filter-btn-add{
+ background:var(--acc-soft)!important;color:var(--acc-text)!important;
+ border:1px solid var(--acc)!important;box-shadow:none!important;font-weight:600!important}
+html body #searchContainer #tabCustom #cfFilters#cfFilters .filter-btn.filter-btn-add:hover,
+html body #searchContainer #tabModifs .filter-btn.filter-btn-add:hover{
+ background:var(--acc)!important;color:var(--prim-ink)!important}
 
