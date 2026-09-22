@@ -13,10 +13,13 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
-    // === Mobile : bulle au 1er appui, fiche au 2e ===
-    (function _ficheAuSecondAppui() {
-        if (Math.min(screen.width, screen.height) > 820) return;   // mobile seulement
-        var dernierId = null, dernierT = 0;
+    // === Bulle : bouton "Fiche", et pas d'ouverture automatique sur mobile ===
+    // Le second appui sur un marqueur REFERME la bulle (comportement Leaflet) :
+    // il ne peut donc pas servir a ouvrir la fiche. On la rend accessible par un
+    // bouton, et on renomme "voir +" en "Resume" pour lever l'ambiguite entre la
+    // fenetre resume et la fiche complete.
+    (function _bulleVoirFiche() {
+        var petitEcran = Math.min(screen.width, screen.height) <= 820;
         function carte() {
             for (var k in window) {
                 try {
@@ -25,6 +28,10 @@
                 } catch (e) {}
             }
             return null;
+        }
+        function ouvrirFiche(id) {
+            var it = document.querySelector('.custom-feature-item[data-id="' + id + '"]');
+            if (it) it.click();       // la liste ouvre la fiche (gestionnaire delegue)
         }
         function brancher(essai) {
             var map = carte();
@@ -35,16 +42,29 @@
                 var div = el.querySelector('[id^="popup-"]');
                 if (!div) return;                       // bulle de toponyme : inchangee
                 var id = div.id.replace('popup-', '');
-                var maintenant = Date.now();
-                var second = (id === dernierId && maintenant - dernierT < 30000);
-                dernierId = id; dernierT = maintenant;
-                if (second) return;                     // 2e appui : on laisse la fiche s'ouvrir
+                // "voir +" ouvre la fenetre resume : on le nomme ainsi.
+                var tete = div.firstElementChild;
+                var vp = tete && tete.querySelector('button');
+                if (vp && /voir/i.test(vp.textContent)) vp.textContent = 'Resume';
+                // Bouton "Fiche" ajoute a la rangee d'actions.
+                var actions = div.lastElementChild;
+                if (actions && !actions.querySelector('.pwaVoirFiche')) {
+                    var b = document.createElement('button');
+                    b.className = 'pwaVoirFiche';
+                    b.type = 'button';
+                    b.textContent = 'Fiche';
+                    b.onclick = function(ev) { ev.stopPropagation(); ouvrirFiche(id); };
+                    actions.insertBefore(b, actions.firstChild);
+                }
+                if (!petitEcran) return;
+                // Sur mobile la fiche ne s'ouvre plus toute seule : le gestionnaire
+                // d'origine la cherche par [data-id], on retire l'attribut le temps
+                // de son passage puis on le remet.
                 var item = document.querySelector('.custom-feature-item[data-id="' + id + '"]');
                 if (!item) return;
                 item.removeAttribute('data-id');
                 setTimeout(function() { item.setAttribute('data-id', id); }, 0);
             });
-            // notre gestionnaire doit passer AVANT celui du HTML genere
             try {
                 var f = map._events && map._events.popupopen;
                 if (f && f.length > 1) f.unshift(f.pop());
@@ -52,6 +72,8 @@
         }
         brancher(0);
     })();
+
+
 
 
     // === Visionneuse photo : liste et index assainis ===
@@ -9333,6 +9355,14 @@
         var s = window.getComputedStyle(el);
         return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
     }
+    function _modaleOverlay() {
+        // Vraies fenetres modales uniquement : la fiche et le panneau de
+        // recherche ne doivent pas faire disparaitre les controles de carte.
+        for (var i = 0; i < _fabModalIds.length; i++) {
+            if (_fabVisible(document.getElementById(_fabModalIds[i]))) return true;
+        }
+        return false;
+    }
     function _anyModalOpen() {
         // Fiche toponyme : toujours presente dans le DOM, glissee hors ecran
         // quand elle est fermee -> on se fie a la classe posee sur le body.
@@ -9372,14 +9402,52 @@
         } catch (e) {}
         requestAnimationFrame(_fabBehindPanel);
     }
+    var _bodyWatched = false;
+    function _watchBodyClasses() {
+        if (_bodyWatched || !document.body) return;
+        _bodyWatched = true;
+        try {
+            // `detail-open` sur le body et `.open` sur la fiche deplacent le
+            // controle des calques : il faut repositionner ce qui s'y accroche.
+            // rappel differe : le controle des calques a une transition de 0,3 s,
+            // sa position finale n'est connue qu'apres.
+            var _reposer = function() {
+                requestAnimationFrame(_fabBehindPanel);
+                setTimeout(_fabBehindPanel, 360);
+            };
+            new MutationObserver(_reposer)
+                .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+            var dp = document.getElementById('modernDetailPanel');
+            if (dp) {
+                new MutationObserver(_reposer)
+                    .observe(dp, { attributes: true, attributeFilter: ['class', 'style'] });
+            }
+        } catch (e) {}
+    }
     function _fabBehindPanel() {
         _watchSidebarLive();
+        _watchBodyClasses();
         var sb = document.getElementById('searchContainer');
         // Derriere si le panneau de recherche OU la fenetre raster est ouverte.
         var open = (sb && !sb.classList.contains('collapsed')) || _anyModalOpen();
         ['pwaPosBtn', 'pwaStatusBadge'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.style.setProperty('z-index', open ? '9990' : '100050', 'important');
+        });
+        // Controles de carte (calques, raster) : z-index 10001, donc au-dessus
+        // des fenetres modales (10000). Ils recouvraient la fenetre resume et sa
+        // croix de fermeture. On les efface le temps de la modale.
+        var _mo = _modaleOverlay();
+        ['modernLayerControl', 'rasterMgrBtn'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            if (_mo) {
+                el.style.setProperty('opacity', '0', 'important');
+                el.style.setProperty('pointer-events', 'none', 'important');
+            } else {
+                el.style.removeProperty('opacity');
+                el.style.removeProperty('pointer-events');
+            }
         });
         // FAB geoloc : position recalculee depuis l'etat VIVANT du panneau.
         // (avant : seulement remis a zero si le panneau depassait 50% de l'ecran,

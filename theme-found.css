@@ -2602,3 +2602,60 @@ html body .leaflet-popup-content [id^="popup-"] > div:last-child > button{
 html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:first-child{color:#4CAF50!important}
 html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:last-child{color:var(--acc-text)!important}
 
+/* === Bouton de gestion des rasters ===========================================
+   Sa position etait RECOPIEE en JS depuis le controle des calques a un instant
+   donne. Or ce controle se decale de 430 px quand la fiche s'ouvre : si le
+   calcul tombait a ce moment, le bouton restait plante au milieu de la carte
+   apres fermeture. On l'ancre ici en CSS, avec les memes regles que le controle
+   des calques : plus aucune recopie, donc plus de decalage possible. */
+html body #rasterMgrBtn{position:fixed!important;top:58px!important;right:10px!important;
+ left:auto!important;bottom:auto!important;transition:right .3s ease!important}
+html body.detail-open #rasterMgrBtn{right:430px!important}
+@media (max-width:768px){
+ html body.detail-open #rasterMgrBtn{right:10px!important}
+}
+
+/* === Bulle : le crayon remonte a cote de "voir +" ============================
+   Les deux actions d'edition etaient separees, l'une en haut l'autre en bas.
+   Le crayon est pose en absolu dans l'entete, juste a gauche de "voir +". */
+html body .leaflet-popup-content [id^="popup-"]{position:relative!important}
+html body .leaflet-popup-content [id^="popup-"] > div:first-child{padding-right:30px!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:last-child{
+ position:absolute!important;top:-2px!important;right:52px!important;margin:0!important}
+
+/* Bouton "Fiche" ajoute dans la bulle par pwa-ui.js : meme aspect que les
+   autres actions (lien souligne), en bleu marine puisqu'il mene au dossier. */
+html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche{
+ background:transparent!important;border:none!important;padding:0!important;box-shadow:none!important;
+ font-family:var(--sans)!important;font-size:12px!important;font-weight:600!important;
+ color:var(--ink)!important;text-decoration:underline!important;text-underline-offset:3px!important;
+ text-decoration-color:var(--bd)!important;cursor:pointer;flex:0 0 auto!important;width:auto!important}
+html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche:hover{text-decoration-color:var(--acc)!important}
+
+/* === Bulles : plus compactes sur mobile ======================================
+   Sur un ecran de 390 px la bulle restait large et son texte au meme corps que
+   sur bureau. On resserre la largeur, les corps et les marges. */
+@media (max-width: 768px) {
+ html body .leaflet-popup-content-wrapper{border-radius:3px!important}
+ html body .leaflet-popup-content{margin:9px 11px!important}
+ html body .leaflet-popup-content [id^="popup-"]{min-width:0!important;max-width:255px!important}
+ html body .leaflet-popup-content [id^="popup-"] > div:first-child > b{font-size:13px!important}
+ html body .leaflet-popup-content [id^="popup-"] > small{font-size:10px!important}
+ html body .leaflet-popup-content [id^="popup-"] > i{font-size:11px!important;margin-top:3px}
+ html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"]{
+  margin-top:6px!important;padding:5px 7px!important;line-height:1.45!important}
+ html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"] > div{font-size:10px!important}
+ html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"] > div:first-child{font-size:9px!important}
+ html body .leaflet-popup-content [id^="popup-"] > div:last-child{margin-top:8px!important;gap:13px!important}
+ html body .leaflet-popup-content [id^="popup-"] > div:last-child > button,
+ html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche{font-size:11px!important}
+ html body .leaflet-popup-content [id^="popup-"] > div:first-child > button{font-size:11px!important}
+ html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:last-child{right:44px!important}
+}
+
+/* Bouton "Fiche" : utile sur mobile seulement, ou la fiche ne s'ouvre plus
+   automatiquement. Sur grand ecran elle s'ouvre avec la bulle : on le masque. */
+@media (min-width: 769px) {
+ html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche{display:none!important}
+}
+
