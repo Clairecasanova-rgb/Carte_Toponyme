@@ -13,6 +13,33 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    // === Visionneuse photo : liste et index assainis ===
+    // On retire les URL vides et on ramene l'index dans les bornes : sans cela
+    // un point n'ayant que sa seconde photo ouvrait un src="undefined".
+    (function _sanePhotoLightbox() {
+        function wrap() {
+            var orig = window.openPhotoLightbox;
+            if (typeof orig !== 'function' || orig._assaini) return false;
+            var patched = function(urls, startIndex) {
+                var propres = (urls || []).filter(function(u) {
+                    return typeof u === 'string' && u && u !== 'undefined' && u !== 'null';
+                });
+                if (!propres.length) return;
+                var i = parseInt(startIndex, 10);
+                if (!(i >= 0) || i >= propres.length) i = 0;
+                return orig.call(this, propres, i);
+            };
+            patched._assaini = 1;
+            window.openPhotoLightbox = patched;
+            return true;
+        }
+        if (!wrap()) {
+            var n = 0;
+            var t = setInterval(function() { if (wrap() || ++n > 40) clearInterval(t); }, 400);
+        }
+    })();
+
+
     // === Images Google Drive bornees sur mobile ===
     // =s0 = taille d'origine (jusqu'a 48 Mpx) : decodage impossible sur
     // telephone -> image noire. On borne, et on retente plus petit en cas
