@@ -2543,3 +2543,11 @@ html body:has(#modernLoader) .modern-layer-control,
 html body:has(#modernLoader) #pwaPosBtn,
 html body:has(#modernLoader) #pwaStatusBadge{opacity:0!important;pointer-events:none!important}
 
+/* === Images sans source : ne pas afficher l'icone cassee ===
+   Le viewer napoleonien cree son <img> vide puis lui pose une source quand une
+   feuille est chargee ; entre les deux, le navigateur affiche une vignette
+   cassee (visible en plein ecran). La regle cesse de s'appliquer des que la
+   source est posee. */
+html body img:not([src]),
+html body img[src=""]{display:none!important}
+

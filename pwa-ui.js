@@ -13,6 +13,57 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    // === Images Google Drive bornees sur mobile ===
+    // =s0 = taille d'origine (jusqu'a 48 Mpx) : decodage impossible sur
+    // telephone -> image noire. On borne, et on retente plus petit en cas
+    // d'echec. Sur grand ecran on ne touche a rien.
+    (function _capDriveImages() {
+        var petitEcran = Math.min(screen.width, screen.height) <= 820;
+        if (!petitEcran) return;
+        var CAP = '=s4000';
+        function borne(img) {
+            if (!img || img.tagName !== 'IMG') return;
+            var s = img.getAttribute('src') || '';
+            if (s.indexOf('lh3.googleusercontent.com') < 0) return;
+            if (/=s0$/.test(s)) img.setAttribute('src', s.replace(/=s0$/, CAP));
+        }
+        function replier(e) {
+            var img = e.target;
+            if (!img || img.tagName !== 'IMG' || img._repli) return;
+            var s = img.getAttribute('src') || '';
+            if (s.indexOf('lh3.googleusercontent.com') < 0) return;
+            var m = s.match(/=s(\d+)$/);
+            var actuel = m ? parseInt(m[1], 10) : 0;
+            var suivant = (actuel === 0 || actuel > 2048) ? 2048 : (actuel > 1200 ? 1200 : 0);
+            if (!suivant) return;
+            img._repli = 1;
+            img.setAttribute('src', s.replace(/=s\d+$/, '=s' + suivant));
+        }
+        document.addEventListener('error', replier, true);
+        try {
+            new MutationObserver(function(muts) {
+                for (var i = 0; i < muts.length; i++) {
+                    var m = muts[i];
+                    if (m.type === 'attributes') { borne(m.target); continue; }
+                    for (var j = 0; j < m.addedNodes.length; j++) {
+                        var n = m.addedNodes[j];
+                        if (n.nodeType !== 1) continue;
+                        if (n.tagName === 'IMG') borne(n);
+                        else if (n.querySelectorAll) {
+                            var l = n.querySelectorAll('img');
+                            for (var k = 0; k < l.length; k++) borne(l[k]);
+                        }
+                    }
+                }
+            }).observe(document.documentElement, {
+                subtree: true, childList: true, attributes: true, attributeFilter: ['src']
+            });
+        } catch (e) {}
+        var deja = document.querySelectorAll('img');
+        for (var i = 0; i < deja.length; i++) borne(deja[i]);
+    })();
+
+
     // === Altitude : correctif pour les cartes DEJA PUBLIEES ===
     // Le HTML genere appelle api.open-elevation.com (hors service) et une URL
     // IGN incorrecte (/calcul/alt/ sans `resource`). On redefinit les deux
