@@ -13,6 +13,100 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _hypothesesToponymeSeul() {
+        // Les hypotheses lexicales etaient calculees sur le NOM DU POINT
+        // ("Point Test", "Position partagee - 02:09") : correspondances sans
+        // valeur, et l'association enregistree portait sur ce nom au lieu d'un
+        // toponyme. On part desormais du toponyme cadastral qui contient le
+        // point ; sans toponyme contenant, aucune hypothese n'est proposee.
+        function normaliser(t) {
+            return String(t || '').toLowerCase().normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+        }
+        function present(liste, champ, nom) {
+            if (!liste || !liste.length) return false;
+            var c = normaliser(nom);
+            if (!c) return false;
+            for (var i = 0; i < liste.length; i++) {
+                if (normaliser(liste[i][champ]) === c) return true;
+            }
+            return false;
+        }
+        function estToponyme(nom) { return present(window.searchData, 'nom', nom); }
+        function estNomDePoint(nom) { return present(window.customFeaturesData, 'name', nom); }
+        function ficheDuPoint(nom) {
+            var p = document.getElementById('modernDetailPanel');
+            if (!p || p.className.indexOf('open') < 0) return false;
+            var t = document.getElementById('modernDetailTitle');
+            return !!t && normaliser(t.textContent) === normaliser(nom);
+        }
+        // Le toponyme contenant est deja calcule par la fiche, qui l'affiche en
+        // tete du sous-titre ; currentCfData n'est pas accessible d'ici, on lit
+        // donc ce que la fiche a ecrit.
+        function toponymeContenant() {
+            var sub = document.getElementById('modernDetailCommune');
+            var sp = sub ? sub.querySelector('span') : null;
+            var t = sp ? String(sp.textContent || '').trim() : '';
+            if (t && t.indexOf(',') > 0) t = t.split(',')[0].trim();
+            return t.replace(/…$/, '').trim();
+        }
+        // La section est construite par la carte : on corrige apres coup le
+        // toponyme porte par le conteneur (c'est lui qui sera enregistre) et on
+        // nomme la source dans l'entete.
+        function corriger() {
+            var sec = document.getElementById('detailCfHypothesesSection');
+            if (!sec) return;
+            var c = sec.querySelector('.hypotheses-container');
+            if (!c) return;
+            var nom = c.getAttribute('data-toponyme') || '';
+            if (!nom || !estNomDePoint(nom) || estToponyme(nom)) return;
+            var t = toponymeContenant();
+            if (!t) { sec.innerHTML = ''; return; }
+            c.setAttribute('data-toponyme', t);
+            var h = c.querySelector('.hypotheses-header');
+            if (h && h.textContent.indexOf('\u2014') < 0) {
+                h.textContent = h.textContent + ' \u2014 ' + t;
+            }
+        }
+        function brancher(essai) {
+            if (typeof window.searchLexiqueMultiple !== 'function') {
+                if ((essai || 0) < 60) setTimeout(function() { brancher((essai || 0) + 1); }, 500);
+                return;
+            }
+            if (!window.searchLexiqueMultiple._toponymeSeul) {
+                var origine = window.searchLexiqueMultiple;
+                var enveloppe = function(nom) {
+                    if (nom && estNomDePoint(nom) && !estToponyme(nom)) {
+                        // Le toponyme n'est lu dans la fiche que si c'est bien
+                        // CE point qui y est affiche : sinon (generation d'un
+                        // rapport, fiche restee ouverte) on prendrait le
+                        // toponyme d'un autre point.
+                        var t = ficheDuPoint(nom) ? toponymeContenant() : '';
+                        return t ? origine.call(this, t) : [];
+                    }
+                    return origine.apply(this, arguments);
+                };
+                enveloppe._toponymeSeul = true;
+                window.searchLexiqueMultiple = enveloppe;
+            }
+            var panneau = document.getElementById('modernDetailPanel') || document.body;
+            if (panneau && !panneau._hypoObserve) {
+                panneau._hypoObserve = true;
+                var minuteur = null;
+                new MutationObserver(function() {
+                    clearTimeout(minuteur);
+                    minuteur = setTimeout(corriger, 120);
+                }).observe(panneau, { childList: true, subtree: true });
+            }
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(0); });
+        } else {
+            brancher(0);
+        }
+    })();
+
+
     (function _filtresRepliables() {
         function compter() {
             var n = 0;
