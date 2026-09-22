@@ -2759,3 +2759,15 @@ html body #searchContainer #tabCustom #cfFilters#cfFilters .filter-btn.filter-bt
 html body #searchContainer #tabModifs .filter-btn.filter-btn-add:hover{
  background:var(--acc)!important;color:var(--prim-ink)!important}
 
+/* === Bulle : croix de fermeture ==============================================
+   Elle etait calee sur le coin (top:0, right:0, boite de 26 px) et recouvrait
+   le bouton "Resume" de 12 px des que le titre passait sur deux lignes. On lui
+   donne une boite nette, alignee sur la PREMIERE ligne de l'entete, et on
+   reserve la place correspondante a droite de l'entete. */
+html body .leaflet-popup-close-button{
+ width:20px!important;height:20px!important;top:10px!important;right:8px!important;
+ padding:0!important;font:400 15px/20px var(--sans)!important;text-align:center!important;
+ color:var(--ink3)!important;border-radius:2px!important}
+html body .leaflet-popup-close-button:hover{color:var(--ink)!important;background:var(--hover)!important}
+html body .leaflet-popup-content [id^="popup-"] > div:first-child{padding-right:24px!important}
+

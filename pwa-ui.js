@@ -109,7 +109,9 @@
                     b.type = 'button';
                     b.textContent = 'Fiche';
                     b.onclick = function(ev) { ev.stopPropagation(); ouvrirFiche(id); };
-                    actions.insertBefore(b, actions.firstChild);
+                    // apres "+ Selection" : l'ajout a la selection reste la premiere
+                    // action de la rangee, "Fiche" ferme la marche.
+                    actions.appendChild(b);
                 }
                 if (!petitEcran) return;
                 // Sur mobile la fiche ne s'ouvre plus toute seule : le gestionnaire
@@ -269,7 +271,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '1ecb63cf4b';
+        var THEME_V = '15056f9415';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
