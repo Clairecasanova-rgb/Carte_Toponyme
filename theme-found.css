@@ -2634,12 +2634,13 @@ html body .leaflet-popup-content [id^="popup-"] > div:first-child > button.pwaCr
 html body .leaflet-popup-content [id^="popup-"] > div:first-child > button.pwaCrayon:hover{
  color:var(--ink)!important}
 
-/* Bouton "Fiche" ajoute dans la bulle par pwa-ui.js : meme aspect que les
-   autres actions (lien souligne), en bleu marine puisqu'il mene au dossier. */
+/* Bouton "Fiche" ajoute dans la bulle par pwa-ui.js : meme aspect et meme
+   couleur que "Resume" de l'entete, puisque les deux menent a la meme fiche.
+   "+ Selection", qui fait autre chose, garde son vert a cote. */
 html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche{
  background:transparent!important;border:none!important;padding:0!important;box-shadow:none!important;
  font-family:var(--sans)!important;font-size:12px!important;font-weight:600!important;
- color:var(--ink)!important;text-decoration:underline!important;text-underline-offset:3px!important;
+ color:var(--acc-text)!important;text-decoration:underline!important;text-underline-offset:3px!important;
  text-decoration-color:var(--bd)!important;cursor:pointer;flex:0 0 auto!important;width:auto!important}
 html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche:hover{text-decoration-color:var(--acc)!important}
 

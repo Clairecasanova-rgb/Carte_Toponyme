@@ -378,13 +378,20 @@ self.addEventListener('fetch', (event) => {
             // clignotement de l'ancien aspect), revalidation en arriere-plan.
             event.respondWith((async () => {
                 const cache = await _getCache(STATIC_CACHE);
-                let c = await cache.match(req);
-                if (!c) c = await cache.match(req, { ignoreSearch: true });
+                const c = await cache.match(req);
                 const net = fetch(req, { cache: 'no-store' }).then((resp) => {
                     if (resp && resp.ok) cache.put(req, resp.clone()).catch(() => null);
                     return resp;
                 }).catch(() => null);
-                return c || (await net) || fetch(req);
+                // Jeton identique : la feuille en cache est la bonne, on la sert
+                // tout de suite (pas de clignotement) et on revalide derriere.
+                if (c) return c;
+                // Jeton different = feuille modifiee. Servir l'ancienne (repli
+                // ignoreSearch) la ferait contredire un pwa-ui.js deja a jour :
+                // une regle de position visait alors le mauvais bouton. On
+                // attend donc le reseau, et on ne retombe sur l'ancienne que
+                // si le reseau ne repond pas (hors ligne).
+                return (await net) || (await cache.match(req, { ignoreSearch: true })) || fetch(req);
             })());
             return;
         }
