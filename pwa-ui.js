@@ -337,29 +337,6 @@
                     crayon.title = 'Editer';
                     tete.insertBefore(crayon, vp || null);
                 }
-                // Zoom : glyphe d'entete a cote du crayon. Les deux agissent sur
-                // l'objet lui-meme ; la rangee du bas garde ses libelles en toutes
-                // lettres pour les actions de fiche, de donnees et d'export.
-                if (tete && !tete.querySelector('.pwaZoom')
-                    && typeof window.zoomToCustomFeature === 'function') {
-                    var zb = document.createElement('button');
-                    zb.className = 'pwaZoom';
-                    zb.type = 'button';
-                    zb.textContent = '⊕';
-                    zb.title = 'Centrer la carte sur ce point';
-                    zb.setAttribute('aria-label', 'Centrer la carte sur ce point');
-                    zb.onclick = function(ev) {
-                        ev.stopPropagation();
-                        var liste = window.customFeaturesData || [];
-                        for (var i = 0; i < liste.length; i++) {
-                            if (String(liste[i].id) === String(id)) {
-                                window.zoomToCustomFeature(liste[i]);
-                                return;
-                            }
-                        }
-                    };
-                    tete.insertBefore(zb, tete.querySelector('.pwaCrayon') || vp || null);
-                }
                 var actions = div.lastElementChild;
                 if (actions && !actions.querySelector('.pwaVoirFiche')) {
                     var b = document.createElement('button');
@@ -370,6 +347,26 @@
                     // apres "+ Selection" : l'ajout a la selection reste la premiere
                     // action de la rangee, "Fiche" ferme la marche.
                     actions.appendChild(b);
+                }
+                // Zoom : centre la carte sur le point, juste a gauche de Partager.
+                if (actions && !actions.querySelector('.pwaZoom')
+                    && typeof window.zoomToCustomFeature === 'function') {
+                    var zb = document.createElement('button');
+                    zb.className = 'pwaZoom';
+                    zb.type = 'button';
+                    zb.textContent = 'Zoom';
+                    zb.title = 'Centrer la carte sur ce point';
+                    zb.onclick = function(ev) {
+                        ev.stopPropagation();
+                        var liste = window.customFeaturesData || [];
+                        for (var i = 0; i < liste.length; i++) {
+                            if (String(liste[i].id) === String(id)) {
+                                window.zoomToCustomFeature(liste[i]);
+                                return;
+                            }
+                        }
+                    };
+                    actions.appendChild(zb);
                 }
                 // Partage : nom, coordonnees et altitude, a droite de la rangee.
                 if (actions && !actions.querySelector('.pwaPartage')
@@ -540,7 +537,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '8da4248ef6';
+        var THEME_V = 'c6e9205a64';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
