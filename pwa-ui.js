@@ -21,9 +21,16 @@
             var orig = window.openPhotoLightbox;
             if (typeof orig !== 'function' || orig._assaini) return false;
             var patched = function(urls, startIndex) {
+                var _pageUrl = location.href.split('#')[0];   // marqueur _lbPageUrl
                 var propres = (urls || []).filter(function(u) {
-                    return typeof u === 'string' && u && u !== 'undefined' && u !== 'null';
+                    if (typeof u !== 'string' || !u || u === 'undefined' || u === 'null') return false;
+                    // Une <img> sans attribut src renvoie l'URL de la PAGE via i.src :
+                    // l'ecarter, sinon la visionneuse affiche le HTML de la carte.
+                    if (u.split('#')[0] === _pageUrl) return false;
+                    if (/\.(html?|php)(\?|$)/i.test(u)) return false;
+                    return true;
                 });
+                propres = propres.filter(function(u, i) { return propres.indexOf(u) === i; });
                 if (!propres.length) return;
                 var i = parseInt(startIndex, 10);
                 if (!(i >= 0) || i >= propres.length) i = 0;
@@ -10274,7 +10281,11 @@
             gal = sec.querySelector('.cf-photos');
         }
         /* liste complete pour la lightbox = photos deja presentes + nouvelles */
-        var existing = [].slice.call(gal.querySelectorAll('img')).map(function (i) { return i.src; });
+        // getAttribute et non .src : sur une <img> sans src, .src renvoie l'URL
+        // de la page, qui polluait la liste passee a la visionneuse. (_galSrcFix)
+        var existing = [].slice.call(gal.querySelectorAll('img')).map(function (i) {
+            return i.getAttribute('src') || '';
+        }).filter(function (v) { return !!v; });
         var all = existing.concat(urls.filter(function (u) { return existing.indexOf(u) === -1; }));
         /* la consigne "Cliquer pour agrandir" reste EN DERNIER: inserer les images avant elle */
         var hint = gal.querySelector('.napoleon-crop-hint');
