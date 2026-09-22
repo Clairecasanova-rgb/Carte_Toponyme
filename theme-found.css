@@ -2560,3 +2560,45 @@ html body #searchContainer #tabProjet #projetStatsLite + .projet-section + .proj
 html body #searchContainer #tabProjet .projet-section:last-of-type{
  margin-top:0!important;padding-top:28px!important;border-top:1px solid var(--bd)!important}
 
+/* === Bulles de carte : version "rangee" (variante C) =========================
+   Contenu construit en HTML inline par map_collaboration : on ne peut pas le
+   restructurer en CSS, mais on peut le compacter. Tout est conserve — les
+   coordonnees Lambert sont lues sur le terrain depuis la bulle — en passant de
+   280 a environ 150 px : coordonnees sur une ligne, actions en liens. */
+html body .leaflet-popup-content [id^="popup-"]{min-width:230px!important;font-family:var(--sans)!important}
+html body .leaflet-popup-content [id^="popup-"] > div:first-child > b{font-size:15px!important;
+ font-weight:600!important;letter-spacing:.02em!important}
+html body .leaflet-popup-content [id^="popup-"] > small{font-size:11px!important;color:var(--ink2)!important}
+html body .leaflet-popup-content [id^="popup-"] > i{font-size:12px!important;color:var(--ink2)!important;
+ line-height:1.35!important;display:block;margin-top:4px}
+html body .leaflet-popup-content [id^="popup-"] span[style*="background:#dbeafe"]{
+ background:var(--tagbg)!important;color:var(--ink2)!important;border-radius:2px!important;
+ font-family:var(--mono)!important;font-size:10px!important}
+/* bouton "voir +" : lien discret plutot qu'un bouton gris-bleu */
+html body .leaflet-popup-content [id^="popup-"] > div:first-child > button{
+ background:transparent!important;border:none!important;color:var(--acc-text)!important;
+ font-family:var(--sans)!important;font-size:12px!important;padding:0!important;
+ text-decoration:underline!important;text-underline-offset:3px!important;
+ text-decoration-color:var(--bd)!important}
+/* bloc Lambert 93 : 4 lignes -> 2 (intitule, puis valeurs sur une ligne) */
+html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"]{
+ background:var(--bg)!important;border:1px solid var(--bd2)!important;border-radius:2px!important;
+ margin-top:8px!important;padding:6px 8px!important;font-family:var(--mono)!important;
+ font-variant-numeric:tabular-nums;line-height:1.5!important}
+html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"] > div{
+ display:inline!important;font-size:11px!important;color:var(--ink)!important}
+html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"] > div:first-child{
+ display:block!important;font-family:var(--sans)!important;font-size:10px!important;
+ font-weight:500!important;color:var(--ink2)!important;margin-bottom:1px}
+html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"] > div:nth-child(n+3)::before{
+ content:" \00b7 ";color:var(--ink3)}
+/* actions : liens plutot que boutons pleins, "+ Selection" reste vert */
+html body .leaflet-popup-content [id^="popup-"] > div:last-child{gap:16px!important;margin-top:10px!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button{
+ background:transparent!important;border:none!important;padding:0!important;box-shadow:none!important;
+ font-family:var(--sans)!important;font-size:12px!important;font-weight:500!important;
+ text-decoration:underline!important;text-underline-offset:3px!important;
+ text-decoration-color:var(--bd)!important;flex:0 0 auto!important;width:auto!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:first-child{color:#4CAF50!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button:last-child{color:var(--acc-text)!important}
+

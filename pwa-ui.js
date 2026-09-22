@@ -13,6 +13,47 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    // === Mobile : bulle au 1er appui, fiche au 2e ===
+    (function _ficheAuSecondAppui() {
+        if (Math.min(screen.width, screen.height) > 820) return;   // mobile seulement
+        var dernierId = null, dernierT = 0;
+        function carte() {
+            for (var k in window) {
+                try {
+                    var o = window[k];
+                    if (o && o._container && o.eachLayer && o.getCenter && o.on) return o;
+                } catch (e) {}
+            }
+            return null;
+        }
+        function brancher(essai) {
+            var map = carte();
+            if (!map) { if ((essai || 0) < 30) setTimeout(function() { brancher((essai || 0) + 1); }, 600); return; }
+            map.on('popupopen', function(e) {
+                var el = e.popup && e.popup.getElement && e.popup.getElement();
+                if (!el) return;
+                var div = el.querySelector('[id^="popup-"]');
+                if (!div) return;                       // bulle de toponyme : inchangee
+                var id = div.id.replace('popup-', '');
+                var maintenant = Date.now();
+                var second = (id === dernierId && maintenant - dernierT < 30000);
+                dernierId = id; dernierT = maintenant;
+                if (second) return;                     // 2e appui : on laisse la fiche s'ouvrir
+                var item = document.querySelector('.custom-feature-item[data-id="' + id + '"]');
+                if (!item) return;
+                item.removeAttribute('data-id');
+                setTimeout(function() { item.setAttribute('data-id', id); }, 0);
+            });
+            // notre gestionnaire doit passer AVANT celui du HTML genere
+            try {
+                var f = map._events && map._events.popupopen;
+                if (f && f.length > 1) f.unshift(f.pop());
+            } catch (e) {}
+        }
+        brancher(0);
+    })();
+
+
     // === Visionneuse photo : liste et index assainis ===
     // On retire les URL vides et on ramene l'index dans les bornes : sans cela
     // un point n'ayant que sa seconde photo ouvrait un src="undefined".
