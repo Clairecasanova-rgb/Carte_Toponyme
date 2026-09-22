@@ -9208,6 +9208,11 @@
         return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
     }
     function _anyModalOpen() {
+        // Fiche toponyme : toujours presente dans le DOM, glissee hors ecran
+        // quand elle est fermee -> on se fie a la classe posee sur le body.
+        if (document.body && document.body.classList.contains('detail-open')) return true;
+        var dp = document.getElementById('modernDetailPanel');
+        if (dp && dp.classList.contains('open')) return true;
         for (var i = 0; i < _fabModalIds.length; i++) {
             if (_fabVisible(document.getElementById(_fabModalIds[i]))) return true;
         }
