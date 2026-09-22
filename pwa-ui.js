@@ -13,6 +13,61 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _iconesOeil() {
+        // L'oeil des boutons "afficher / masquer" etait un emoji, dont le dessin
+        // et la couleur dependent du systeme. On le remplace par une icone au
+        // trait, qui suit la couleur du bouton (currentColor). L'etat masque
+        // etait rendu par un barre : c'est desormais l'oeil barre.
+        var VU = '<svg class="pwaOeil" width="15" height="15" viewBox="0 0 24 24" fill="none"'
+            + ' stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
+            + ' aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>'
+            + '<circle cx="12" cy="12" r="3"/></svg>';
+        var MASQUE = '<svg class="pwaOeil" width="15" height="15" viewBox="0 0 24 24" fill="none"'
+            + ' stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
+            + ' aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8'
+            + ' a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8'
+            + ' a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>'
+            + '<line x1="1" y1="1" x2="23" y2="23"/></svg>';
+        function remplacer(b) {
+            if (!b) return;
+            var txt = b.textContent || '';
+            if (txt.indexOf('👁') < 0) return;
+            // Etat masque : le code d'origine barrait l'oeil.
+            var barre = !!b.querySelector('[style*="line-through"]');
+            var sup = b.querySelector('sup');
+            b.innerHTML = (barre ? MASQUE : VU) + (sup ? sup.outerHTML : '');
+            b.setAttribute('aria-pressed', barre ? 'true' : 'false');
+            if (!b.title) b.title = barre ? 'Afficher' : 'Masquer';
+        }
+        function passe() {
+            var vus = document.querySelectorAll('button, .filter-btn, .btn-cf-action');
+            for (var i = 0; i < vus.length; i++) remplacer(vus[i]);
+        }
+        function brancher() {
+            passe();
+            var cible = document.getElementById('searchContainer') || document.body;
+            if (!cible || cible._oeilObserve) return;
+            cible._oeilObserve = true;
+            var minuteur = null;
+            try {
+                new MutationObserver(function() {
+                    clearTimeout(minuteur);
+                    minuteur = setTimeout(passe, 120);
+                }).observe(cible, { childList: true, subtree: true, characterData: true });
+            } catch (e) {}
+            // Les listes se reconstruisent souvent : une relecture differee suffit
+            // a rattraper les boutons crees apres coup.
+            setTimeout(passe, 1500);
+            setTimeout(passe, 4000);
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', brancher);
+        } else {
+            brancher();
+        }
+    })();
+
+
     (function _partageEtCoordonnees() {
         // 1. Bouton "Partager" dans la bulle : nom, coordonnees et altitude.
         // 2. Fiche complete : Lambert 93 et altitude, qui n'y figuraient pas
@@ -537,7 +592,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = 'c6e9205a64';
+        var THEME_V = '4afdf7ec98';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;

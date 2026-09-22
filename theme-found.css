@@ -382,7 +382,7 @@ html body .btn-refresh-icon:hover {
     color: #a3623a !important;
 }
 
-/* filter-btn (X, 👁, ✎, + dans Liste / Modifs barres filtres)
+/* filter-btn (X, oeil, ✎, + dans Liste / Modifs barres filtres)
    Spec boost: 3+ IDs pour battre `#tabCustom #cfFilters button` (200pts) */
 html body #searchContainer #tabCustom #cfFilters .filter-btn,
 html body #searchContainer #tabCustom #cfFilters button,
@@ -2803,4 +2803,13 @@ html body .leaflet-popup-content [id^="popup-"] .pwaZoom{
 html body .leaflet-popup-content [id^="popup-"] .pwaZoom:hover{
  color:var(--ink)!important;text-decoration-color:var(--acc)!important}
 html body .leaflet-popup-content [id^="popup-"] .pwaZoom + .pwaPartage{margin-left:0!important}
+
+/* Icone d'oeil (afficher / masquer) : elle remplace un emoji, dont le dessin
+   et la couleur dependaient du systeme. Le bouton centre son icone et celle-ci
+   prend la couleur du texte. */
+html body .filter-btn,
+html body #searchContainer .filter-btn{display:inline-flex!important;
+ align-items:center!important;justify-content:center!important}
+html body svg.pwaOeil,
+html body svg.icone-oeil{display:block!important;flex:0 0 auto!important}
 
