@@ -2909,3 +2909,12 @@ html body .leaflet-popup-content [id^="popup-"] .pwaLongueur{
  border-radius:2px!important;font-family:var(--mono)!important;font-size:11px!important;
  color:var(--ink)!important}
 
+/* Tri et export GPX poses dans la barre d'outils des elements par pwa-ui.js. */
+html body #customFeaturesToolbar .pwaTri{font-family:var(--sans)!important;font-size:11px!important;
+ color:var(--ink2)!important;background:var(--input)!important;border:1px solid var(--bd)!important;
+ border-radius:2px!important;padding:3px 4px!important;height:28px!important;max-width:96px!important;
+ margin-right:4px!important}
+html body #customFeaturesToolbar .pwaGpx{font-family:var(--sans)!important;font-size:11px!important;
+ font-weight:600!important;letter-spacing:.02em!important;padding:0 8px!important;width:auto!important;
+ min-width:38px!important;height:28px!important}
+

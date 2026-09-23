@@ -13,6 +13,178 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _triEtExportGpx() {
+        // Deux manques de la liste des elements : on ne peut pas choisir son
+        // ordre, et rien ne sort vers un GPS. Les deux se posent dans la barre
+        // d'outils de l'onglet Elements.
+        var CLE_TRI = 'pwaTriElements';
+
+        function lireTri() {
+            try { return localStorage.getItem(CLE_TRI) || 'recents'; } catch (e) { return 'recents'; }
+        }
+        function ecrireTri(v) {
+            try { localStorage.setItem(CLE_TRI, v); } catch (e) {}
+        }
+        function trier(liste) {
+            var mode = lireTri();
+            var texte = function(x) { return String(x || '').toLocaleLowerCase('fr'); };
+            if (mode === 'nom') {
+                liste.sort(function(a, b) { return texte(a.name).localeCompare(texte(b.name), 'fr'); });
+            } else if (mode === 'categorie') {
+                liste.sort(function(a, b) {
+                    var c = texte(a.category).localeCompare(texte(b.category), 'fr');
+                    return c !== 0 ? c : texte(a.name).localeCompare(texte(b.name), 'fr');
+                });
+            } else {
+                // Les plus recents d'abord. created_at n'est pas charge par la
+                // carte : l'identifiant, croissant, fait foi.
+                liste.sort(function(a, b) { return (b.id || 0) - (a.id || 0); });
+            }
+            return liste;
+        }
+        function appliquer() {
+            if (!window.customFeaturesData) return;
+            trier(window.customFeaturesData);
+            if (typeof window.refreshCustomFeaturesList === 'function') {
+                try { window.refreshCustomFeaturesList(); } catch (e) {}
+            }
+        }
+
+        // --- GPX -----------------------------------------------------------
+        function echapper(t) {
+            return String(t == null ? '' : t)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+        function sommets(g) {
+            if (!g || !g.coordinates) return null;
+            if (g.type === 'LineString') return g.coordinates;
+            if (g.type === 'MultiLineString') return g.coordinates[0];
+            if (g.type === 'Polygon') return g.coordinates[0];
+            if (g.type === 'MultiPolygon') return g.coordinates[0][0];
+            return null;
+        }
+        function gpx(elements) {
+            var l = ['<?xml version="1.0" encoding="UTF-8"?>',
+                '<gpx version="1.1" creator="Carte des toponymes corses"'
+                + ' xmlns="http://www.topografix.com/GPX/1/1">',
+                '<metadata><name>Elements de la carte</name><time>'
+                + new Date().toISOString() + '</time></metadata>'];
+            elements.forEach(function(f) {
+                var g = f.geometry;
+                if (!g) return;
+                var nom = echapper(f.name || ('Element ' + f.id));
+                var desc = echapper([f.category, f.description, f.auteur].filter(Boolean).join(' - '));
+                if (g.type === 'Point') {
+                    l.push('<wpt lat="' + g.coordinates[1] + '" lon="' + g.coordinates[0] + '">'
+                        + '<name>' + nom + '</name>'
+                        + (desc ? '<desc>' + desc + '</desc>' : '') + '</wpt>');
+                    return;
+                }
+                var pts = sommets(g);
+                if (!pts || pts.length < 2) return;
+                l.push('<trk><name>' + nom + '</name>'
+                    + (desc ? '<desc>' + desc + '</desc>' : '') + '<trkseg>');
+                pts.forEach(function(c) {
+                    l.push('<trkpt lat="' + c[1] + '" lon="' + c[0] + '"></trkpt>');
+                });
+                l.push('</trkseg></trk>');
+            });
+            l.push('</gpx>');
+            return l.join('\n');
+        }
+        function elementsAffiches() {
+            // Ce que la liste montre reellement, filtres compris.
+            var ids = [].slice.call(document.querySelectorAll('#customFeaturesList .custom-feature-item'))
+                .map(function(e) { return e.getAttribute('data-id'); })
+                .filter(Boolean);
+            var tous = window.customFeaturesData || [];
+            if (!ids.length) return tous.slice();
+            var parId = {};
+            tous.forEach(function(f) { parId[String(f.id)] = f; });
+            return ids.map(function(i) { return parId[i]; }).filter(Boolean);
+        }
+        function telecharger(nomFichier, contenu) {
+            try {
+                var blob = new Blob([contenu], { type: 'application/gpx+xml' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = nomFichier;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(function() {
+                    if (a.parentNode) a.parentNode.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 2000);
+                return true;
+            } catch (e) { return false; }
+        }
+        function exporter() {
+            var elements = elementsAffiches();
+            if (!elements.length) {
+                if (typeof showToast === 'function') showToast('Aucun element a exporter');
+                return;
+            }
+            var ok = telecharger('toponymes-' + new Date().toISOString().slice(0, 10) + '.gpx', gpx(elements));
+            if (typeof showToast === 'function') {
+                showToast(ok ? (elements.length + ' element(s) exportes en GPX')
+                             : 'Export impossible sur cet appareil');
+            }
+        }
+
+        // --- Pose dans la barre d'outils ------------------------------------
+        function poser(essai) {
+            var barre = document.getElementById('customFeaturesToolbar');
+            if (!barre) {
+                if ((essai || 0) < 60) setTimeout(function() { poser((essai || 0) + 1); }, 500);
+                return;
+            }
+            if (barre.querySelector('.pwaTri')) return;
+            var actions = barre.lastElementChild || barre;
+
+            var sel = document.createElement('select');
+            sel.className = 'pwaTri';
+            sel.title = 'Ordre de la liste';
+            [['recents', 'Recents'], ['nom', 'Nom'], ['categorie', 'Categorie']].forEach(function(o) {
+                var opt = document.createElement('option');
+                opt.value = o[0];
+                opt.textContent = o[1];
+                sel.appendChild(opt);
+            });
+            sel.value = lireTri();
+            sel.onchange = function() { ecrireTri(sel.value); appliquer(); };
+            actions.insertBefore(sel, actions.firstChild);
+
+            var b = document.createElement('button');
+            b.className = 'btn-cf-action pwaGpx';
+            b.type = 'button';
+            b.textContent = 'GPX';
+            b.title = 'Exporter les elements affiches vers un GPS (GPX)';
+            b.onclick = function(ev) { ev.stopPropagation(); exporter(); };
+            actions.appendChild(b);
+
+            // Le tri doit survivre aux reconstructions de la liste.
+            if (typeof window.refreshCustomFeaturesList === 'function'
+                && !window.refreshCustomFeaturesList._triPose) {
+                var origine = window.refreshCustomFeaturesList;
+                var enveloppe = function() {
+                    if (window.customFeaturesData) trier(window.customFeaturesData);
+                    return origine.apply(this, arguments);
+                };
+                enveloppe._triPose = true;
+                window.refreshCustomFeaturesList = enveloppe;
+            }
+            appliquer();
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { poser(0); });
+        } else {
+            poser(0);
+        }
+    })();
+
+
     (function _mesuresDesTraces() {
         // Une ligne sert a tracer un chemin : sans sa longueur, elle ne dit pas
         // grand-chose. On ajoute la longueur dans la bulle, et dans la fiche la
@@ -1573,7 +1745,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = 'ac650f016b';
+        var THEME_V = 'a3be75a0d6';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
