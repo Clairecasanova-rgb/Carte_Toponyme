@@ -262,6 +262,19 @@ function _reecrireEnTete(texte) {
         out = out.replace('<div id="modernLoader">', LOADER_ICONE);
     }
     out = out.split('name="theme-color" content="#8b4513"').join('name="theme-color" content="#b8744a"');
+    // Le script de la carte ouvre le panneau d'office des les premieres
+    // centiemes de seconde ; pwa-ui.js, charge en defer, ne peut le refermer
+    // qu'apres l'analyse du document. Sur mobile, l'ancienne barre de
+    // recherche apparaissait donc furtivement. On la tient fermee des la
+    // premiere image, et pwa-ui.js leve la garde une fois qu'il a repris la
+    // main (delai de secours si le script ne s'executait pas).
+    const GARDE = '<style>@media (max-width:768px){html.pwaDepartPanneau #searchContainer{display:none!important}}</style>'
+        + '<script>document.documentElement.classList.add("pwaDepartPanneau");'
+        + 'setTimeout(function(){document.documentElement.classList.remove("pwaDepartPanneau");},12000);<\/script>';
+    const oIns = out.indexOf('<div id="modernLoader"');
+    if (oIns >= 0 && out.indexOf('pwaDepartPanneau') < 0) {
+        out = out.slice(0, oIns) + GARDE + out.slice(oIns);
+    }
     return out;
 }
 

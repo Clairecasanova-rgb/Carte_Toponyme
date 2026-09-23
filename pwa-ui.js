@@ -817,12 +817,16 @@
             document.addEventListener(e, marquer, { capture: true, passive: true });
         });
         function replier() {
-            if (interaction || !petitEcran()) return;
+            if (!petitEcran()) { document.documentElement.classList.remove('pwaDepartPanneau'); return; }
+            if (interaction) { document.documentElement.classList.remove('pwaDepartPanneau'); return; }
             var sc = document.getElementById('searchContainer');
             if (!sc || sc.classList.contains('collapsed')) return;
             sc.classList.add('collapsed');
             var pt = document.getElementById('panelToggle');
             if (pt) pt.classList.add('active');
+            // Le service worker tient le panneau ferme des la premiere image ;
+            // maintenant qu'il l'est pour de bon, on lui rend la main.
+            document.documentElement.classList.remove('pwaDepartPanneau');
         }
         // Quelques passages suffisent : le seul a rouvrir le panneau pendant ce
         // laps de temps est le script de la carte, a 180 ms environ.
