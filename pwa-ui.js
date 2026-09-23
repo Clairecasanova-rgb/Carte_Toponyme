@@ -54,6 +54,14 @@
             }
             return Math.abs(t * R * R / 2);
         }
+        function formaterDuree(sec) {
+            if (!sec || sec < 60) return '< 1 min';
+            var m = Math.round(sec / 60);
+            if (m < 60) return m + ' min';
+            var h = Math.floor(m / 60);
+            var r = m % 60;
+            return h + ' h' + (r ? ' ' + (r < 10 ? '0' + r : r) : '');
+        }
         function formaterSurface(m2) {
             if (!m2) return '';
             if (m2 >= 10000) return (m2 / 10000).toFixed(2).replace('.', ',') + ' ha';
@@ -92,9 +100,28 @@
                     var d = zs[j] - zs[j - 1];
                     if (d > 0) monte += d; else descend -= d;
                 }
+                // Temps de marche par la fonction de Tobler :
+                //   v = 6 . exp(-3,5 . |pente + 0,05|) km/h
+                // La pente compte dans les deux sens, l'aller et le retour
+                // different donc. C'est une estimation sur terrain praticable,
+                // sans facteur de difficulte (maquis, eboulis, portage).
+                function marche(sens) {
+                    var t = 0;
+                    for (var k = 1; k < zs.length; k++) {
+                        var a = pts[k - 1], b = pts[k];
+                        var dx = distance(a, b);
+                        if (!dx) continue;
+                        var dz = (zs[k] - zs[k - 1]) * sens;
+                        var v = 6 * Math.exp(-3.5 * Math.abs(dz / dx + 0.05));   // km/h
+                        if (v < 0.3) v = 0.3;
+                        t += (dx / 1000) / v;                                    // heures
+                    }
+                    return Math.round(t * 3600);                                 // secondes
+                }
                 return { monte: Math.round(monte), descend: Math.round(descend),
                          mini: Math.round(Math.min.apply(null, zs)),
-                         maxi: Math.round(Math.max.apply(null, zs)) };
+                         maxi: Math.round(Math.max.apply(null, zs)),
+                         aller: marche(1), retour: marche(-1) };
             }, function() { return null; });
         }
         function elementParId(id) {
@@ -166,12 +193,21 @@
                 if (!e) return;
                 if (!p) { e.textContent = 'non disponible'; return; }
                 e.textContent = '+' + p.monte + ' m / -' + p.descend + ' m';
+                var grilleFiche = e.parentNode && e.parentNode.parentNode;
+                if (!grilleFiche) return;
                 var champAlt = document.createElement('div');
                 champAlt.className = 'detail-field pwaMesureTrace';
                 champAlt.innerHTML = '<label>Altitudes</label><div class="value">'
                     + p.mini + ' - ' + p.maxi + ' m</div>';
-                if (e.parentNode && e.parentNode.parentNode) {
-                    e.parentNode.parentNode.appendChild(champAlt);
+                grilleFiche.appendChild(champAlt);
+                if (!ferme && p.aller) {
+                    var champT = document.createElement('div');
+                    champT.className = 'detail-field pwaMesureTrace';
+                    champT.title = 'Fonction de Tobler, sur le profil IGN echantillonne.'
+                        + ' Terrain praticable, sans facteur de difficulte.';
+                    champT.innerHTML = '<label>Marche (aller / retour)</label><div class="value">'
+                        + formaterDuree(p.aller) + ' / ' + formaterDuree(p.retour) + '</div>';
+                    grilleFiche.appendChild(champT);
                 }
             });
         }
