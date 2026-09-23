@@ -13,6 +13,208 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _tiretsSimples() {
+        // Les libelles de l'application separaient leurs elements par un tiret
+        // long. On s'en tient au tiret simple. Seuls les libelles fabriques par
+        // l'application sont repris : jamais une description ou un nom saisis,
+        // qui restent tels qu'ils ont ete ecrits.
+        var LIBELLES = [
+            '#modernDetailCommune',
+            '#modernDetailPanel .detail-section-title',
+            '#detailCustomModal .detail-section-title',
+            '.nap-nongeref-label',
+            '.hypotheses-header'
+        ];
+        function passe() {
+            for (var i = 0; i < LIBELLES.length; i++) {
+                var lot = document.querySelectorAll(LIBELLES[i]);
+                for (var j = 0; j < lot.length; j++) {
+                    var e = lot[j];
+                    // Un seul noeud de texte : on evite de casser une structure
+                    // interne (etiquettes, liens) en reecrivant tout le contenu.
+                    for (var k = 0; k < e.childNodes.length; k++) {
+                        var n = e.childNodes[k];
+                        if (n.nodeType === 3 && n.nodeValue.indexOf('—') >= 0) {
+                            n.nodeValue = n.nodeValue.replace(/\s*—\s*/g, ' - ');
+                        }
+                    }
+                }
+            }
+        }
+        function brancher() {
+            passe();
+            ['modernDetailPanel', 'detailCustomModal'].forEach(function(id) {
+                var c = document.getElementById(id);
+                if (!c || c._tiretsObserve) return;
+                c._tiretsObserve = true;
+                var minuteur = null;
+                try {
+                    new MutationObserver(function() {
+                        clearTimeout(minuteur);
+                        minuteur = setTimeout(passe, 120);
+                    }).observe(c, { childList: true, subtree: true, characterData: true });
+                } catch (e) {}
+            });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(); setTimeout(brancher, 2500); });
+        } else {
+            brancher();
+            setTimeout(brancher, 2500);
+        }
+    })();
+
+
+    (function _typeSelonGeometrie() {
+        // Des elements importes portent feature_type 'point' ou 'line' la ou le
+        // reste du code attend 'marker' ou 'polyline'. Or tout ce qui n'etait ni
+        // 'marker' ni 'polygon' etait range en ligne : un point s'annoncait donc
+        // "Ligne" dans sa fiche et portait l'icone [L] dans la liste. On se fie
+        // a la geometrie, qui fait foi.
+        function canonique(f) {
+            var g = f && f.geometry && f.geometry.type;
+            if (g === 'Point' || g === 'MultiPoint') return 'marker';
+            if (g === 'Polygon' || g === 'MultiPolygon') return 'polygon';
+            if (g === 'LineString' || g === 'MultiLineString') return 'polyline';
+            var t = f && f.feature_type;
+            if (t === 'point') return 'marker';
+            if (t === 'line' || t === 'ligne') return 'polyline';
+            return null;
+        }
+        function passe() {
+            var d = window.customFeaturesData;
+            if (!d || !d.length) return;
+            var corriges = 0;
+            for (var i = 0; i < d.length; i++) {
+                var c = canonique(d[i]);
+                if (c && d[i].feature_type !== c) { d[i].feature_type = c; corriges++; }
+            }
+            // On ne redessine la liste que si quelque chose a change, pour ne pas
+            // faire sauter le defilement a chaque passage.
+            if (corriges && typeof window.refreshCustomFeaturesList === 'function') {
+                try { window.refreshCustomFeaturesList(); } catch (e) {}
+            }
+        }
+        passe();
+        var debut = Date.now();
+        var minuteur = setInterval(function() {
+            passe();
+            if (Date.now() - debut > 30000) clearInterval(minuteur);
+        }, 1000);
+    })();
+
+
+    (function _chargementPlusDoux() {
+        // Mesure du chargement d'une carte publiee (59 Mo) sur mobile :
+        //   0 - 2,9 s   ecran blanc, le fichier est encore en cours d'analyse ;
+        //   2,9 - 3,6 s ecran de chargement de la carte ;
+        //   4,8 s       le controle des calques surgit ;
+        //   6,2 s       les badges et le bouton raster surgissent a leur tour.
+        // D'ou l'impression d'elements qui apparaissent par a-coups. On couvre
+        // le blanc du debut, puis on fait arriver ensemble les commandes
+        // tardives plutot qu'en trois vagues.
+
+        // --- 1. Voile immediat, le temps que la carte pose le sien ----------
+        var voile = null;
+        function chargeurVisible() {
+            var m = document.getElementById('modernLoader');
+            if (!m) return false;
+            var cs = getComputedStyle(m);
+            return cs.display !== 'none' && cs.opacity !== '0';
+        }
+        function poserVoile() {
+            if (chargeurVisible()) return;                        // deja couvert
+            if (document.getElementById('pwaVoileDepart')) return;
+            // Sur une carte de 59 Mo, document.body n'existe qu'au bout de
+            // trois secondes : on se pose donc sur <html>, disponible tout de
+            // suite, et le voile est retire des que la carte prend le relais.
+            voile = document.createElement('div');
+            voile.id = 'pwaVoileDepart';
+            voile.style.cssText = 'position:fixed;inset:0;z-index:100002;background:#eef0f0;'
+                + 'display:flex;align-items:center;justify-content:center;flex-direction:column;'
+                + 'gap:14px;transition:opacity .35s ease;';
+            voile.innerHTML =
+                '<div style="font:500 13px/1.3 system-ui,-apple-system,sans-serif;color:#6a4638;'
+                + 'letter-spacing:.02em">Chargement de la carte</div>'
+                + '<div style="width:120px;height:3px;border-radius:2px;background:#e0e4e3;overflow:hidden">'
+                + '<div style="width:40%;height:100%;background:#b8744a;'
+                + 'animation:pwaVoileGlisse 1.1s ease-in-out infinite"></div></div>'
+                + '<style>@keyframes pwaVoileGlisse{from{transform:translateX(-110%)}'
+                + 'to{transform:translateX(320%)}}</style>';
+            (document.body || document.documentElement).appendChild(voile);
+        }
+        function retirerVoile() {
+            var v = document.getElementById('pwaVoileDepart');
+            if (!v) return;
+            v.style.opacity = '0';
+            setTimeout(function() { if (v.parentNode) v.parentNode.removeChild(v); }, 400);
+        }
+        poserVoile();
+        // Passage de relais des que la carte affiche son propre ecran de
+        // chargement ; sinon au chargement complet ; et garde-fou dans tous les
+        // cas, pour qu'un voile ne puisse jamais rester coince.
+        try {
+            new MutationObserver(function() {
+                if (document.getElementById('modernLoader')) retirerVoile();
+            }).observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {}
+        window.addEventListener('load', function() { setTimeout(retirerVoile, 500); });
+        setTimeout(retirerVoile, 15000);
+
+        // --- 2. Arrivee groupee des commandes tardives ----------------------
+        var TARDIFS = ['.modern-layer-control', '#rasterMgrBtn', '#pwaPosBtn', '#pwaStatusBadge'];
+        var racine = document.documentElement;
+        racine.classList.add('pwaArriveeEnCours');
+        var debut = Date.now();
+        var minuteur = setInterval(function() {
+            var pretes = 0;
+            for (var i = 0; i < TARDIFS.length; i++) {
+                var e = document.querySelector(TARDIFS[i]);
+                if (e && e.getBoundingClientRect().width > 0) pretes++;
+            }
+            // Toutes en place, ou delai de garde : certaines cartes n'ont ni
+            // raster ni badges.
+            if (pretes === TARDIFS.length || Date.now() - debut > 9000) {
+                clearInterval(minuteur);
+                racine.classList.remove('pwaArriveeEnCours');
+            }
+        }, 150);
+    })();
+
+
+    (function _ouvertureSansSaccade() {
+        // Au chargement, la carte ouvre le panneau d'office ("Panneau toujours
+        // ouvert au chargement"), puis closeMobileUI le referme au premier
+        // contact avec la carte. Sur mobile, on voyait donc le panneau
+        // apparaitre, la loupe disparaitre, les badges se poser au milieu de
+        // l'ecran, puis tout se replacer. On laisse le panneau ferme : l'ecran
+        // s'ouvre sur la carte, et chaque element parait une seule fois, a sa
+        // place definitive.
+        function petitEcran() {
+            return Math.min(screen.width, screen.height) <= 820 || window.innerWidth <= 768;
+        }
+        var interaction = false;
+        function marquer() { interaction = true; }
+        ['pointerdown', 'keydown', 'touchstart'].forEach(function(e) {
+            document.addEventListener(e, marquer, { capture: true, passive: true });
+        });
+        function replier() {
+            if (interaction || !petitEcran()) return;
+            var sc = document.getElementById('searchContainer');
+            if (!sc || sc.classList.contains('collapsed')) return;
+            sc.classList.add('collapsed');
+            var pt = document.getElementById('panelToggle');
+            if (pt) pt.classList.add('active');
+        }
+        // Quelques passages suffisent : le seul a rouvrir le panneau pendant ce
+        // laps de temps est le script de la carte, a 180 ms environ.
+        [0, 250, 600, 1200, 2500].forEach(function(d) { setTimeout(replier, d); });
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', replier);
+        }
+    })();
+
+
     (function _poigneeFiches() {
         // Les deux fiches savent deja passer en plein ecran (classe
         // detail-expanded), mais leur bouton est masque sur mobile. On leur pose
@@ -686,8 +888,9 @@
             if (!t) { sec.innerHTML = ''; return; }
             c.setAttribute('data-toponyme', t);
             var h = c.querySelector('.hypotheses-header');
-            if (h && h.textContent.indexOf('\u2014') < 0) {
-                h.textContent = h.textContent + ' \u2014 ' + t;
+            if (h && !h.dataset.pwaToponyme) {
+                h.dataset.pwaToponyme = t;
+                h.textContent = h.textContent + ' - ' + t;
             }
         }
         function brancher(essai) {
@@ -1018,7 +1221,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '7704726d5c';
+        var THEME_V = '12c0985c66';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;

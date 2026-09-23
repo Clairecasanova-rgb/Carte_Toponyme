@@ -2562,8 +2562,8 @@ html body #searchContainer #tabProjet .projet-section:last-of-type{
 
 /* === Bulles de carte : version "rangee" (variante C) =========================
    Contenu construit en HTML inline par map_collaboration : on ne peut pas le
-   restructurer en CSS, mais on peut le compacter. Tout est conserve — les
-   coordonnees Lambert sont lues sur le terrain depuis la bulle — en passant de
+   restructurer en CSS, mais on peut le compacter. Tout est conserve - les
+   coordonnees Lambert sont lues sur le terrain depuis la bulle - en passant de
    280 a environ 150 px : coordonnees sur une ligne, actions en liens. */
 html body .leaflet-popup-content [id^="popup-"]{min-width:230px!important;font-family:var(--sans)!important}
 html body .leaflet-popup-content [id^="popup-"] > div:first-child > b{font-size:15px!important;
@@ -2888,5 +2888,20 @@ html body #detailCustomModalContent > .pwaPoigneeFiche{display:none}
  html body:has(#detailCustomModalContent.detail-expanded) #rasterMgrBtn,
  html body:has(#detailCustomModalContent.detail-expanded) #floatingButtons{
   opacity:0!important;pointer-events:none!important}
+}
+
+/* Commandes construites apres coup (calques, raster, badges) : elles
+   surgissaient en trois vagues, de 4,8 s a 6,2 s apres l'ouverture. pwa-ui.js
+   les retient jusqu'a ce qu'elles soient toutes en place, puis elles paraissent
+   ensemble, en fondu. */
+html.pwaArriveeEnCours .modern-layer-control,
+html.pwaArriveeEnCours #rasterMgrBtn,
+html.pwaArriveeEnCours #pwaPosBtn,
+html.pwaArriveeEnCours #pwaStatusBadge{opacity:0!important;pointer-events:none!important}
+@media (prefers-reduced-motion:no-preference){
+ html body .modern-layer-control,
+ html body #rasterMgrBtn,
+ html body #pwaPosBtn,
+ html body #pwaStatusBadge{transition:opacity .35s ease}
 }
 
