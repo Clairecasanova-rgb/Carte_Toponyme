@@ -2847,3 +2847,46 @@ html body #detailCustomModal a.pwaLien{
 html body #modernDetailBody a.pwaLien:hover,
 html body #detailCustomModal a.pwaLien:hover{text-decoration-color:var(--acc)!important}
 
+/* Poignee des fiches : meme geste que le panneau. Le plein ecran existait deja
+   (classe detail-expanded) mais son bouton est masque sur mobile. */
+@media (max-width:768px){
+ html body #modernDetailPanel > .pwaPoigneeFiche,
+ html body #detailCustomModalContent > .pwaPoigneeFiche{display:flex!important;
+  align-items:center!important;justify-content:center!important;height:18px!important;
+  flex:0 0 18px!important;cursor:grab;touch-action:none;background:transparent!important;
+  border:none!important;padding:0!important;margin:0 0 2px!important;width:100%!important}
+ html body #modernDetailPanel > .pwaPoigneeFiche .pwaPoigneeBarre,
+ html body #detailCustomModalContent > .pwaPoigneeFiche .pwaPoigneeBarre{display:block!important;
+  width:38px!important;height:4px!important;border-radius:2px!important;background:var(--bd)!important}
+ html body #modernDetailPanel > .pwaPoigneeFiche:active .pwaPoigneeBarre,
+ html body #detailCustomModalContent > .pwaPoigneeFiche:active .pwaPoigneeBarre{background:var(--ink3)!important}
+}
+html body #modernDetailPanel > .pwaPoigneeFiche,
+html body #detailCustomModalContent > .pwaPoigneeFiche{display:none}
+
+/* Fenetre resume en plein ecran : sa classe detail-expanded ne relevait que le
+   max-height, or sa hauteur vient de son contenu - rien ne changeait donc a
+   l'ecran. On lui donne vraiment l'ecran. */
+@media (max-width:768px){
+ html body #detailCustomModal.active #detailCustomModalContent.detail-expanded{
+  width:100%!important;max-width:100%!important;height:100dvh!important;max-height:100dvh!important;
+  border-radius:0!important;margin:0!important;padding-top:env(safe-area-inset-top, 0px)!important}
+ html body #detailCustomModal.active:has(#detailCustomModalContent.detail-expanded){
+  padding:0!important;align-items:stretch!important}
+}
+
+/* Fiche en plein ecran : les commandes de carte (zoom, dessin, calques, raster,
+   loupe) ont un z-index superieur et se posaient sur la fiche. Elles s'effacent
+   le temps du plein ecran, comme pour les fenetres modales. */
+@media (max-width:768px){
+ html body:has(#modernDetailPanel.detail-expanded) .leaflet-top.leaflet-left,
+ html body:has(#modernDetailPanel.detail-expanded) .modern-layer-control,
+ html body:has(#modernDetailPanel.detail-expanded) #rasterMgrBtn,
+ html body:has(#modernDetailPanel.detail-expanded) #floatingButtons,
+ html body:has(#detailCustomModalContent.detail-expanded) .leaflet-top.leaflet-left,
+ html body:has(#detailCustomModalContent.detail-expanded) .modern-layer-control,
+ html body:has(#detailCustomModalContent.detail-expanded) #rasterMgrBtn,
+ html body:has(#detailCustomModalContent.detail-expanded) #floatingButtons{
+  opacity:0!important;pointer-events:none!important}
+}
+

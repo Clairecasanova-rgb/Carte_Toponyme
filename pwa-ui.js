@@ -13,6 +13,93 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _poigneeFiches() {
+        // Les deux fiches savent deja passer en plein ecran (classe
+        // detail-expanded), mais leur bouton est masque sur mobile. On leur pose
+        // la meme poignee que le panneau : tirer vers le haut agrandit, vers le
+        // bas reduit puis referme, un simple appui bascule.
+        function petitEcran() {
+            return Math.min(screen.width, screen.height) <= 820 || window.innerWidth <= 768;
+        }
+        function clic(id) {
+            var b = document.getElementById(id);
+            if (b) { b.click(); return true; }
+            return false;
+        }
+        function poser(cible, reglages) {
+            if (!cible) return false;
+            var deja = cible.firstElementChild;
+            if (deja && deja.classList && deja.classList.contains('pwaPoignee')) return true;
+            var h = document.createElement('div');
+            h.className = 'pwaPoignee pwaPoigneeFiche';
+            h.setAttribute('role', 'button');
+            h.setAttribute('tabindex', '0');
+            h.title = 'Tirer pour agrandir ou reduire';
+            h.setAttribute('aria-label', 'Tirer pour agrandir ou reduire la fiche');
+            h.innerHTML = '<span class="pwaPoigneeBarre"></span>';
+            cible.insertBefore(h, cible.firstChild);
+
+            var depart = null, bouge = false;
+            h.addEventListener('pointerdown', function(e) {
+                depart = e.clientY;
+                bouge = false;
+                try { h.setPointerCapture(e.pointerId); } catch (err) {}
+            });
+            h.addEventListener('pointermove', function(e) {
+                if (depart !== null && Math.abs(e.clientY - depart) > 8) bouge = true;
+            });
+            h.addEventListener('pointerup', function(e) {
+                if (depart === null) return;
+                var dy = e.clientY - depart;
+                depart = null;
+                if (!bouge) { reglages.basculer(); return; }
+                if (dy < -40) { if (!reglages.plein()) reglages.basculer(); return; }
+                if (dy > 40) {
+                    if (reglages.plein()) reglages.basculer();
+                    else reglages.fermer();
+                }
+            });
+            h.addEventListener('pointercancel', function() { depart = null; });
+            h.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); reglages.basculer(); }
+            });
+            return true;
+        }
+        function brancher(essai) {
+            var fiche = document.getElementById('modernDetailPanel');
+            var resume = document.getElementById('detailCustomModalContent');
+            var pose = 0;
+            if (fiche && poser(fiche, {
+                plein: function() { return fiche.classList.contains('detail-expanded'); },
+                basculer: function() {
+                    if (clic('btnModernDetailExpand')) return;
+                    fiche.classList.toggle('detail-expanded');
+                },
+                fermer: function() {
+                    if (typeof window.closeModernDetail === 'function') window.closeModernDetail();
+                    else fiche.classList.remove('open');
+                }
+            })) pose++;
+            if (resume && poser(resume, {
+                plein: function() { return resume.classList.contains('detail-expanded'); },
+                basculer: function() {
+                    if (clic('btnDetailExpand')) return;
+                    resume.classList.toggle('detail-expanded');
+                },
+                fermer: function() {
+                    if (typeof window.closeDetailModal === 'function') window.closeDetailModal();
+                }
+            })) pose++;
+            if (pose < 2 && (essai || 0) < 60) setTimeout(function() { brancher((essai || 0) + 1); }, 500);
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(0); });
+        } else {
+            brancher(0);
+        }
+    })();
+
+
     (function _pasDeClavierSurCommune() {
         // Choisir une commune redonnait le focus au champ de recherche : sur
         // mobile, le clavier remontait aussitot et recouvrait les resultats
@@ -931,7 +1018,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = 'df50bdf6d1';
+        var THEME_V = '7704726d5c';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
