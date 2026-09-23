@@ -145,17 +145,22 @@
 
         // --- Message et fermeture a l'enregistrement -------------------------
         function message(txt) {
-            try {
-                if (typeof showToast === 'function') { showToast(txt, 2600); return; }
-                if (typeof window.showToast === 'function') { window.showToast(txt, 2600); return; }
-            } catch (e) {}
+            // En haut de l'ecran : en bas, le message tombait la ou le panneau
+            // vient de se refermer, sous les doigts et pres de la barre systeme.
+            // Meme aspect que les autres messages de l'application.
             var t = document.createElement('div');
-            t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);'
-                + 'background:rgba(40,40,40,0.92);color:#fff;padding:10px 18px;border-radius:22px;'
-                + 'font:600 13px/1.3 sans-serif;box-shadow:0 4px 14px rgba(0,0,0,0.28);z-index:100600;';
+            t.className = 'pwaMessageHaut';
+            t.setAttribute('role', 'status');
+            t.style.cssText = 'position:fixed;top:calc(16px + env(safe-area-inset-top, 0px));'
+                + 'left:50%;transform:translateX(-50%);background:rgba(40,40,40,0.92);color:#fff;'
+                + 'padding:10px 18px;border-radius:22px;font:600 13px/1.3 var(--sans,Segoe UI,sans-serif);'
+                + 'box-shadow:0 4px 14px rgba(0,0,0,0.28);z-index:100600;max-width:80vw;'
+                + 'text-align:center;opacity:0;transition:opacity 0.25s;pointer-events:none;';
             t.textContent = txt;
             document.body.appendChild(t);
-            setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 2600);
+            setTimeout(function() { t.style.opacity = '1'; }, 20);
+            setTimeout(function() { t.style.opacity = '0'; }, 2400);
+            setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 2750);
         }
         function libelleTrace(couches) {
             if (!couches || couches.length !== 1 || typeof L === 'undefined') return 'Élément enregistré';
