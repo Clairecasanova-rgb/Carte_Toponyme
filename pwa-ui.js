@@ -13,6 +13,69 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _photosResumeVisionneuse() {
+        // Dans la fenetre resume, une photo ouvrait l'image brute dans un nouvel
+        // onglet (window.open) : on quittait l'application, et en mode installe
+        // le navigateur peut simplement refuser. La fiche, elle, a une vraie
+        // visionneuse. On branche les deux sur la meme.
+        function urlsValides(images) {
+            var urls = [];
+            for (var i = 0; i < images.length; i++) {
+                var u = images[i].getAttribute('src');
+                if (!u || u.indexOf('data:') === 0) continue;
+                if (urls.indexOf(u) < 0) urls.push(u);
+            }
+            return urls;
+        }
+        function brancher() {
+            var zone = document.getElementById('detailPhotos');
+            if (!zone) return;
+            var images = zone.querySelectorAll('img');
+            if (!images.length) return;
+            var urls = urlsValides(images);
+            if (!urls.length) return;
+            for (var i = 0; i < images.length; i++) {
+                var img = images[i];
+                if (img._visionneuse) continue;
+                img._visionneuse = true;
+                img.style.cursor = 'zoom-in';
+                (function(el, rang) {
+                    el.onclick = function(ev) {
+                        if (ev) ev.stopPropagation();
+                        var u = el.getAttribute('src');
+                        var idx = urls.indexOf(u);
+                        if (idx < 0) idx = rang;
+                        if (typeof window.openPhotoLightbox === 'function') {
+                            window.openPhotoLightbox(urls, idx);
+                        } else {
+                            window.open(u, '_blank');   // repli
+                        }
+                    };
+                })(img, i);
+            }
+        }
+        function suivre() {
+            brancher();
+            var m = document.getElementById('detailCustomModal');
+            if (!m || m._photosObserve) return;
+            m._photosObserve = true;
+            var minuteur = null;
+            try {
+                new MutationObserver(function() {
+                    clearTimeout(minuteur);
+                    minuteur = setTimeout(brancher, 100);
+                }).observe(m, { childList: true, subtree: true });
+            } catch (e) {}
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { suivre(); setTimeout(suivre, 2500); });
+        } else {
+            suivre();
+            setTimeout(suivre, 2500);
+        }
+    })();
+
+
     (function _couleursDepart() {
         // L'ecran de lancement (splash Android) et l'ecran de chargement de la
         // carte etaient aux couleurs de l'ancien theme sombre : fond #18191a,
