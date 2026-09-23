@@ -2836,3 +2836,14 @@ html body #searchContainer .pwaPoignee{display:none}
 html body #drawTabNouveau .draw-field-row:has(input[type="color"]) > *:last-child{
  min-width:64px!important;flex:0 0 auto!important}
 
+/* Adresses saisies dans une description, rendues cliquables par pwa-ui.js.
+   Elles peuvent etre tres longues (liens Drive) : elles doivent pouvoir se
+   couper n'importe ou plutot que deborder du panneau. */
+html body #modernDetailBody a.pwaLien,
+html body #detailCustomModal a.pwaLien{
+ color:var(--acc-text)!important;text-decoration:underline!important;
+ text-underline-offset:2px!important;text-decoration-color:var(--bd)!important;
+ overflow-wrap:anywhere!important;word-break:break-word!important}
+html body #modernDetailBody a.pwaLien:hover,
+html body #detailCustomModal a.pwaLien:hover{text-decoration-color:var(--acc)!important}
+

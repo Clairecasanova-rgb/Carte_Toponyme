@@ -13,6 +13,95 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _liensCliquables() {
+        // Les adresses saisies dans une description restaient du texte brut.
+        // On les transforme en liens, en travaillant sur les NOEUDS DE TEXTE
+        // deja rendus : rien n'est reinterprete en HTML, donc une description
+        // ne peut pas injecter de balise.
+        var MOTIF = /https?:\/\/[^\s<>"'()\[\]]+/g;
+        var SAUTER = { A: 1, SCRIPT: 1, STYLE: 1, TEXTAREA: 1, INPUT: 1, BUTTON: 1, SELECT: 1 };
+
+        function abreger(u) {
+            if (u.length <= 48) return u;
+            try {
+                var a = document.createElement('a');
+                a.href = u;
+                var court = a.hostname.replace(/^www\./, '') + a.pathname;
+                if (court.length > 42) court = court.slice(0, 41) + '…';
+                return court;
+            } catch (e) {
+                return u.slice(0, 45) + '…';
+            }
+        }
+        function lier(racine) {
+            if (!racine || !racine.ownerDocument) return;
+            var noeuds = [];
+            var it = racine.ownerDocument.createTreeWalker(racine, NodeFilter.SHOW_TEXT, null);
+            var n;
+            while ((n = it.nextNode())) {
+                if (!n.nodeValue || n.nodeValue.indexOf('http') < 0) continue;
+                var p = n.parentNode, saute = false;
+                while (p && p !== racine) {
+                    if (SAUTER[p.nodeName]) { saute = true; break; }
+                    p = p.parentNode;
+                }
+                if (!saute) noeuds.push(n);
+            }
+            for (var i = 0; i < noeuds.length; i++) {
+                var nd = noeuds[i], txt = nd.nodeValue;
+                var frag = document.createDocumentFragment(), dernier = 0, m;
+                MOTIF.lastIndex = 0;
+                while ((m = MOTIF.exec(txt)) !== null) {
+                    // La ponctuation finale appartient a la phrase, pas a l'adresse.
+                    var u = m[0].replace(/[.,;:!?]+$/, '');
+                    if (m.index > dernier) {
+                        frag.appendChild(document.createTextNode(txt.slice(dernier, m.index)));
+                    }
+                    var a = document.createElement('a');
+                    a.href = u;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    a.className = 'pwaLien';
+                    a.title = u;
+                    a.textContent = abreger(u);
+                    frag.appendChild(a);
+                    dernier = m.index + u.length;
+                }
+                if (dernier === 0) continue;
+                if (dernier < txt.length) frag.appendChild(document.createTextNode(txt.slice(dernier)));
+                if (nd.parentNode) nd.parentNode.replaceChild(frag, nd);
+            }
+        }
+        function passe() {
+            // La bulle tronque la description a 60 caracteres : y poser un lien
+            // donnerait une adresse coupee, donc on s'en tient aux vues completes.
+            lier(document.getElementById('modernDetailBody'));
+            lier(document.getElementById('detailCustomModal'));
+        }
+        function brancher() {
+            passe();
+            ['modernDetailPanel', 'detailCustomModal'].forEach(function(id) {
+                var c = document.getElementById(id);
+                if (!c || c._liensObserve) return;
+                c._liensObserve = true;
+                var minuteur = null;
+                try {
+                    new MutationObserver(function() {
+                        clearTimeout(minuteur);
+                        minuteur = setTimeout(passe, 150);
+                    }).observe(c, { childList: true, subtree: true });
+                } catch (e) {}
+            });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(); setTimeout(brancher, 2500); });
+        } else {
+            brancher();
+            setTimeout(brancher, 2500);
+        }
+    })();
+
+
     (function _feuilleElements() {
         // Le panneau s'ouvrait a 50 % de l'ecran, dont 131 px de chrome : 285 px
         // utiles pour un formulaire qui en fait 903. Le plein ecran existait deja
@@ -798,7 +887,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '530b108cfa';
+        var THEME_V = 'df50bdf6d1';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
