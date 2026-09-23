@@ -311,6 +311,16 @@ function themeLoaderHtml(resp) {
     }
 }
 
+// Fichier de donnees produit par le decoupage d'une carte : meme nom que
+// la carte, suivi du nom du jeu. Exemple : 2B273.rpgLocalData.json
+function _estDonneeDeCarte(url) {
+    try {
+        const u = new URL(url);
+        if (u.origin !== self.location.origin) return false;
+        return /\.[A-Za-z]+(LocalData|Data|Index)\.json$/.test(u.pathname);
+    } catch (e) { return false; }
+}
+
 async function staleWhileRevalidate(request, cacheName) {
     const cache = await _getCache(cacheName);
     let cached = await cache.match(request);
@@ -446,6 +456,14 @@ self.addEventListener('fetch', (event) => {
     // cartes. Pas de bump de VERSION (preserve les zones hors-ligne en cache).
     if (isSupabasePhoto(url)) {
         event.respondWith(cacheFirst(req, PHOTO_CACHE));
+        return;
+    }
+
+    // 4bis. Jeux de donnees sortis du HTML d'une carte (carte.<jeu>.json) :
+    // ils ne changent qu'a la publication et pesent plusieurs Mo. Cache
+    // d'abord, donc disponibles hors ligne des la premiere visite.
+    if (_estDonneeDeCarte(url)) {
+        event.respondWith(cacheFirst(req, HTML_CACHE));
         return;
     }
 
