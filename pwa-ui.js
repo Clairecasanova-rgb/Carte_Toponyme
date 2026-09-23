@@ -40,6 +40,88 @@
             var h = Math.floor(mn / 60), r = mn % 60;
             return h + ' h' + (r ? ' ' + (r < 10 ? '0' + r : r) : '');
         }
+
+        // ---- itineraire pieton reel (Geoplateforme IGN, BD TOPO) -------------
+        // Un vol d'oiseau sous-estime lourdement une marche en relief : sur un
+        // trajet teste depuis Corte, 4,1 km de vol pour 6,54 km de chemin.
+        var ROUTES = {};              // cache par couple de coordonnees
+        function itineraire(depart, cible) {
+            var cle = depart.lat.toFixed(5) + ',' + depart.lon.toFixed(5) + '>'
+                    + cible.lat.toFixed(5) + ',' + cible.lon.toFixed(5);
+            if (ROUTES[cle]) return Promise.resolve(ROUTES[cle]);
+            var u = 'https://data.geopf.fr/navigation/itineraire'
+                  + '?resource=bdtopo-pgr&profile=pedestrian&optimization=shortest'
+                  + '&start=' + depart.lon + ',' + depart.lat
+                  + '&end=' + cible.lon + ',' + cible.lat
+                  + '&geometryFormat=geojson';
+            return fetch(u).then(function(r) {
+                if (!r.ok) throw new Error('itineraire ' + r.status);
+                return r.json();
+            }).then(function(j) {
+                var m = Number(j.distance);
+                if (!isFinite(m) || m <= 0) throw new Error('itineraire vide');
+                var pts = [];
+                try {
+                    var g = j.geometry;
+                    if (g && g.type === 'LineString') pts = g.coordinates;
+                    else if (g && g.type === 'MultiLineString') {
+                        for (var i = 0; i < g.coordinates.length; i++) {
+                            pts = pts.concat(g.coordinates[i]);
+                        }
+                    }
+                } catch (e) {}
+                ROUTES[cle] = { m: m, pts: pts, sec: Number(j.duration) || 0 };
+                return ROUTES[cle];
+            });
+        }
+        // Temps de marche par Tobler le long du chemin. Le chemin compte des
+        // centaines de sommets : on echantillonne pour ne pas inonder
+        // l'altimetrie, puis on remet le total a l'echelle de la vraie longueur
+        // (l'echantillonnage coupe les virages et raccourcit la somme).
+        function dureeChemin(pts, mReel) {
+            if (!pts || pts.length < 2 || typeof window.getAltitudesBatch !== 'function') {
+                return Promise.resolve(null);
+            }
+            // Densite proportionnelle a la longueur : un point tous les ~120 m.
+            // A 60 points fixes, un chemin de 15 km n'etait echantillonne que
+            // tous les 256 m, ce qui lisse le relief et sous-estime la montee.
+            var maxi = Math.round((mReel || 0) / 120);
+            if (maxi < 20) maxi = 20;
+            if (maxi > 150) maxi = 150;      // getAltitudesBatch decoupe par 50
+            var ech;
+            if (pts.length <= maxi) ech = pts.slice();
+            else {
+                ech = [];
+                var pas = (pts.length - 1) / (maxi - 1);
+                for (var i = 0; i < maxi; i++) ech.push(pts[Math.round(i * pas)]);
+            }
+            return window.getAltitudesBatch(ech.map(function(c) {
+                return { lat: c[1], lon: c[0] };
+            })).then(function(table) {
+                var zs = [];
+                for (var i = 0; i < ech.length; i++) {
+                    var z = table[ech[i][1] + ',' + ech[i][0]];
+                    if (typeof z !== 'number') return null;
+                    zs.push(z);
+                }
+                var t = 0, somme = 0, monte = 0;
+                for (var k = 1; k < ech.length; k++) {
+                    var a = { lat: ech[k - 1][1], lon: ech[k - 1][0] };
+                    var b = { lat: ech[k][1], lon: ech[k][0] };
+                    var dx = distance(a, b);
+                    if (!dx) continue;
+                    var dz = zs[k] - zs[k - 1];
+                    if (dz > 0) monte += dz;
+                    var v = 6 * Math.exp(-3.5 * Math.abs(dz / dx + 0.05));   // km/h
+                    if (v < 0.3) v = 0.3;
+                    t += (dx / 1000) / v;                                    // heures
+                    somme += dx;
+                }
+                if (!somme) return null;
+                var echelle = (mReel > 0) ? (mReel / somme) : 1;
+                return { sec: Math.round(t * 3600 * echelle), monte: Math.round(monte) };
+            }, function() { return null; });
+        }
         function retenir(p) {
             if (!p || !p.coords) return;
             position = { lat: p.coords.latitude, lon: p.coords.longitude, t: Date.now() };
@@ -113,10 +195,37 @@
             }, function() { suite(null); });
         }
         function remplir(el, cible) {
+            // Le vol d'oiseau s'affiche tout de suite : il ne coute rien et evite
+            // un champ vide pendant que le service d'itineraire repond.
+            el.removeAttribute('data-pwa-pied');
             el.textContent = texte(cible, null);
             altitudes(cible, function(z) {
                 if (z === null) return;
+                if (el.getAttribute('data-pwa-pied')) return;   // le chemin a pris la main
                 el.textContent = texte(cible, z);
+            });
+            if (!position) return;
+            var volOiseau = formaterDistance(distance(position, cible));
+            itineraire(position, cible).then(function(rt) {
+                el.setAttribute('data-pwa-pied', '1');
+                el.textContent = formaterDistance(rt.m) + ' a pied';
+                return dureeChemin(rt.pts, rt.m).then(function(pf) {
+                    var s = formaterDistance(rt.m) + ' a pied';
+                    if (pf) {
+                        s += ' · +' + pf.monte + ' m · environ ' + formaterDuree(pf.sec);
+                    } else if (rt.sec) {
+                        // Repli : la vitesse pieton du service, sans la pente.
+                        s += ' · environ ' + formaterDuree(Math.round(rt.sec));
+                    }
+                    el.textContent = s;
+                    el.title = 'Itineraire pieton IGN (BD TOPO), temps par la fonction '
+                             + 'de Tobler sur le profil du chemin. A vol d\'oiseau : '
+                             + volOiseau + '.';
+                });
+            }).catch(function() {
+                // Hors ligne ou service muet : l'estimation a vol d'oiseau reste,
+                // et l'infobulle dit que ce n'est pas une distance de marche.
+                el.title = 'Distance a vol d\'oiseau : itineraire pieton indisponible.';
             });
         }
         function demander(el, cible) {
