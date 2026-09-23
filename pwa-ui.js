@@ -115,6 +115,86 @@
             } catch (e) {}
         }
 
+        // --- Trace fraichement dessine -------------------------------------
+        // L'onglet "Nouveau" est le plus souvent deja actif : l'observateur de
+        // classe ne voit alors aucun changement quand on dessine. On s'accroche
+        // donc a l'evenement de la carte, qui est le vrai signal.
+        function suivreTrace(essai) {
+            var carte = null;
+            for (var k in window) {
+                try {
+                    var o = window[k];
+                    if (o && o._container && o.eachLayer && o.getCenter && o.on) { carte = o; break; }
+                } catch (e) {}
+            }
+            if (!carte) {
+                if ((essai || 0) < 40) setTimeout(function() { suivreTrace((essai || 0) + 1); }, 600);
+                return;
+            }
+            if (carte._feuilleTrace) return;
+            carte._feuilleTrace = true;
+            carte.on('draw:created', function() {
+                // Le gestionnaire d'origine deplie le panneau et change d'onglet :
+                // on le laisse passer avant d'agrandir.
+                setTimeout(function() {
+                    if (!petitEcran() || replie()) return;
+                    if (!plein()) { agrandir(); agrandiParNous = true; }
+                }, 350);
+            });
+        }
+
+        // --- Message et fermeture a l'enregistrement -------------------------
+        function message(txt) {
+            try {
+                if (typeof showToast === 'function') { showToast(txt, 2600); return; }
+                if (typeof window.showToast === 'function') { window.showToast(txt, 2600); return; }
+            } catch (e) {}
+            var t = document.createElement('div');
+            t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);'
+                + 'background:rgba(40,40,40,0.92);color:#fff;padding:10px 18px;border-radius:22px;'
+                + 'font:600 13px/1.3 sans-serif;box-shadow:0 4px 14px rgba(0,0,0,0.28);z-index:100600;';
+            t.textContent = txt;
+            document.body.appendChild(t);
+            setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 2600);
+        }
+        function libelleTrace(couches) {
+            if (!couches || couches.length !== 1 || typeof L === 'undefined') return 'Élément enregistré';
+            var c = couches[0];
+            if (c instanceof L.Marker) return 'Point enregistré';
+            if (c instanceof L.Polygon) return 'Zone enregistrée';
+            if (c instanceof L.Polyline) return 'Ligne enregistrée';
+            return 'Élément enregistré';
+        }
+        function suivreEnregistrement() {
+            if (typeof window.saveDrawnFeatures !== 'function') return;
+            if (window.saveDrawnFeatures._feuille) return;
+            var origine = window.saveDrawnFeatures;
+            var enveloppe = function() {
+                var couches = [];
+                try {
+                    if (typeof drawnItems !== 'undefined' && drawnItems.getLayers) {
+                        couches = drawnItems.getLayers().slice();
+                    }
+                } catch (e) {}
+                var libelle = libelleTrace(couches);
+                var r = origine.apply(this, arguments);
+                Promise.resolve(r).then(function(v) {
+                    // Le code d'origine ecrit "N element(s) sauvegarde(s)" en cas
+                    // de succes, "Erreur de sauvegarde" sinon.
+                    var st = document.getElementById('drawStatus');
+                    var txt = st ? (st.textContent || '') : '';
+                    if (!/sauvegard/i.test(txt) || /erreur/i.test(txt)) return v;
+                    message(libelle);
+                    agrandiParNous = false;
+                    fermer();
+                    return v;
+                }, function() {});
+                return r;
+            };
+            enveloppe._feuille = true;
+            window.saveDrawnFeatures = enveloppe;
+        }
+
         function brancher(essai) {
             if (!panneau()) {
                 if ((essai || 0) < 60) setTimeout(function() { brancher((essai || 0) + 1); }, 500);
@@ -122,7 +202,9 @@
             }
             poserPoignee();
             suivreSaisie();
-            setTimeout(suivreSaisie, 2000);
+            suivreTrace(0);
+            suivreEnregistrement();
+            setTimeout(function() { suivreSaisie(); suivreEnregistrement(); }, 2000);
         }
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', function() { brancher(0); });
