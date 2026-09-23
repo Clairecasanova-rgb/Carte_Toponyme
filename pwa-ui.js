@@ -13,6 +13,63 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _couleursDepart() {
+        // L'ecran de lancement (splash Android) et l'ecran de chargement de la
+        // carte etaient aux couleurs de l'ancien theme sombre : fond #18191a,
+        // barre olive. Le manifeste est corrige plus bas ; ici on reprend le
+        // <meta theme-color> de la page et le style du chargeur, tous deux
+        // ecrits en dur dans le HTML des cartes deja publiees. Pose en style
+        // en ligne : il s'applique tout de suite, sans attendre la feuille.
+        try {
+            var m = document.querySelector('meta[name="theme-color"]');
+            if (!m) {
+                m = document.createElement('meta');
+                m.setAttribute('name', 'theme-color');
+                (document.head || document.documentElement).appendChild(m);
+            }
+            m.setAttribute('content', '#b8744a');
+        } catch (e) {}
+        // L'icone de l'application en tete de l'ecran de chargement : elle
+        // dit tout de suite ou l'on est, la ou il n'y avait qu'une barre.
+        function poserIcone(cible) {
+            if (!cible || cible.querySelector('.pwaIconeChargement')) return;
+            var img = document.createElement('img');
+            img.className = 'pwaIconeChargement';
+            img.src = 'icon-192.png';
+            img.alt = '';
+            img.width = 72;
+            img.height = 72;
+            img.style.cssText = 'width:72px;height:72px;border-radius:16px;display:block;'
+                + 'box-shadow:0 2px 12px rgba(38,35,48,.14);margin-bottom:2px';
+            // Carte servie depuis un sous-dossier ou icone absente : on
+            // retire l'image plutot que d'afficher un cadre casse.
+            img.onerror = function() { if (img.parentNode) img.parentNode.removeChild(img); };
+            cible.insertBefore(img, cible.firstChild);
+        }
+        poserIcone(document.getElementById('modernLoader'));
+        try {
+            new MutationObserver(function() {
+                poserIcone(document.getElementById('modernLoader'));
+                poserIcone(document.getElementById('pwaVoileDepart'));
+            }).observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {}
+        try {
+            if (!document.getElementById('pwaChargeurClair')) {
+                var st = document.createElement('style');
+                st.id = 'pwaChargeurClair';
+                st.textContent =
+                    '#modernLoader{background:#eef0f0!important}'
+                    + '#modernLoader .loader-bar{background:#e0e4e3!important}'
+                    + '#modernLoader .loader-bar::after{background:#b8744a!important}'
+                    + '#modernLoader .loader-text{color:#6a4638!important;'
+                    + 'font-family:Archivo,"Segoe UI",system-ui,sans-serif!important;'
+                    + 'text-transform:none!important;letter-spacing:.02em!important}';
+                (document.head || document.documentElement).appendChild(st);
+            }
+        } catch (e) {}
+    })();
+
+
     (function _tiretsSimples() {
         // Les libelles de l'application separaient leurs elements par un tiret
         // long. On s'en tient au tiret simple. Seuls les libelles fabriques par
@@ -134,7 +191,11 @@
                 + 'display:flex;align-items:center;justify-content:center;flex-direction:column;'
                 + 'gap:14px;transition:opacity .35s ease;';
             voile.innerHTML =
-                '<div style="font:500 13px/1.3 system-ui,-apple-system,sans-serif;color:#6a4638;'
+                '<img class="pwaIconeChargement" src="icon-192.png" alt="" width="72" height="72" '
+                + 'style="width:72px;height:72px;border-radius:16px;display:block;'
+                + 'box-shadow:0 2px 12px rgba(38,35,48,.14)" '
+                + 'onerror="this.remove()">'
+                + '<div style="font:500 13px/1.3 system-ui,-apple-system,sans-serif;color:#6a4638;'
                 + 'letter-spacing:.02em">Chargement de la carte</div>'
                 + '<div style="width:120px;height:3px;border-radius:2px;background:#e0e4e3;overflow:hidden">'
                 + '<div style="width:40%;height:100%;background:#b8744a;'
@@ -1221,7 +1282,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '12c0985c66';
+        var THEME_V = '6fbf6463d0';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
@@ -7955,8 +8016,8 @@
                 scope: './',
                 display: 'standalone',
                 orientation: 'any',
-                background_color: '#18191a',
-                theme_color: '#8b4513',
+                background_color: '#eef0f0',
+                theme_color: '#b8744a',
                 lang: 'fr',
                 icons: [
                     { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },

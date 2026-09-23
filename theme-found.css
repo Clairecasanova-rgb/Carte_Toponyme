@@ -2578,8 +2578,7 @@ html body .leaflet-popup-content [id^="popup-"] span[style*="background:#dbeafe"
 html body .leaflet-popup-content [id^="popup-"] > div:first-child > button{
  background:transparent!important;border:none!important;color:var(--acc-text)!important;
  font-family:var(--sans)!important;font-size:12px!important;padding:0!important;
- text-decoration:underline!important;text-underline-offset:3px!important;
- text-decoration-color:var(--bd)!important}
+ text-decoration:none!important}
 /* bloc Lambert 93 : 4 lignes -> 2 (intitule, puis valeurs sur une ligne) */
 html body .leaflet-popup-content [id^="popup-"] > div[style*="background:#f5f5f5"]{
  background:var(--bg)!important;border:1px solid var(--bd2)!important;border-radius:2px!important;
@@ -2773,14 +2772,13 @@ html body .leaflet-popup-content [id^="popup-"] > div:first-child{padding-right:
 
 /* Bouton "Partager" pose dans la bulle par pwa-ui.js : meme registre que les
    autres actions, repousse a droite de la rangee. */
-html body .leaflet-popup-content [id^="popup-"] .pwaPartage{
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button.pwaPartage{
  background:transparent!important;border:none!important;padding:0!important;box-shadow:none!important;
  font-family:var(--sans)!important;font-size:12px!important;font-weight:500!important;
- color:var(--ink2)!important;text-decoration:underline!important;text-underline-offset:3px!important;
- text-decoration-color:var(--bd)!important;cursor:pointer;margin-left:auto!important;
+ color:var(--ink2)!important;text-decoration:none!important;cursor:pointer;margin-left:auto!important;
  flex:0 0 auto!important;width:auto!important}
-html body .leaflet-popup-content [id^="popup-"] .pwaPartage:hover{
- color:var(--ink)!important;text-decoration-color:var(--acc)!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button.pwaPartage:hover{
+ color:var(--ink)!important}
 
 /* === Outil "ligne" (tracer les chemins) ======================================
    Il etait masque par le style de la carte (toolbar simplifiee a point +
@@ -2794,15 +2792,14 @@ html body .leaflet-draw-toolbar .leaflet-draw-draw-polyline{display:block!import
 /* Bouton "Zoom" pose dans la bulle par pwa-ui.js : il centre la carte sur le
    point. Il forme un couple avec "Partager" a droite de la rangee, c'est donc
    lui qui absorbe l'espace libre. */
-html body .leaflet-popup-content [id^="popup-"] .pwaZoom{
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button.pwaZoom{
  background:transparent!important;border:none!important;padding:0!important;box-shadow:none!important;
  font-family:var(--sans)!important;font-size:12px!important;font-weight:500!important;
- color:var(--ink2)!important;text-decoration:underline!important;text-underline-offset:3px!important;
- text-decoration-color:var(--bd)!important;cursor:pointer;margin-left:auto!important;
+ color:var(--ink2)!important;text-decoration:none!important;cursor:pointer;margin-left:auto!important;
  flex:0 0 auto!important;width:auto!important}
-html body .leaflet-popup-content [id^="popup-"] .pwaZoom:hover{
- color:var(--ink)!important;text-decoration-color:var(--acc)!important}
-html body .leaflet-popup-content [id^="popup-"] .pwaZoom + .pwaPartage{margin-left:0!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button.pwaZoom:hover{
+ color:var(--ink)!important}
+html body .leaflet-popup-content [id^="popup-"] > div:last-child > button.pwaZoom + button.pwaPartage{margin-left:0!important}
 
 /* Icone d'oeil (afficher / masquer) : elle remplace un emoji, dont le dessin
    et la couleur dependaient du systeme. Le bouton centre son icone et celle-ci
