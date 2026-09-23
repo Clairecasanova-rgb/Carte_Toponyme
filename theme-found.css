@@ -2902,3 +2902,10 @@ html.pwaArriveeEnCours #pwaStatusBadge{opacity:0!important;pointer-events:none!i
  html body #pwaStatusBadge{transition:opacity .35s ease}
 }
 
+/* Longueur d'un trace, posee dans la bulle par pwa-ui.js : meme registre que
+   le bloc de coordonnees, en retrait du reste. */
+html body .leaflet-popup-content [id^="popup-"] .pwaLongueur{
+ margin-top:8px!important;padding:6px 8px!important;background:var(--bg2)!important;
+ border-radius:2px!important;font-family:var(--mono)!important;font-size:11px!important;
+ color:var(--ink)!important}
+

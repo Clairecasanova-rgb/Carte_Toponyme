@@ -13,6 +13,195 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _mesuresDesTraces() {
+        // Une ligne sert a tracer un chemin : sans sa longueur, elle ne dit pas
+        // grand-chose. On ajoute la longueur dans la bulle, et dans la fiche la
+        // longueur, le denivele cumule et les altitudes extremes, relevees le
+        // long du trace sur l'altimetrie IGN.
+        var R = 6371008.8;   // rayon terrestre moyen, en metres
+
+        function rad(d) { return d * Math.PI / 180; }
+        function distance(a, b) {
+            var dlat = rad(b[1] - a[1]), dlon = rad(b[0] - a[0]);
+            var s = Math.sin(dlat / 2) * Math.sin(dlat / 2)
+                + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dlon / 2) * Math.sin(dlon / 2);
+            return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+        }
+        function sommets(g) {
+            if (!g || !g.coordinates) return null;
+            if (g.type === 'LineString') return g.coordinates;
+            if (g.type === 'MultiLineString') return g.coordinates[0];
+            if (g.type === 'Polygon') return g.coordinates[0];
+            if (g.type === 'MultiPolygon') return g.coordinates[0][0];
+            return null;
+        }
+        function longueur(g) {
+            var pts = sommets(g);
+            if (!pts || pts.length < 2) return 0;
+            var t = 0;
+            for (var i = 1; i < pts.length; i++) t += distance(pts[i - 1], pts[i]);
+            return t;
+        }
+        function surface(g) {
+            // Aire geodesique (formule de Girard sur la sphere), suffisante a
+            // l'echelle d'une parcelle : l'erreur reste bien sous le metre carre.
+            var pts = sommets(g);
+            if (!pts || pts.length < 4) return 0;
+            var t = 0;
+            for (var i = 0; i < pts.length - 1; i++) {
+                var a = pts[i], b = pts[i + 1];
+                t += rad(b[0] - a[0]) * (2 + Math.sin(rad(a[1])) + Math.sin(rad(b[1])));
+            }
+            return Math.abs(t * R * R / 2);
+        }
+        function formaterSurface(m2) {
+            if (!m2) return '';
+            if (m2 >= 10000) return (m2 / 10000).toFixed(2).replace('.', ',') + ' ha';
+            return Math.round(m2) + ' m2';
+        }
+        function formater(m) {
+            if (!m) return '';
+            return m >= 1000 ? (m / 1000).toFixed(2).replace('.', ',') + ' km'
+                             : Math.round(m) + ' m';
+        }
+        // Un trace peut compter des centaines de sommets : on echantillonne a
+        // pas regulier pour interroger l'altimetrie sans l'inonder.
+        function echantillon(g, maxi) {
+            var pts = sommets(g);
+            if (!pts || pts.length < 2) return [];
+            if (pts.length <= maxi) return pts.slice();
+            var pas = (pts.length - 1) / (maxi - 1), out = [];
+            for (var i = 0; i < maxi; i++) out.push(pts[Math.round(i * pas)]);
+            return out;
+        }
+        function profil(g) {
+            var pts = echantillon(g, 40);
+            if (pts.length < 2 || typeof window.getAltitudesBatch !== 'function') {
+                return Promise.resolve(null);
+            }
+            var liste = pts.map(function(c) { return { lat: c[1], lon: c[0] }; });
+            return window.getAltitudesBatch(liste).then(function(table) {
+                var zs = [];
+                for (var i = 0; i < liste.length; i++) {
+                    var z = table[liste[i].lat + ',' + liste[i].lon];
+                    if (typeof z === 'number') zs.push(z);
+                }
+                if (zs.length < 2) return null;
+                var monte = 0, descend = 0;
+                for (var j = 1; j < zs.length; j++) {
+                    var d = zs[j] - zs[j - 1];
+                    if (d > 0) monte += d; else descend -= d;
+                }
+                return { monte: Math.round(monte), descend: Math.round(descend),
+                         mini: Math.round(Math.min.apply(null, zs)),
+                         maxi: Math.round(Math.max.apply(null, zs)) };
+            }, function() { return null; });
+        }
+        function elementParId(id) {
+            var d = window.customFeaturesData || [];
+            for (var i = 0; i < d.length; i++) if (String(d[i].id) === String(id)) return d[i];
+            return null;
+        }
+        function estTrace(g) {
+            return !!g && (g.type === 'LineString' || g.type === 'MultiLineString'
+                || g.type === 'Polygon' || g.type === 'MultiPolygon');
+        }
+
+        // --- Bulle : la longueur, sobrement --------------------------------
+        function bulle() {
+            var d = document.querySelector('.leaflet-popup-content [id^="popup-"]');
+            if (!d || d.querySelector('.pwaLongueur')) return;
+            var f = elementParId(d.id.replace('popup-', ''));
+            if (!f || !estTrace(f.geometry)) return;
+            var m = longueur(f.geometry);
+            if (!m) return;
+            var ferme = (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
+            var b = document.createElement('div');
+            b.className = 'pwaLongueur';
+            b.textContent = ferme
+                ? ('Surface : ' + formaterSurface(surface(f.geometry)) + ' · perimetre ' + formater(m))
+                : ('Longueur : ' + formater(m));
+            var actions = d.lastElementChild;
+            d.insertBefore(b, actions);
+        }
+
+        // --- Fiche : longueur, denivele, altitudes extremes ------------------
+        function champ(titre, valeur, id) {
+            return '<div class="detail-field"><label>' + titre + '</label><div class="value"'
+                + (id ? ' id="' + id + '"' : '') + '>' + valeur + '</div></div>';
+        }
+        var _attente = 0;
+        function fiche() {
+            var corps = document.getElementById('modernDetailBody');
+            if (!corps || corps.querySelector('.pwaMesureTrace')) return;
+            var titre = document.getElementById('modernDetailTitle');
+            var nom = titre ? (titre.textContent || '').trim() : '';
+            if (!nom) return;
+            var d = window.customFeaturesData || [];
+            var f = null;
+            for (var i = 0; i < d.length; i++) {
+                if ((d[i].name || '').trim() === nom && estTrace(d[i].geometry)) { f = d[i]; break; }
+            }
+            if (!f) return;
+            var grille = corps.querySelector('.detail-section .detail-grid');
+            if (!grille) return;
+            // Les coordonnees sont posees par un autre passage : on attend
+            // qu'elles soient la pour que les mesures viennent apres, plutot
+            // que de s'intercaler au milieu.
+            if (!corps.querySelector('[id^="pwaFicheAlt"]')) {
+                _attente = (_attente || 0) + 1;
+                if (_attente < 20) return;
+            }
+            var m = longueur(f.geometry);
+            var ferme = (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
+            var idProfil = 'pwaProfil' + f.id;
+            grille.insertAdjacentHTML('beforeend',
+                (ferme ? champ('Surface', formaterSurface(surface(f.geometry)), '') : '')
+                + '<div class="detail-field pwaMesureTrace"><label>'
+                + (ferme ? 'Perimetre' : 'Longueur') + '</label><div class="value">'
+                + formater(m) + '</div></div>'
+                + champ('Denivele', '…', idProfil));
+            profil(f.geometry).then(function(p) {
+                var e = document.getElementById(idProfil);
+                if (!e) return;
+                if (!p) { e.textContent = 'non disponible'; return; }
+                e.textContent = '+' + p.monte + ' m / -' + p.descend + ' m';
+                var champAlt = document.createElement('div');
+                champAlt.className = 'detail-field pwaMesureTrace';
+                champAlt.innerHTML = '<label>Altitudes</label><div class="value">'
+                    + p.mini + ' - ' + p.maxi + ' m</div>';
+                if (e.parentNode && e.parentNode.parentNode) {
+                    e.parentNode.parentNode.appendChild(champAlt);
+                }
+            });
+        }
+
+        function passe() { try { bulle(); } catch (e) {} try { fiche(); } catch (e) {} }
+        function brancher() {
+            passe();
+            var cibles = [document.getElementById('modernDetailPanel'), document.body];
+            for (var i = 0; i < cibles.length; i++) {
+                var c = cibles[i];
+                if (!c || c._mesureObserve) continue;
+                c._mesureObserve = true;
+                var minuteur = null;
+                try {
+                    new MutationObserver(function() {
+                        clearTimeout(minuteur);
+                        minuteur = setTimeout(passe, 150);
+                    }).observe(c, { childList: true, subtree: true });
+                } catch (e) {}
+            }
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(); setTimeout(brancher, 2500); });
+        } else {
+            brancher();
+            setTimeout(brancher, 2500);
+        }
+    })();
+
+
     (function _photosResumeVisionneuse() {
         // Dans la fenetre resume, une photo ouvrait l'image brute dans un nouvel
         // onglet (window.open) : on quittait l'application, et en mode installe
@@ -95,7 +284,10 @@
         // L'icone de l'application en tete de l'ecran de chargement : elle
         // dit tout de suite ou l'on est, la ou il n'y avait qu'une barre.
         function poserIcone(cible) {
-            if (!cible || cible.querySelector('.pwaIconeChargement')) return;
+            // Le service worker (et le generateur) posent deja une icone de
+            // classe loader-icone : sans cette verification, on en affichait deux.
+            if (!cible) return;
+            if (cible.querySelector('.pwaIconeChargement, .loader-icone, img')) return;
             var img = document.createElement('img');
             img.className = 'pwaIconeChargement';
             img.src = 'icon-192.png';
@@ -1345,7 +1537,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = '6fbf6463d0';
+        var THEME_V = 'ac650f016b';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
