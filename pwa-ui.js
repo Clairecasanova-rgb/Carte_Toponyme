@@ -13,6 +13,195 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _depuisMaPosition() {
+        // Sur le terrain, la question est « c'est a combien d'ici, et en combien
+        // de temps ». On ajoute la distance a vol d'oiseau depuis la derniere
+        // position connue, le denivele entre les deux, et le temps de marche
+        // estime. Aucune demande de position n'est faite d'office : on se sert
+        // de celles que l'application obtient deja, et sinon l'utilisateur
+        // declenche le calcul d'un appui.
+        var R = 6371008.8;
+        var position = null;          // { lat, lon, t }
+
+        function rad(d) { return d * Math.PI / 180; }
+        function distance(a, b) {
+            var dlat = rad(b.lat - a.lat), dlon = rad(b.lon - a.lon);
+            var s = Math.sin(dlat / 2) * Math.sin(dlat / 2)
+                + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dlon / 2) * Math.sin(dlon / 2);
+            return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+        }
+        function formaterDistance(m) {
+            return m >= 1000 ? (m / 1000).toFixed(2).replace('.', ',') + ' km' : Math.round(m) + ' m';
+        }
+        function formaterDuree(sec) {
+            if (!sec || sec < 60) return '< 1 min';
+            var mn = Math.round(sec / 60);
+            if (mn < 60) return mn + ' min';
+            var h = Math.floor(mn / 60), r = mn % 60;
+            return h + ' h' + (r ? ' ' + (r < 10 ? '0' + r : r) : '');
+        }
+        function retenir(p) {
+            if (!p || !p.coords) return;
+            position = { lat: p.coords.latitude, lon: p.coords.longitude, t: Date.now() };
+        }
+        // On se greffe sur les demandes de position de l'application : chaque
+        // point obtenu sert aussi a nous, sans consommation supplementaire.
+        try {
+            var geo = navigator.geolocation;
+            if (geo && !geo._suivi) {
+                geo._suivi = true;
+                var origGet = geo.getCurrentPosition.bind(geo);
+                geo.getCurrentPosition = function(ok, err, opt) {
+                    return origGet(function(p) { retenir(p); if (ok) ok(p); }, err, opt);
+                };
+                var origWatch = geo.watchPosition.bind(geo);
+                geo.watchPosition = function(ok, err, opt) {
+                    return origWatch(function(p) { retenir(p); if (ok) ok(p); }, err, opt);
+                };
+            }
+        } catch (e) {}
+
+        function centre(g) {
+            if (!g || !g.coordinates) return null;
+            try {
+                if (g.type === 'Point') return { lat: g.coordinates[1], lon: g.coordinates[0] };
+                var plat = g.type === 'Polygon' ? g.coordinates[0]
+                    : (g.type === 'LineString' ? g.coordinates
+                    : (g.type === 'MultiPolygon' ? g.coordinates[0][0] : null));
+                if (!plat || !plat.length) return null;
+                var sx = 0, sy = 0;
+                for (var i = 0; i < plat.length; i++) { sx += plat[i][0]; sy += plat[i][1]; }
+                return { lat: sy / plat.length, lon: sx / plat.length };
+            } catch (e) { return null; }
+        }
+        function elementParId(id) {
+            var d = window.customFeaturesData || [];
+            for (var i = 0; i < d.length; i++) if (String(d[i].id) === String(id)) return d[i];
+            return null;
+        }
+        // Temps de marche par la fonction de Tobler, sur la pente moyenne.
+        function duree(m, dz) {
+            if (!m) return 0;
+            var v = 6 * Math.exp(-3.5 * Math.abs((dz || 0) / m + 0.05));
+            if (v < 0.3) v = 0.3;
+            return Math.round((m / 1000) / v * 3600);
+        }
+        function texte(cible, alt) {
+            var m = distance(position, cible);
+            var lignes = formaterDistance(m) + ' a vol d\'oiseau';
+            if (typeof alt === 'number' && typeof position.z === 'number') {
+                var dz = Math.round(alt - position.z);
+                lignes += ' · ' + (dz >= 0 ? '+' : '') + dz + ' m · environ '
+                    + formaterDuree(duree(m, dz));
+            } else {
+                lignes += ' · environ ' + formaterDuree(duree(m, 0));
+            }
+            return lignes;
+        }
+        function altitudes(cible, suite) {
+            // Une seule requete pour les deux points : le denivele est ce qui
+            // change le plus le temps de marche.
+            if (typeof window.getAltitudesBatch !== 'function') { suite(null); return; }
+            window.getAltitudesBatch([
+                { lat: position.lat, lon: position.lon },
+                { lat: cible.lat, lon: cible.lon }
+            ]).then(function(table) {
+                var zMoi = table[position.lat + ',' + position.lon];
+                var zCible = table[cible.lat + ',' + cible.lon];
+                if (typeof zMoi === 'number') position.z = zMoi;
+                suite(typeof zCible === 'number' ? zCible : null);
+            }, function() { suite(null); });
+        }
+        function remplir(el, cible) {
+            el.textContent = texte(cible, null);
+            altitudes(cible, function(z) {
+                if (z === null) return;
+                el.textContent = texte(cible, z);
+            });
+        }
+        function demander(el, cible) {
+            el.textContent = 'Localisation…';
+            if (!navigator.geolocation) { el.textContent = 'Position indisponible'; return; }
+            navigator.geolocation.getCurrentPosition(function(p) {
+                retenir(p);
+                remplir(el, cible);
+            }, function() {
+                el.textContent = 'Position refusee';
+            }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+        }
+        function poser(racine, cible, classe) {
+            if (!racine || racine.querySelector('.' + classe)) return;
+            var d = document.createElement('div');
+            d.className = classe + ' pwaDepuisMoi';
+            if (position && Date.now() - position.t < 15 * 60 * 1000) {
+                remplir(d, cible);
+            } else {
+                d.textContent = 'Distance depuis ma position';
+                d.classList.add('pwaDepuisMoiAppel');
+                d.onclick = function(ev) { ev.stopPropagation(); demander(d, cible); };
+            }
+            return d;
+        }
+        function bulle() {
+            var b = document.querySelector('.leaflet-popup-content [id^="popup-"]');
+            if (!b || b.querySelector('.pwaDistanceBulle')) return;
+            var f = elementParId(b.id.replace('popup-', ''));
+            if (!f) return;
+            var c = centre(f.geometry);
+            if (!c) return;
+            var d = poser(b, c, 'pwaDistanceBulle');
+            if (d) b.insertBefore(d, b.lastElementChild);
+        }
+        function fiche() {
+            var corps = document.getElementById('modernDetailBody');
+            if (!corps || corps.querySelector('.pwaDistanceFiche')) return;
+            var titre = document.getElementById('modernDetailTitle');
+            var nom = titre ? (titre.textContent || '').trim() : '';
+            if (!nom) return;
+            var liste = window.customFeaturesData || [];
+            var f = null;
+            for (var i = 0; i < liste.length; i++) {
+                if ((liste[i].name || '').trim() === nom) { f = liste[i]; break; }
+            }
+            if (!f) return;
+            var c = centre(f.geometry);
+            if (!c) return;
+            var grille = corps.querySelector('.detail-section .detail-grid');
+            if (!grille) return;
+            var champ = document.createElement('div');
+            champ.className = 'detail-field pwaDistanceFiche';
+            var etiquette = document.createElement('label');
+            etiquette.textContent = 'Depuis ma position';
+            var valeur = poser(champ, c, 'value');
+            if (!valeur) return;
+            champ.appendChild(etiquette);
+            champ.appendChild(valeur);
+            grille.appendChild(champ);
+        }
+        function passe() { try { bulle(); } catch (e) {} try { fiche(); } catch (e) {} }
+        function brancher() {
+            passe();
+            [document.getElementById('modernDetailPanel'), document.body].forEach(function(c) {
+                if (!c || c._distanceObserve) return;
+                c._distanceObserve = true;
+                var minuteur = null;
+                try {
+                    new MutationObserver(function() {
+                        clearTimeout(minuteur);
+                        minuteur = setTimeout(passe, 200);
+                    }).observe(c, { childList: true, subtree: true });
+                } catch (e) {}
+            });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(); setTimeout(brancher, 2500); });
+        } else {
+            brancher();
+            setTimeout(brancher, 2500);
+        }
+    })();
+
+
     (function _indexCategoriesFiable() {
         // La carte range les couches par categorie en s'appuyant sur la POSITION
         // dans deux tableaux : les elements d'un cote, les couches de l'autre.
@@ -1843,7 +2032,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = 'a3be75a0d6';
+        var THEME_V = 'de44277eab';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
