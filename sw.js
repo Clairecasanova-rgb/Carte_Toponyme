@@ -226,6 +226,91 @@ function _getCache(name) {
 }
 
 // === Stale-While-Revalidate ===
+// === Ecran de chargement aux couleurs du theme, des la premiere image ========
+// Le style du chargeur est ecrit en dur dans le HTML des cartes deja publiees
+// (bloc #modernHideStyle), en sombre. pwa-ui.js le corrige, mais il est charge
+// en `defer` : il passe apres le premier affichage, d'ou un ecran sombre avant
+// l'interface claire. Le service worker, lui, tient la reponse avant qu'elle
+// n'atteigne la page : on y reecrit ce seul bloc, au vol, sans jamais toucher
+// au reste du document (59 Mo qui continuent de defiler tels quels).
+const LOADER_REMPLACEMENTS = [
+    ['background:#18191a', 'background:#eef0f0'],
+    ['background:#2a2b2c', 'background:#e0e4e3'],
+    ['background:#5a6e2a', 'background:#b8744a'],
+    ['color:#626858', 'color:#6a4638'],
+    ['text-transform:uppercase', 'text-transform:none'],
+    ['letter-spacing:0.5px', 'letter-spacing:0.02em']
+];
+const LOADER_ICONE =
+    '<div id="modernLoader">' +
+    '<img class="loader-icone" src="icon-192.png" alt="" width="72" height="72" ' +
+    'style="width:72px;height:72px;border-radius:16px;display:block;' +
+    'box-shadow:0 2px 12px rgba(38,35,48,.14)" onerror="this.remove()">';
+
+function _reecrireEnTete(texte) {
+    let out = texte;
+    const d = out.indexOf('<style id="modernHideStyle">');
+    if (d >= 0) {
+        const f = out.indexOf('</style>', d);
+        if (f > d) {
+            let bloc = out.slice(d, f);
+            for (const [avant, apres] of LOADER_REMPLACEMENTS) bloc = bloc.split(avant).join(apres);
+            out = out.slice(0, d) + bloc + out.slice(f);
+        }
+    }
+    if (out.indexOf('<div id="modernLoader">') >= 0 && out.indexOf('loader-icone') < 0) {
+        out = out.replace('<div id="modernLoader">', LOADER_ICONE);
+    }
+    out = out.split('name="theme-color" content="#8b4513"').join('name="theme-color" content="#b8744a"');
+    return out;
+}
+
+function themeLoaderHtml(resp) {
+    try {
+        if (!resp || !resp.ok || !resp.body) return resp;
+        const type = resp.headers.get('Content-Type') || '';
+        if (type && !/text\/html/i.test(type)) return resp;
+        if (typeof TransformStream === 'undefined') return resp;
+
+        const lecteur = resp.body.getReader();
+        const decodeur = new TextDecoder('utf-8');
+        const encodeur = new TextEncoder();
+        let tampon = '';
+        let entetePassee = false;
+        const SEUIL = 65536;   // le bloc vise se trouve dans les premiers ko
+
+        const flux = new ReadableStream({
+            async pull(controleur) {
+                const { done, value } = await lecteur.read();
+                if (done) {
+                    if (!entetePassee) {
+                        tampon += decodeur.decode();
+                        controleur.enqueue(encodeur.encode(_reecrireEnTete(tampon)));
+                        entetePassee = true;
+                    }
+                    controleur.close();
+                    return;
+                }
+                if (entetePassee) { controleur.enqueue(value); return; }
+                tampon += decodeur.decode(value, { stream: true });
+                if (tampon.length >= SEUIL) {
+                    controleur.enqueue(encodeur.encode(_reecrireEnTete(tampon)));
+                    tampon = '';
+                    entetePassee = true;
+                }
+            },
+            cancel(raison) { try { lecteur.cancel(raison); } catch (e) {} }
+        });
+
+        const entetes = new Headers(resp.headers);
+        entetes.delete('Content-Length');       // la longueur change
+        entetes.delete('Content-Encoding');
+        return new Response(flux, { status: resp.status, statusText: resp.statusText, headers: entetes });
+    } catch (e) {
+        return resp;   // au moindre doute, la reponse d'origine
+    }
+}
+
 async function staleWhileRevalidate(request, cacheName) {
     const cache = await _getCache(cacheName);
     let cached = await cache.match(request);
@@ -243,7 +328,11 @@ async function staleWhileRevalidate(request, cacheName) {
         if (resp && resp.ok) cache.put(request, resp.clone()).catch(() => null);
         return resp;
     }).catch(() => null);
-    return cached || networkPromise || new Response('Offline', { status: 503 });
+    // Le HTML des cartes est reecrit au vol pour son seul ecran de
+    // chargement ; les autres reponses passent inchangees.
+    const _servie = cached || (await networkPromise);
+    if (!_servie) return new Response('Offline', { status: 503 });
+    return (cacheName === HTML_CACHE) ? themeLoaderHtml(_servie) : _servie;
 }
 
 // === Cache-First === (pour les tuiles - cache leger, fetch direct sans timeout)
