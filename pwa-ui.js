@@ -13,6 +13,100 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _indexCategoriesFiable() {
+        // La carte range les couches par categorie en s'appuyant sur la POSITION
+        // dans deux tableaux : les elements d'un cote, les couches de l'autre.
+        // Or un element sans couche possible (geometrie MultiLineString ou
+        // absente) n'ajoute rien au second : tout ce qui suit se retrouve alors
+        // decale d'un cran, range sous une categorie qui n'est pas la sienne.
+        // Masquer une categorie fait donc disparaitre le trace d'une autre, et
+        // la case de sa vraie categorie ne le ramene pas. On reconstruit l'index
+        // a partir de l'identifiant porte par chaque couche, qui ne ment pas.
+        function categorie(f) {
+            var c = (f && f.category) || 'Autre';
+            if (c === 'nouvelle_parcelle') return 'Nouvelle Parcelle';
+            if (c === 'point_remarquable') return 'Point remarquable';
+            return c;
+        }
+        function reconstruire() {
+            var g = window.savedCustomItems;
+            var d = window.customFeaturesData;
+            if (!g || !g.getLayers || !d || !d.length) return false;
+            var couches = g.getLayers();
+            if (!couches.length) return false;
+            var parId = {};
+            d.forEach(function(f) { parId[String(f.id)] = f; });
+
+            var index = {}, mal = 0;
+            var ancien = window._customCategoryLayers || {};
+            couches.forEach(function(l) {
+                var f = parId[String(l.featureId)];
+                if (!f) return;
+                var cat = categorie(f);
+                if (l._customCategory && l._customCategory !== cat) mal++;
+                l._customCategory = cat;
+                (index[cat] = index[cat] || []).push(l);
+            });
+            // Les couches retirees de la carte par un filtre ne sont plus dans le
+            // groupe : on les reprend de l'ancien index pour ne pas les perdre.
+            Object.keys(ancien).forEach(function(cat) {
+                (ancien[cat] || []).forEach(function(l) {
+                    if (couches.indexOf(l) >= 0) return;
+                    var f = parId[String(l.featureId)];
+                    var vraie = f ? categorie(f) : cat;
+                    if (f && l._customCategory && l._customCategory !== vraie) mal++;
+                    if (f) l._customCategory = vraie;
+                    (index[vraie] = index[vraie] || []).push(l);
+                });
+            });
+            if (!Object.keys(index).length) return false;
+            window._customCategoryLayers = index;
+            var etats = window._customCategoryVisible || {};
+            Object.keys(index).forEach(function(cat) {
+                if (etats[cat] === undefined) etats[cat] = true;
+            });
+            window._customCategoryVisible = etats;
+            window._customCategoryNames = Object.keys(index).sort();
+            if (mal) {
+                // Une couche mal rangee a pu etre retiree de la carte a tort :
+                // on remet en place tout ce que sa categorie declare visible.
+                Object.keys(index).forEach(function(cat) {
+                    if (etats[cat] === false) return;
+                    index[cat].forEach(function(l) {
+                        if (g.hasLayer && !g.hasLayer(l)) g.addLayer(l);
+                    });
+                });
+                if (typeof window.rebuildModernLayerUI === 'function') {
+                    try { window.rebuildModernLayerUI(); } catch (e) {}
+                }
+            }
+            return true;
+        }
+        var essais = 0;
+        var minuteur = setInterval(function() {
+            essais++;
+            if (reconstruire() || essais > 40) clearInterval(minuteur);
+        }, 800);
+        // Apres chaque rechargement des elements, l'index est refait par la
+        // carte : on repasse derriere.
+        function suivreChargement() {
+            if (typeof window.loadCustomFeatures !== 'function') return;
+            if (window.loadCustomFeatures._indexFiable) return;
+            var origine = window.loadCustomFeatures;
+            var enveloppe = function() {
+                var r = origine.apply(this, arguments);
+                Promise.resolve(r).then(function() { setTimeout(reconstruire, 600); },
+                                        function() {});
+                return r;
+            };
+            enveloppe._indexFiable = true;
+            window.loadCustomFeatures = enveloppe;
+        }
+        suivreChargement();
+        setTimeout(suivreChargement, 3000);
+    })();
+
+
     (function _triEtExportGpx() {
         // Deux manques de la liste des elements : on ne peut pas choisir son
         // ordre, et rien ne sort vers un GPS. Les deux se posent dans la barre
