@@ -13,6 +13,50 @@
     if (window._pwaUiLoaded) return;
     window._pwaUiLoaded = true;
 
+    (function _pasDeClavierSurCommune() {
+        // Choisir une commune redonnait le focus au champ de recherche : sur
+        // mobile, le clavier remontait aussitot et recouvrait les resultats
+        // qu'on venait justement de demander. Le champ reste donc au repos ;
+        // il suffit de le toucher pour ecrire.
+        function tactile() {
+            try {
+                if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+            } catch (e) {}
+            return Math.min(screen.width, screen.height) <= 820 || window.innerWidth <= 768;
+        }
+        var dernierClicPastille = 0;
+        function brancher(essai) {
+            var chips = document.getElementById('modernCommuneChips');
+            var champ = document.getElementById('searchInput');
+            if (!chips || !champ) {
+                if ((essai || 0) < 60) setTimeout(function() { brancher((essai || 0) + 1); }, 500);
+                return;
+            }
+            if (chips._clavierBride) return;
+            chips._clavierBride = true;
+            // En phase de capture : on passe avant le gestionnaire d'origine.
+            chips.addEventListener('click', function() { dernierClicPastille = Date.now(); }, true);
+            chips.addEventListener('pointerdown', function() { dernierClicPastille = Date.now(); }, true);
+            champ.addEventListener('focus', function() {
+                if (!tactile()) return;
+                if (Date.now() - dernierClicPastille > 700) return;   // focus voulu par l'utilisateur
+                var self = this;
+                self.blur();
+                // Certains navigateurs redonnent le focus juste apres : on
+                // repasse une fois, sans insister au-dela.
+                setTimeout(function() {
+                    if (document.activeElement === self && Date.now() - dernierClicPastille < 900) self.blur();
+                }, 60);
+            });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { brancher(0); });
+        } else {
+            brancher(0);
+        }
+    })();
+
+
     (function _liensCliquables() {
         // Les adresses saisies dans une description restaient du texte brut.
         // On les transforme en liens, en travaillant sur les NOEUDS DE TEXTE
