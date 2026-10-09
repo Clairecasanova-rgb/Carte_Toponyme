@@ -11467,6 +11467,9 @@
         window._projetRasterKeys = window._projetRasterKeys || {};
         var added = 0;
         rows.forEach(function(rw) {
+            // Rasters du projet actif seulement (et non plus de toute la
+            // liste blanche figee de la carte).
+            if (String(rw.projet_id) !== String(window.PROJET_ID)) return;
             var key = 'pr_' + rw.projet_id + '_' + (rw.nom_affiche || rw.image_url || rw.raster_folder);
             if (window._projetRasterKeys[key]) return;
             if (rw.actif === false) return;              // desactive depuis l'admin
@@ -11489,6 +11492,8 @@
             }
             if (!lyr) return;
             window._projetRasterKeys[key] = true;
+            lyr._pwaProjetKey = key;
+            lyr._pwaProjetId = rw.projet_id;
             var slug = rw.raster_folder
                 || (rw.image_url ? rw.image_url.split('/').pop().replace(/\.[a-z]+$/i, '') : ('projet' + rw.projet_id));
             if (blend !== 'normal') {
@@ -11500,6 +11505,15 @@
                 });
             }
             if (rw.visible_default !== false) lyr.addTo(map);
+            // Description de la couche pour le gestionnaire : sans elle, les
+            // rasters entres dans la vue lors d'un 2e deplacement tombaient
+            // dans un groupe "Rasters" sous le nom "raster" (2026-10-09).
+            lyr._rasterMeta = {
+                name: rw.nom_affiche || slug, safe_name: slug,
+                blend_mode: blend, opacity: op,
+                visible_default: rw.visible_default !== false,
+                group: rw.group_name || 'Rasters de projet'
+            };
             // Meme registre que les rasters de carte -> la fenetre de gestion
             // des rasters (toggle / opacite / blend) les prend en charge.
             window._dynamicRasters.push({ layer: lyr, meta: {
@@ -11512,6 +11526,9 @@
         });
         if (added && typeof window.createDynRasterManagerBtn === 'function') {
             try { window.createDynRasterManagerBtn(map); } catch (_em) {}
+            // bouton masque par un projet precedent sans raster : le remontrer
+            var _b = document.getElementById('rasterMgrBtn');
+            if (_b) { _b.style.display = ''; _b.title = 'Gerer les rasters (' + (window._rasterLayers || []).length + ')'; }
         }
         return added;
     }
@@ -11520,24 +11537,14 @@
         if (!SU || !SK || typeof L === 'undefined') return;
         var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
         if (!map) { setTimeout(_loadProjetRasters, 1500); return; }
-        // Lecture publique de la table (RLS SELECT autorise a anon). On recupere
-        // tout puis on SCOPE aux projets de la whitelist de CETTE carte
-        // (PROJETS_DISPONIBLES) : un raster de projet n'apparait plus sur une
-        // carte qui ne montre pas ce projet. L'emprise (in-view) filtre ensuite.
-        // Fallback: whitelist inconnue -> comportement historique (tout par emprise).
+        // Lecture publique de la table (RLS SELECT autorise a anon). On garde
+        // toutes les lignes : _applyProjetRasters ne pose que celles du projet
+        // ACTIF (decision du 2026-10-09), et un changement de projet remet la
+        // liste a jour. L'emprise (in-view) filtre ensuite.
         fetch(SU + '/rest/v1/projet_rasters?select=*&order=ordre', {
             headers: { 'apikey': SK, 'Authorization': 'Bearer ' + SK }
         }).then(function(r) { return r.ok ? r.json() : []; }).then(function(rows) {
             if (!rows || !rows.length) return;
-            try {
-                var _pd = window.PROJETS_DISPONIBLES;
-                if (_pd && _pd.length) {
-                    var _wl = {};
-                    _pd.forEach(function(p) { if (p && p.id != null) _wl[p.id] = true; });
-                    rows = rows.filter(function(rw) { return _wl[rw.projet_id]; });
-                }
-            } catch (_ewl) {}
-            if (!rows.length) return;
             window._projetRasterRows = rows;
             _applyProjetRasters(map, rows);
             // Re-evalue a chaque deplacement: un overlay hors vue initiale
@@ -11550,6 +11557,50 @@
             }
         }).catch(function(_e3) {});
     }
+    /* Changement de projet : retirer les rasters de projet qui ne sont pas
+       ceux du nouveau projet (carte + registres du gestionnaire), puis poser
+       ceux du projet actif. Les rasters de CARTE (carte_rasters, rasters
+       embarques) ne sont pas touches : ils n'ont pas _pwaProjetId. */
+    function _resetProjetRasters() {
+        var map = (typeof findLeafletMap === 'function') ? findLeafletMap() : null;
+        if (!map) return;
+        var garder = function(l) { return !l || l._pwaProjetId == null || String(l._pwaProjetId) === String(window.PROJET_ID); };
+        var retires = 0;
+        (window._dynamicRasters || []).slice().forEach(function(it) {
+            var l = it && it.layer;
+            if (garder(l)) return;
+            try { if (map.hasLayer(l)) map.removeLayer(l); } catch (_er) {}
+            if (window._projetRasterKeys) delete window._projetRasterKeys[l._pwaProjetKey];
+            retires++;
+        });
+        window._dynamicRasters = (window._dynamicRasters || []).filter(function(it) { return garder(it && it.layer); });
+        if (window._rasterLayers) window._rasterLayers = window._rasterLayers.filter(garder);
+        if (retires) {
+            var m = document.getElementById('rasterMgrModal');
+            if (m) m.remove();   // fenetre ouverte : sa liste n'est plus juste
+        }
+        var ajoutes = _applyProjetRasters(map, window._projetRasterRows || []);
+        var btn = document.getElementById('rasterMgrBtn');
+        if (btn) {
+            var n = (window._rasterLayers || []).length;
+            btn.title = 'Gerer les rasters (' + n + ')';
+            btn.style.display = n ? '' : 'none';
+        } else if (ajoutes && typeof window.createDynRasterManagerBtn === 'function') {
+            try { window.createDynRasterManagerBtn(map); } catch (_em) {}
+        }
+    }
+    (function _suivreChangeProjet() {
+        var o = window.changeProjet;
+        if (typeof o !== 'function') { setTimeout(_suivreChangeProjet, 800); return; }
+        if (o._pwaRasters) return;
+        var w = function() {
+            var r = o.apply(this, arguments);
+            Promise.resolve(r).then(function() { setTimeout(_resetProjetRasters, 300); }, function() {});
+            return r;
+        };
+        w._pwaRasters = true;
+        window.changeProjet = w;
+    })();
     setTimeout(_loadProjetRasters, 2000);
 })();
 
@@ -12102,14 +12153,56 @@
     function _headers() {
         return { 'Content-Type': 'application/json', 'apikey': window.SUPABASE_KEY, 'Authorization': 'Bearer ' + window.SUPABASE_KEY };
     }
+    /* Choix fait a la main dans le selecteur de projet : l'admin ne doit
+       plus le remplacer apres coup (reprise tardive d'une requete lente). */
+    var _choixManuel = false;
+    document.addEventListener('change', function (e) {
+        if (e.isTrusted && e.target && /^projetSelect/.test(e.target.id || '')) _choixManuel = true;
+    }, true);
+    /* Delai maximal (une requete bloquee sur mobile n'aboutissait jamais)
+       et une reprise : le 2026-10-09, default_projet_for_carte a deja
+       renvoye "statement timeout" (57014). */
+    function _json(url, opts) {
+        var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+        var t = ctl ? setTimeout(function () { ctl.abort(); }, 8000) : null;
+        if (ctl) opts.signal = ctl.signal;
+        return fetch(url, opts).then(function (r) {
+            if (t) clearTimeout(t);
+            return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status));
+        }, function (e) { if (t) clearTimeout(t); throw e; });
+    }
+    function _essais(fn, n, attente) {
+        return fn().catch(function () {
+            if (n <= 1) return null;
+            return new Promise(function (ok) { setTimeout(ok, attente); })
+                .then(function () { return _essais(fn, n - 1, attente * 2); });
+        });
+    }
     function _rpc(fn, hash) {
-        return fetch(window.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
-            method: 'POST', headers: _headers(), body: JSON.stringify({ p_hash: hash })
-        }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+        return _essais(function () {
+            return _json(window.SUPABASE_URL + '/rest/v1/rpc/' + fn, {
+                method: 'POST', headers: _headers(), body: JSON.stringify({ p_hash: hash })
+            });
+        }, 2, 1500);
+    }
+    /* Ligne de la table cartes retrouvee par l'ADRESSE de la page (unique
+       par fichier). Le hash seul ne suffit pas : Barrettali, Barrettali6 et
+       Prospection-GravuresRuspestre-2025 ont le meme jeu de projets, et le
+       hash de _carteHash (sans 0 ni -1) differe du hash cuit sur 4 cartes. */
+    function _ligneCarte() {
+        var url = location.origin + location.pathname;
+        return _essais(function () {
+            return _json(window.SUPABASE_URL + '/rest/v1/cartes?select=hash,default_state&url_github=eq.'
+                + encodeURIComponent(url), { headers: _headers() });
+        }, 2, 1500).then(function (rows) { return (rows && rows.length === 1) ? rows[0] : null; });
     }
     function _applyProjet(pid, mode) {
         pid = parseInt(pid, 10);
-        if (!pid || pid <= 0) return;
+        if (!pid || pid <= 0 || _choixManuel) return;
+        /* L'admin prime : la restauration differee du dernier projet ouvert
+           sur l'appareil (lastProjet_<hash>, hors liste blanche) ne doit pas
+           repasser derriere lui. */
+        window._pendingProjetRestore = null;
         if (typeof window.PROJET_ID !== 'undefined' && window.PROJET_ID === pid) return;  // deja actif
         var wl = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
         var found = wl.filter(function (p) { return p && p.id == pid; })[0];
@@ -12125,17 +12218,20 @@
     }
     function apply() {
         if (!window.SUPABASE_URL || !window.SUPABASE_KEY || typeof window.changeProjet !== 'function') { setTimeout(apply, 800); return; }
-        var hash = _carteHash();
-        if (!hash) return;
-        _rpc('carte_default_state', hash).then(function (state) {
-            var ov = state && state.projet_override;
-            if (ov) { _applyProjet(ov, 'override admin'); return; }   // 1. projet epingle
-            // 2. mode auto -> dernier projet modifie (le plus actif)
-            _rpc('default_projet_for_carte', hash).then(function (smart) {
-                if (smart) _applyProjet(smart, 'auto: dernier modifie');
-                // 3. sinon: rien (comportement embarque)
+        _ligneCarte().then(function (ligne) {
+            var hash = ligne ? ligne.hash : _carteHash();
+            if (!hash) return;
+            var etat = ligne ? Promise.resolve(ligne.default_state || {}) : _rpc('carte_default_state', hash);
+            return etat.then(function (state) {
+                var ov = state && state.projet_override;
+                if (ov) { _applyProjet(ov, 'override admin'); return; }   // 1. projet epingle
+                // 2. mode auto -> dernier projet modifie (le plus actif)
+                return _rpc('default_projet_for_carte', hash).then(function (smart) {
+                    if (smart) _applyProjet(smart, 'auto: dernier modifie');
+                    // 3. sinon: rien (comportement embarque)
+                });
             });
-        });
+        }).catch(function () {});
     }
     if (document.readyState === 'complete') setTimeout(apply, 900);
     else window.addEventListener('load', function () { setTimeout(apply, 900); });
@@ -12716,4 +12812,148 @@
     /* Filet pendant le demarrage (elements crees tard, ou loader retire
        ailleurs que sous body) : quelques passes, puis plus rien. */
     var n = 0, iv = setInterval(function () { tout(); if (++n >= 20) clearInterval(iv); }, 1000);
+})();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-10) : pas de reponse perimee en dernier.
+   Constat (carte Jules, 2026-10-09) : la carte charge d'abord les elements
+   du projet cuit (Brando, 115 elements), puis l'admin bascule sur son
+   projet (78) qui relance le chargement. Sans garde, la reponse arrivee
+   la DERNIERE gagne : sur reseau lent, celle de Brando pouvait remplacer
+   celle du projet 78 (en-tete 78, elements de Brando). Meme chose pour
+   les corrections. Ici, chaque appel porte un numero : si un appel ancien
+   se termine apres un plus recent, il a ecrase des donnees a jour, et on
+   relance une fois le chargement (qui lit le projet courant).
+   ===================================================================== */
+(function pwaChargementsSansCourse() {
+    'use strict';
+    /* Drapeau interne, et non sur la fonction : une autre enveloppe posee
+       par-dessus le masquerait, et on se poserait deux fois (deux compteurs,
+       deux rechargements). */
+    var fait = {};
+    function garder(nom) {
+        var o = window[nom];
+        if (typeof o !== 'function' || fait[nom]) return;
+        fait[nom] = true;
+        var gen = 0, dernierFini = 0, relance = false;
+        var w = function () {
+            var g = ++gen;
+            var r = o.apply(this, arguments);
+            Promise.resolve(r).then(function () {
+                if (g < dernierFini) {
+                    if (relance) return;   // un rechargement correctif est deja parti
+                    relance = true;
+                    console.log('[PWA] ' + nom + ' : reponse perimee arrivee en dernier, rechargement');
+                    var r2;
+                    try { r2 = window[nom](); } catch (e) {}
+                    Promise.resolve(r2).then(function () { relance = false; }, function () { relance = false; });
+                } else {
+                    dernierFini = g;
+                }
+            }, function () {});
+            return r;
+        };
+        if (o._indexFiable) w._indexFiable = true;   // l'index fiable n'enveloppe qu'une fois
+        window[nom] = w;
+    }
+    function tout() { garder('loadCustomFeatures'); garder('loadModifications'); }
+    tout();
+    document.addEventListener('DOMContentLoaded', tout);
+})();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-10) : categories par defaut reglees dans l'admin.
+   Constat (carte Jules, 2026-10-09) : l'admin enregistre la valeur brute
+   de la base ("nouvelle_parcelle"), alors que la carte affiche et compare
+   le libelle ("Nouvelle Parcelle") -> "Calque introuvable", reglage
+   ignore, et le masquage fige a la generation (hiddenCategories) gagne.
+   De plus, le reglage admin n'etait reapplique que pendant 60 s ou apres
+   un changement de projet : enregistrer, modifier ou rafraichir les
+   elements rendait la main au reglage fige.
+   Correctif sans regeneration :
+   - les cles brutes sont traduites EN PLACE (meme objet que celui que
+     garde l'observateur de la carte) avant applyDefaultLayerState ;
+   - apres chaque loadCustomFeatures, les categories reglees dans l'admin
+     sont remises a leur etat, sauf celles que l'utilisatrice a cochees ou
+     decochees a la main pendant la session.
+   "auto" dans l'admin = pas de cle = reglage de generation, inchange.
+   ===================================================================== */
+(function pwaCategoriesAdminFix() {
+    'use strict';
+    if (window._pwaCatAdminFix) return;
+    window._pwaCatAdminFix = true;
+    /* Meme table que categorie() (index fiable, plus haut) et que la carte. */
+    var LIBELLES = { nouvelle_parcelle: 'Nouvelle Parcelle', point_remarquable: 'Point remarquable' };
+
+    function traduire(obj) {
+        if (!obj || typeof obj !== 'object') return obj;
+        Object.keys(obj).forEach(function (k) {
+            var t = LIBELLES[k];
+            if (!t) return;
+            if (!(t in obj)) obj[t] = obj[k];   // un libelle deja regle l'emporte
+            delete obj[k];
+        });
+        return obj;
+    }
+
+    /* Choix manuels de la session : la case d'une categorie, ou la case
+       maitresse du groupe (qui coche/decoche toutes les categories). */
+    var touchees = {}, toutesTouchees = false;
+    document.addEventListener('change', function (e) {
+        var t = e.target;
+        if (!e.isTrusted || !t || !t.getAttribute) return;
+        if (t.id === 'sgCustomMaster') { toutesTouchees = true; return; }
+        var c = t.getAttribute('data-custom-cat');
+        if (c) touchees[c] = true;
+    }, true);
+
+    function reappliquer() {
+        var st = window._lastDefaultLayers, vis = window._customCategoryVisible;
+        if (!st || !vis || toutesTouchees || typeof window.toggleCustomCategory !== 'function') return;
+        traduire(st);
+        var change = false;
+        Object.keys(st).forEach(function (cat) {
+            if (!(cat in vis) || touchees[cat]) return;   // pas une categorie, ou choix manuel
+            var v = !!st[cat];
+            if (vis[cat] !== v) {
+                try { window.toggleCustomCategory(cat, v); change = true; } catch (e) {}
+            }
+        });
+        if (change && typeof window.rebuildModernLayerUI === 'function') {
+            try { window.rebuildModernLayerUI(); } catch (e) {}
+        }
+    }
+
+    var applyFait = false, loadFait = false;
+    function envelopper() {
+        var a = window.applyDefaultLayerState;
+        if (!applyFait && typeof a === 'function') {
+            applyFait = true;
+            window.applyDefaultLayerState = function (layersState) {
+                traduire(layersState);
+                var r = a.apply(this, arguments);
+                setTimeout(reappliquer, 50);
+                return r;
+            };
+        }
+        var l = window.loadCustomFeatures;
+        if (!loadFait && typeof l === 'function') {
+            loadFait = true;
+            window.loadCustomFeatures = function () {
+                var r = l.apply(this, arguments);
+                /* la carte remasque hiddenCategories puis reconstruit le
+                   panneau a +300 ms ; l'index fiable repasse a +600 ms */
+                Promise.resolve(r).then(function () {
+                    setTimeout(reappliquer, 700);
+                    setTimeout(reappliquer, 1500);
+                }, function () {});
+                return r;
+            };
+            /* l'index fiable n'enveloppe qu'une fois (drapeau sur la fonction) */
+            if (l._indexFiable) window.loadCustomFeatures._indexFiable = true;
+        }
+    }
+    envelopper();
+    document.addEventListener('DOMContentLoaded', envelopper);
+    window.addEventListener('load', envelopper);
 })();
