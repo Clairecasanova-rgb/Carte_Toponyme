@@ -12898,12 +12898,19 @@
 
     /* Choix manuels de la session : la case d'une categorie, ou la case
        maitresse du groupe (qui coche/decoche toutes les categories). */
+    /* Signal : le CLIC de confiance (doigt, souris, clavier), et non le
+       change : un case.click() de la carte (applyDefaultLayerState) emet un
+       change marque isTrusted par Chrome, ce qui faisait passer le geste de
+       la carte pour un choix de l'utilisatrice (2026-10-09). */
     var touchees = {}, toutesTouchees = false;
-    document.addEventListener('change', function (e) {
-        var t = e.target;
-        if (!e.isTrusted || !t || !t.getAttribute) return;
-        if (t.id === 'sgCustomMaster') { toutesTouchees = true; return; }
-        var c = t.getAttribute('data-custom-cat');
+    document.addEventListener('click', function (e) {
+        if (!e.isTrusted || !e.target || !e.target.closest) return;
+        var t = e.target.closest('label, input');
+        if (!t) return;
+        var inp = t.tagName === 'INPUT' ? t : (t.control || t.querySelector('input'));
+        if (!inp || !inp.getAttribute) return;
+        if (inp.id === 'sgCustomMaster') { toutesTouchees = true; return; }
+        var c = inp.getAttribute('data-custom-cat');
         if (c) touchees[c] = true;
     }, true);
 
