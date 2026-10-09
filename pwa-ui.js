@@ -12199,9 +12199,10 @@
     function _applyProjet(pid, mode) {
         pid = parseInt(pid, 10);
         if (!pid || pid <= 0 || _choixManuel) return;
-        /* L'admin prime : la restauration differee du dernier projet ouvert
-           sur l'appareil (lastProjet_<hash>, hors liste blanche) ne doit pas
-           repasser derriere lui. */
+        /* Une seule ouverture : la restauration differee du code cuit
+           (lastProjet_<hash> hors liste blanche) ne doit pas repasser
+           derriere celle-ci (meme projet ouvert deux fois, ou projet admin
+           ecrase alors que l'appareil n'a pas de souvenir valide). */
         window._pendingProjetRestore = null;
         if (typeof window.PROJET_ID !== 'undefined' && window.PROJET_ID === pid) return;  // deja actif
         var wl = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
@@ -12216,8 +12217,46 @@
             .then(function (rows) { go((rows && rows[0] && rows[0].nom) ? rows[0].nom: ('Projet ' + pid)); })
             .catch(function () { try { window.changeProjet(pid); } catch (e2) {} });
     }
+    /* Souvenir de l'appareil : meme cle que le code cuit, lastProjet_<hash>
+       avec le hash CUIT (tous les ids, 0 et -1 compris). Ecrit par la carte
+       quand on charge un projet avec le bouton de chargement. */
+    function _souvenirLocal() {
+        try {
+            var list = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
+            var ids = list.map(function (p) { return p && p.id; })
+                          .filter(function (id) { return id != null; })
+                          .sort(function (a, b) { return a - b; }).join(',');
+            var h = 0;
+            for (var i = 0; i < ids.length; i++) h = ((h << 5) - h + ids.charCodeAt(i)) | 0;
+            var raw = localStorage.getItem('lastProjet_' + Math.abs(h).toString(36));
+            var o = raw ? JSON.parse(raw) : null;
+            return (o && o.id) ? o : null;
+        } catch (e) { return null; }
+    }
     function apply() {
         if (!window.SUPABASE_URL || !window.SUPABASE_KEY || typeof window.changeProjet !== 'function') { setTimeout(apply, 800); return; }
+        var loc = _souvenirLocal();
+        if (loc) {
+            var lpid = parseInt(loc.id, 10);
+            var wl0 = (typeof window.PROJETS_DISPONIBLES !== 'undefined' && window.PROJETS_DISPONIBLES) || [];
+            if (wl0.some(function (p) { return p && p.id == lpid; })) {
+                console.log('[PWA] Projet : souvenir local (ID ' + lpid + '), reglage admin non applique');
+                return;   // le code cuit l'a deja restaure au demarrage
+            }
+            /* Hors liste blanche : le code cuit ne le restaure que s'il est
+               associe a la carte. On l'ouvre nous-memes s'il existe encore ;
+               sinon (projet supprime) on revient au reglage admin. */
+            _essais(function () {
+                return _json(window.SUPABASE_URL + '/rest/v1/projets?select=id&id=eq.' + lpid, { headers: _headers() });
+            }, 2, 1500).then(function (rows) {
+                if (rows && rows.length) _applyProjet(lpid, 'souvenir local');
+                else admin();
+            });
+            return;
+        }
+        admin();
+    }
+    function admin() {
         _ligneCarte().then(function (ligne) {
             var hash = ligne ? ligne.hash : _carteHash();
             if (!hash) return;
