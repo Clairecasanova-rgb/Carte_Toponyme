@@ -11756,11 +11756,13 @@
    ===================================================================== */
 (function pwaCompressImagePatch() {
     'use strict';
-    function install() {
-        if (window._pwaCompressPatched) return;
-        window._pwaCompressPatched = true;
-
-        window.compressImage = function (file) {
+    /* Photo deja reduite au choix par pwaPhotoPrecompressPatch (prefixe
+       pwaopt_) : on l'envoie telle quelle, sans seconde compression. */
+    function isPrecompressed(f) {
+        return !!(f && f.type === 'image/jpeg' && /^pwaopt_/.test(f.name || ''));
+    }
+    var lite = function (file) {
+            if (isPrecompressed(file)) return Promise.resolve(file);
             var MAXW = (typeof PHOTO_MAX_WIDTH !== 'undefined') ? PHOTO_MAX_WIDTH: 1200;
             var MAXH = (typeof PHOTO_MAX_HEIGHT !== 'undefined') ? PHOTO_MAX_HEIGHT: 1200;
             var Q = (typeof PHOTO_QUALITY !== 'undefined') ? PHOTO_QUALITY: 0.75;
@@ -11803,7 +11805,13 @@
                 });
             }
             if (typeof createImageBitmap === 'function') {
-                return createImageBitmap(file).then(function (bmp) {
+                /* imageOrientation explicite : redresse la photo selon l'EXIF.
+                   Un navigateur qui ne connait pas l'option (Chrome < 112,
+                   Safari < 16) la rejette : on retente alors sans option
+                   (comportement de juillet), puis seulement le repli <img>. */
+                return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(function () {
+                    return createImageBitmap(file);
+                }).then(function (bmp) {
                     return paint(bmp.width, bmp.height, function (ctx, w, h) {
                         ctx.drawImage(bmp, 0, 0, w, h);
                         if (bmp.close) bmp.close();
@@ -11811,12 +11819,23 @@
                 }).then(function (b) { return b || file; }).catch(function () { return viaImg(); });
             }
             return viaImg();
-        };
+    };
+    function install() {
+        if (window.compressImage === lite) return;
+        window.compressImage = lite;
+        window._pwaCompressLite = lite;
+        window._pwaCompressPatched = true;
         console.log('[PWA] compressImage patch memoire installe');
     }
-    /* Installer APRES que la page ait defini son compressImage (fin de load). */
-    if (document.readyState === 'complete') install();
-    else window.addEventListener('load', install);
+    /* Installer TOUT DE SUITE : pwa-ui.js est charge en defer, donc apres le
+       script de la carte qui declare compressImage. Attendre 'load' (qui
+       attend aussi les tuiles) laissait l'ancienne version base64 servir
+       pendant les premieres secondes, voire minutes en reseau faible.
+       On re-verifie a DOMContentLoaded et a load au cas ou une carte
+       chargerait pwa-ui.js plus tot et redeclarerait la fonction ensuite. */
+    install();
+    document.addEventListener('DOMContentLoaded', install);
+    window.addEventListener('load', install);
 })();
 
 /* =====================================================================
@@ -12361,4 +12380,215 @@
             if (arm() || tries > 40) clearInterval(iv);
         }, 250);
     }
+})();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-10) : photo reduite DES SON CHOIX (ajout + edition).
+   Constat (diagnostic du 2026-10-09) : sur Android, la page se rechargeait
+   parfois au clic "Sauvegarder" avec des photos prises a l'appareil. La
+   carte occupe deja plusieurs centaines de Mo ; a la sauvegarde, chaque
+   photo pleine resolution (12 Mpx et plus) etait decodee pour la
+   compression, pendant que les apercus gardaient la photo entiere en
+   base64 -> manque de memoire -> l'onglet est tue puis recharge.
+   Correctif sans regeneration : on intercepte le `change` des inputs photo
+   en phase de capture (apres pwaHeicPhotoPatch, enregistre plus haut), on
+   reduit la photo a 1200 px JPEG (reglage de la carte, via le
+   compressImage econome) et on reinjecte ce petit fichier (prefixe
+   pwaopt_) AVANT les handlers de la carte. L'apercu et l'envoi ne
+   manipulent plus que quelques centaines de Ko, et compressImage le laisse
+   passer tel quel. Une photo de plus de 10 Mo reste refusee par la carte, comme avant. Si
+   la reduction echoue ou ne gagne rien, le fichier d'origine est transmis
+   intact (comportement precedent). Un enregistrement demande pendant la
+   reduction attend la photo.
+   ===================================================================== */
+(function pwaPhotoPrecompressPatch() {
+    'use strict';
+    var PHOTO_INPUT_IDS = { drawPhoto1: 1, drawPhoto2: 1, editPhotoInput1: 1, editPhotoInput2: 1 };
+    var MIN_BYTES = 350 * 1024;          // en dessous, rien a gagner
+    /* Au-dela, la carte refuse la photo (alerte "max 10MB") sans la
+       decoder : on lui laisse ce refus. Une photo de 50 a 200 Mpx
+       decodee pese 200 a 800 Mo et ferait tuer l'onglet des le choix. */
+    var MAX_BYTES = 10 * 1024 * 1024;
+    var queue = Promise.resolve();       // une seule reduction a la fois
+    var pending = 0, waiters = [];
+
+    function skip(f) {
+        if (!f) return true;
+        if (/^pwaopt_/.test(f.name || '')) return true;
+        var t = (f.type || '').toLowerCase();
+        /* type vide / HEIC : affaire de pwaHeicPhotoPatch (qui repasse ici
+           avec un JPEG) ; non-image : la carte affiche son alerte. */
+        if (t.indexOf('image/') !== 0) return true;
+        if (t === 'image/gif' || t === 'image/svg+xml') return true;
+        return f.size < MIN_BYTES || f.size > MAX_BYTES;
+    }
+
+    function bump(inp) { inp._pwaoptSeq = (inp._pwaoptSeq || 0) + 1; return inp._pwaoptSeq; }
+
+    function begin() { pending++; busyUi(); }
+    function end() {
+        pending = Math.max(0, pending - 1);
+        busyUi();
+        if (pending) return;
+        var w = waiters; waiters = [];
+        w.forEach(function (fn) { try { fn(); } catch (e) {} });
+    }
+    function whenIdle(fn) { if (!pending) fn(); else waiters.push(fn); }
+
+    function onChangeCapture(e) {
+        var inp = e.target;
+        if (!inp || inp.tagName !== 'INPUT' || inp.type !== 'file') return;
+        if (!PHOTO_INPUT_IDS[inp.id]) return;
+        if (inp._pwaoptRedispatch) return;          // notre propre change : laisser passer
+        if (!inp.files || !inp.files.length) return; // selecteur annule : rien a faire
+        /* Tout nouveau choix (meme laisse passer tel quel) rend caduque une
+           reduction encore en cours sur cet input. */
+        var seq = bump(inp);
+        var f = inp.files[0];
+        if (skip(f)) return;
+        var lite = window._pwaCompressLite;
+        if (typeof lite !== 'function' || typeof DataTransfer !== 'function') return;
+
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        begin();
+        /* Le resultat ne s'applique que si rien n'a change depuis : retrait
+           ou nouveau choix incrementent _pwaoptSeq. Un input vide a seq
+           egal vient d'un selecteur annule (Chrome vide alors la selection) :
+           on y remet la photo choisie. */
+        function current() {
+            if (inp._pwaoptSeq !== seq) return false;
+            if (!inp.files || !inp.files.length) return true;
+            var g = inp.files[0];
+            return g === f || (g.name === f.name && g.size === f.size && g.lastModified === f.lastModified);
+        }
+        function inject(file) {
+            try {
+                var dt = new DataTransfer();
+                dt.items.add(file);
+                inp.files = dt.files;
+            } catch (err) { /* Safari < 14.1 : DataTransfer non constructible -> fichier d'origine */ }
+            redispatch(inp);
+        }
+        queue = queue.then(function () {
+            if (inp._pwaoptSeq !== seq) return null;   // deja caduque : ne pas decoder pour rien
+            return lite(f);
+        }).then(function (blob) {
+            if (!current()) return;
+            if (!blob || blob === f || !(blob.size > 0) || blob.size >= f.size) { inject(f); return; }
+            var nm = 'pwaopt_' + String(f.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
+            var out;
+            try { out = new File([blob], nm, { type: 'image/jpeg', lastModified: f.lastModified || Date.now() }); }
+            catch (err) { out = f; }
+            inject(out);
+        }).catch(function () {
+            try { if (current()) inject(f); } catch (err) {}
+        }).then(end, end);
+    }
+
+    /* dispatchEvent est synchrone : le drapeau couvre tous les handlers du
+       change redistribue, ce qui exclut toute boucle. */
+    function redispatch(inp) {
+        inp._pwaoptRedispatch = true;
+        try { inp.dispatchEvent(new Event('change', { bubbles: true })); }
+        finally { inp._pwaoptRedispatch = false; }
+    }
+
+    /* Retrait d'une photo, ouverture ou fermeture de la fenetre d'edition :
+       la carte vide l'input sans emettre de change ; on rend caduque toute
+       reduction en cours pour qu'elle ne fasse pas revenir la photo. */
+    function bumpIds(ids) {
+        ids.forEach(function (id) { var i = document.getElementById(id); if (i) bump(i); });
+    }
+    function wrap(name, idsFor) {
+        var o = window[name];
+        if (typeof o !== 'function' || o._pwaoptWrapped) return;
+        var w = function () {
+            try { bumpIds(idsFor.apply(null, arguments)); } catch (e) {}
+            return o.apply(this, arguments);
+        };
+        w._pwaoptWrapped = true;
+        window[name] = w;
+    }
+    function editIds() { return ['editPhotoInput1', 'editPhotoInput2']; }
+
+    /* Enregistrer pendant une reduction aurait envoye le point SANS sa
+       photo : le clic est retenu, puis rejoue des que la photo est prete. */
+    function saveButton(el) {
+        var b = el && el.closest ? el.closest('button, [onclick]') : null;
+        if (!b) return null;
+        if (b.id === 'btnSaveCustom') return b;
+        return /saveDrawnFeatures\s*\(/.test(b.getAttribute('onclick') || '') ? b : null;
+    }
+    function onClickCapture(e) {
+        if (!pending) return;
+        var b = saveButton(e.target);
+        if (!b) return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        var MSG = 'Préparation de la photo…';
+        var drawSave = b.id !== 'btnSaveCustom' && typeof window.updateDrawStatus === 'function';
+        if (drawSave) { try { window.updateDrawStatus(MSG, 'loading'); } catch (err) {} }
+        if (b._pwaoptWaiting) return;
+        b._pwaoptWaiting = true;
+        whenIdle(function () {
+            b._pwaoptWaiting = false;
+            setTimeout(function () {
+                b.click();
+                /* Clic rejoue refuse par la carte (ex. contributeur vide) :
+                   ne pas laisser notre message en place. */
+                var st = document.getElementById('drawStatus');
+                if (drawSave && st && st.textContent === MSG) {
+                    try { window.updateDrawStatus('', 'ok'); } catch (err) {}
+                }
+            }, 0);
+        });
+    }
+
+    /* Message discret pendant la reduction (une a quelques secondes sur
+       telephone), pour ne pas laisser croire que la photo est perdue. */
+    function busyUi() {
+        var el = document.getElementById('pwaPhotoBusy');
+        if (!pending) { if (el) el.remove(); return; }
+        if (el || !document.body) return;
+        el = document.createElement('div');
+        el.id = 'pwaPhotoBusy';
+        el.textContent = 'Préparation de la photo…';
+        el.setAttribute('role', 'status');
+        el.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top, 0px) + 12px);'
+            + 'transform:translateX(-50%);z-index:100000;padding:8px 14px;border-radius:18px;'
+            + 'background:rgba(0,0,0,.78);color:#fff;font:13px/1.3 system-ui,sans-serif;pointer-events:none;';
+        document.body.appendChild(el);
+    }
+
+    function boot() {
+        if (window._pwaPrecompressPatched) return;
+        window._pwaPrecompressPatched = true;
+        document.addEventListener('change', onChangeCapture, true);
+        document.addEventListener('click', onClickCapture, true);
+        wrap('removePhoto', function (n) { return ['drawPhoto' + n]; });
+        wrap('removeEditPhoto', function (n) { return ['editPhotoInput' + n]; });
+        wrap('openEditCustomModal', editIds);
+        wrap('closeEditCustomModal', editIds);
+        console.log('[PWA] patch photos reduites au choix installe');
+    }
+    /* Meme moment que pwaHeicPhotoPatch, pour s'enregistrer APRES lui. */
+    if (document.readyState === 'loading') window.addEventListener('load', boot);
+    else boot();
+})();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-10) : pas de "tirer pour actualiser".
+   Dans un onglet Chrome Android ou Safari iOS, un glissement vers le bas
+   alors que la page est en haut (par exemple depuis l'en-tete du panneau
+   de saisie) rechargeait la carte et effacait la saisie. Le bouton
+   d'actualisation du badge reste disponible.
+   ===================================================================== */
+(function pwaNoPullToRefresh() {
+    'use strict';
+    if (document.getElementById('pwaNoPullToRefresh')) return;
+    var st = document.createElement('style');
+    st.id = 'pwaNoPullToRefresh';
+    st.textContent = 'html,body{overscroll-behavior-y:contain;}';
+    (document.head || document.documentElement).appendChild(st);
 })();
