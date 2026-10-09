@@ -12924,6 +12924,38 @@
         }
     }
 
+    /* La carte redefinit window.toggleCustomCategory a chaque chargement des
+       elements, puis s'en sert pour remasquer hiddenCategories. Un minuteur
+       apres le chargement ne suffit pas (deux chargements croises : le
+       dernier masquage arrivait apres la reapplication). On intercepte donc
+       la fonction elle-meme : un changement de la CARTE qui contredit l'admin
+       sur une categorie non touchee a la main relance reappliquer(). Les
+       clics de l'utilisatrice sont marques avant (ecouteur en capture). */
+    var prochaine = null;
+    function bientot() {
+        if (prochaine) return;
+        prochaine = setTimeout(function () { prochaine = null; reappliquer(); }, 30);
+    }
+    function surveiller(f) {
+        if (typeof f !== 'function' || f._pwaCat) return f;
+        var w = function (cat, visible) {
+            var r = f.apply(this, arguments);
+            var st = window._lastDefaultLayers;
+            if (st && !toutesTouchees && !touchees[cat] && (cat in st) && !!st[cat] !== !!visible) bientot();
+            return r;
+        };
+        w._pwaCat = true;
+        return w;
+    }
+    try {
+        var courant = surveiller(window.toggleCustomCategory);
+        Object.defineProperty(window, 'toggleCustomCategory', {
+            configurable: true,
+            get: function () { return courant; },
+            set: function (f) { courant = surveiller(f); }
+        });
+    } catch (e) {}
+
     var applyFait = false, loadFait = false;
     function envelopper() {
         var a = window.applyDefaultLayerState;
@@ -12931,7 +12963,18 @@
             applyFait = true;
             window.applyDefaultLayerState = function (layersState) {
                 traduire(layersState);
-                var r = a.apply(this, arguments);
+                /* L'observateur de la carte rappelle cette fonction pendant
+                   60 s a chaque reconstruction du panneau : sans filtre, il
+                   recochait une categorie decochee a la main. */
+                var etat = layersState;
+                if (layersState && typeof layersState === 'object' && (toutesTouchees || Object.keys(touchees).length)) {
+                    etat = {};
+                    Object.keys(layersState).forEach(function (k) {
+                        var cat = k in touchees || toutesTouchees;
+                        if (!(cat && window._customCategoryVisible && (k in window._customCategoryVisible))) etat[k] = layersState[k];
+                    });
+                }
+                var r = a.call(this, etat);
                 setTimeout(reappliquer, 50);
                 return r;
             };
