@@ -691,7 +691,7 @@ html body #searchContainer #cfLayerColor {
 }
 /* Le .draw-field qui contient le color picker: largeur fixe 36px pour
    matcher exactement le bouton "+" en dessous */
-html body #searchContainer .draw-field-row > .draw-field:has(input[type="color"]) {
+html body #searchContainer .draw-field-row > .draw-field:where(.pwaHasColor):not(pwa-n[pwa-n]) {
     flex: 0 0 36px !important;
     width: 36px !important;
 }
@@ -1291,7 +1291,7 @@ html body #panelToggle {
    - body.detail-open : le detail panel cache le searchContainer (qui n'a pas .collapsed)
    - plein-ecran: on a besoin de la loupe pour re-acceder au panneau */
 @media (max-width: 768px) {
-    html body:not(.detail-open):has(#searchContainer:not(.collapsed)) #panelToggle {
+    html:where(.pwaSearchOpen) body:not(.detail-open):not(#pwa-n.pwa-n) #panelToggle {
         display: none !important;
     }
     /* En plein-ecran (mobile), TOUJOURS afficher la loupe (sauf si display:none
@@ -1307,7 +1307,7 @@ html body #panelToggle {
 /* Pousser la geolocalisation vers le haut quand la loupe est visible au coin.
    Specificite boostee (.leaflet-bottom.leaflet-right .leaflet-control-locate)
    pour battre la regle modern UI qui force margin: 16px !important. */
-html body:has(#searchContainer.collapsed) .leaflet-bottom.leaflet-right .leaflet-control-locate {
+html:where(.pwaSearchCollapsed) body:not(#pwa-n.pwa-n) .leaflet-bottom.leaflet-right .leaflet-control-locate {
     margin-bottom: 96px !important;
 }
 /* Desktop: la loupe est TOUJOURS visible (panneau ouvert OU collapse), donc
@@ -2536,12 +2536,12 @@ html body #modernLoader .loader-bar{background:var(--bd2)!important}
 html body #modernLoader .loader-bar::after{background:var(--acc)!important}
 html body #modernLoader .loader-text{font-family:var(--sans)!important;color:var(--ink2)!important;
  text-transform:none!important;letter-spacing:0!important;font-size:12px!important}
-html body:has(#modernLoader) #searchContainer,
-html body:has(#modernLoader) #floatingButtons,
-html body:has(#modernLoader) #lexiquePanel,
-html body:has(#modernLoader) .modern-layer-control,
-html body:has(#modernLoader) #pwaPosBtn,
-html body:has(#modernLoader) #pwaStatusBadge{opacity:0!important;pointer-events:none!important}
+html:where(.pwaHasLoader) body:not(#pwa-n) #searchContainer,
+html:where(.pwaHasLoader) body:not(#pwa-n) #floatingButtons,
+html:where(.pwaHasLoader) body:not(#pwa-n) #lexiquePanel,
+html:where(.pwaHasLoader) body:not(#pwa-n) .modern-layer-control,
+html:where(.pwaHasLoader) body:not(#pwa-n) #pwaPosBtn,
+html:where(.pwaHasLoader) body:not(#pwa-n) #pwaStatusBadge{opacity:0!important;pointer-events:none!important}
 
 /* === Images sans source : ne pas afficher l'icone cassee ===
    Le viewer napoleonien cree son <img> vide puis lui pose une source quand une
@@ -2675,33 +2675,33 @@ html body .leaflet-popup-content [id^="popup-"] .pwaVoirFiche:hover{text-decorat
    mobile n'en fait que 285. On met chaque filtre sur UNE ligne
    [libelle | menu | boutons]. Le champ de recherche et la barre des communes
    masquees gardent leur mise en page (ils n'ont pas de libelle). */
-html body #searchContainer #cfFilters#cfFilters > div:has(> label){display:grid!important;
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n){display:grid!important;
  grid-template-columns:58px minmax(0,1fr) auto!important;align-items:center!important;
  gap:8px!important;margin:0 0 6px!important;padding:0!important}
-html body #searchContainer #cfFilters#cfFilters > div:has(> label) > label{font-size:10px!important;margin:0!important;
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n) > label{font-size:10px!important;margin:0!important;
  padding:0!important;text-transform:none!important;letter-spacing:0!important;
  color:var(--ink2)!important;line-height:1.2!important}
-html body #searchContainer #cfFilters#cfFilters > div:has(> label) > select{height:30px!important;min-height:0!important;
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n) > select{height:30px!important;min-height:0!important;
  padding:2px 22px 2px 7px!important;font-size:12px!important;margin:0!important}
-html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div{display:flex!important;align-items:center!important;
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n) > div{display:flex!important;align-items:center!important;
  gap:4px!important;height:auto!important;margin:0!important}
-html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > button,
-html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > input,
-html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > span{
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n) > div > button,
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n) > div > input,
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n) > div > span{
  width:26px!important;height:26px!important;min-width:0!important;max-width:26px!important;
  padding:0!important;font-size:12px!important;line-height:1!important;flex:0 0 26px!important;
  display:inline-flex!important;align-items:center!important;justify-content:center!important}
 /* champ de recherche de la liste : meme hauteur que les menus */
-html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)) input{height:30px!important;padding:2px 8px!important;
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfNoLab):not(pwa-n) input{height:30px!important;padding:2px 8px!important;
  font-size:12px!important}
-html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)){margin-bottom:8px!important}
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfNoLab):not(pwa-n){margin-bottom:8px!important}
 /* ligne de recherche de la liste et pastille de couleur : meme gabarit */
-html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)){
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfNoLab):not(pwa-n){
  display:flex!important;align-items:center!important;gap:6px!important}
-html body #searchContainer #cfFilters#cfFilters > div:not(:has(> label)) > button{
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfNoLab):not(pwa-n) > button{
  width:26px!important;height:26px!important;min-width:0!important;padding:0!important;
  flex:0 0 26px!important;display:inline-flex!important;align-items:center!important;justify-content:center!important}
-html body #searchContainer #cfFilters#cfFilters > div:has(> label) > div > input[type="color"]{
+html body #searchContainer #cfFilters#cfFilters > div:where(.pwaCfLab):not(pwa-n) > div > input[type="color"]{
  height:26px!important;padding:0!important;border:1px solid var(--bd)!important;border-radius:2px!important}
 
 /* Liste des elements personnalises : meme registre que Selection et
@@ -2830,7 +2830,7 @@ html body #searchContainer .pwaPoignee{display:none}
 /* Rangee "Categorie / Couleur" du formulaire : la colonne de droite etait
    taillee sur le seul selecteur de couleur (36 px), ce qui coupait son
    libelle. On lui donne la largeur de son intitule. */
-html body #drawTabNouveau .draw-field-row:has(input[type="color"]) > *:last-child{
+html body #drawTabNouveau .draw-field-row:where(.pwaHasColor):not(pwa-n[pwa-n]) > *:last-child{
  min-width:64px!important;flex:0 0 auto!important}
 
 /* Adresses saisies dans une description, rendues cliquables par pwa-ui.js.
@@ -2868,7 +2868,7 @@ html body #detailCustomModalContent > .pwaPoigneeFiche{display:none}
  html body #detailCustomModal.active #detailCustomModalContent.detail-expanded{
   width:100%!important;max-width:100%!important;height:100dvh!important;max-height:100dvh!important;
   border-radius:0!important;margin:0!important;padding-top:env(safe-area-inset-top, 0px)!important}
- html body #detailCustomModal.active:has(#detailCustomModalContent.detail-expanded){
+ html:where(.pwaCdExp) body #detailCustomModal.active:not(#pwa-n.pwa-n){
   padding:0!important;align-items:stretch!important}
 }
 
@@ -2876,14 +2876,14 @@ html body #detailCustomModalContent > .pwaPoigneeFiche{display:none}
    loupe) ont un z-index superieur et se posaient sur la fiche. Elles s'effacent
    le temps du plein ecran, comme pour les fenetres modales. */
 @media (max-width:768px){
- html body:has(#modernDetailPanel.detail-expanded) .leaflet-top.leaflet-left,
- html body:has(#modernDetailPanel.detail-expanded) .modern-layer-control,
- html body:has(#modernDetailPanel.detail-expanded) #rasterMgrBtn,
- html body:has(#modernDetailPanel.detail-expanded) #floatingButtons,
- html body:has(#detailCustomModalContent.detail-expanded) .leaflet-top.leaflet-left,
- html body:has(#detailCustomModalContent.detail-expanded) .modern-layer-control,
- html body:has(#detailCustomModalContent.detail-expanded) #rasterMgrBtn,
- html body:has(#detailCustomModalContent.detail-expanded) #floatingButtons{
+ html:where(.pwaMdExp) body:not(#pwa-n.pwa-n) .leaflet-top.leaflet-left,
+ html:where(.pwaMdExp) body:not(#pwa-n.pwa-n) .modern-layer-control,
+ html:where(.pwaMdExp) body:not(#pwa-n.pwa-n) #rasterMgrBtn,
+ html:where(.pwaMdExp) body:not(#pwa-n.pwa-n) #floatingButtons,
+ html:where(.pwaCdExp) body:not(#pwa-n.pwa-n) .leaflet-top.leaflet-left,
+ html:where(.pwaCdExp) body:not(#pwa-n.pwa-n) .modern-layer-control,
+ html:where(.pwaCdExp) body:not(#pwa-n.pwa-n) #rasterMgrBtn,
+ html:where(.pwaCdExp) body:not(#pwa-n.pwa-n) #floatingButtons{
   opacity:0!important;pointer-events:none!important}
 }
 

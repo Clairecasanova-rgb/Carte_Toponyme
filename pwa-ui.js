@@ -2141,7 +2141,7 @@
     // #themeFoundOverride -> on ne fait rien. Une carte Classique ou Moderne
     // sombre n'a pas #themeClairOverride -> on ne fait rien non plus.
     (function _applyFoundTheme() {
-        var THEME_V = 'de44277eab';
+        var THEME_V = 'ad66ebe043';
         function go() {
             if (!document.getElementById('themeClairOverride')) return;
             if (document.getElementById('themeFoundOverride')) return;
@@ -11307,7 +11307,7 @@
             if (m && !m._fabWatched) {
                 m._fabWatched = true;
                 try {
-                    new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); })
+                    new MutationObserver(function() { _fabSchedule(); })
                         .observe(m, { attributes: true, attributeFilter: ['class', 'style'] });
                 } catch (e) {}
             }
@@ -11319,15 +11319,15 @@
         if (!sb || sb === _sbWatched) return;
         _sbWatched = sb;
         try {
-            new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); })
+            new MutationObserver(function() { _fabSchedule(); })
                 .observe(sb, { attributes: true, attributeFilter: ['class', 'style'] });
         } catch (e) {}
         try {
             if (typeof ResizeObserver !== 'undefined') {
-                new ResizeObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb);
+                new ResizeObserver(function() { _fabSchedule(); }).observe(sb);
             }
         } catch (e) {}
-        requestAnimationFrame(_fabBehindPanel);
+        _fabSchedule();
     }
     var _bodyWatched = false;
     function _watchBodyClasses() {
@@ -11339,7 +11339,7 @@
             // rappel differe : le controle des calques a une transition de 0,3 s,
             // sa position finale n'est connue qu'apres.
             var _reposer = function() {
-                requestAnimationFrame(_fabBehindPanel);
+                _fabSchedule();
                 setTimeout(_fabBehindPanel, 360);
             };
             new MutationObserver(_reposer)
@@ -11350,6 +11350,33 @@
                     .observe(dp, { attributes: true, attributeFilter: ['class', 'style'] });
             }
         } catch (e) {}
+    }
+    /* Un seul passage par image : _fabBehindPanel lit le style calcule
+       (getComputedStyle), ce qui force un recalcul de toute la page. */
+    var _fabRafPending = false;
+    function _fabSchedule() {
+        if (_fabRafPending) return;
+        _fabRafPending = true;
+        requestAnimationFrame(function() { _fabRafPending = false; _fabBehindPanel(); });
+    }
+    /* Mutations sous .leaflet-container (tuiles, marqueurs, dizaines par
+       seconde pendant un deplacement ou un zoom) : sans effet sur les FAB ni
+       sur les fenetres, on les ignore (mesure du 2026-10-09 : _fabVisible
+       etait la fonction la plus couteuse pendant les gestes). */
+    function _fabHorsCarte(recs) {
+        for (var i = 0; i < recs.length; i++) {
+            var t = recs[i].target;
+            if (!(t && t.closest && t.closest('.leaflet-container'))) return true;
+            /* fenetre raster ouverte en plein ecran : inseree dans l'element
+               plein ecran, qui peut etre la carte elle-meme */
+            var ns = [recs[i].addedNodes, recs[i].removedNodes];
+            for (var a = 0; a < 2; a++) {
+                for (var j = 0; j < ns[a].length; j++) {
+                    if (ns[a][j].id && _fabModalIds.indexOf(ns[a][j].id) >= 0) return true;
+                }
+            }
+        }
+        return false;
     }
     function _fabBehindPanel() {
         _watchSidebarLive();
@@ -11409,11 +11436,11 @@
     (function _initFabBehind() {
         var sb = document.getElementById('searchContainer');
         if (!sb) { setTimeout(_initFabBehind, 600); return; }
-        try { new MutationObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb, { attributes: true, attributeFilter: ['class', 'style'] }); } catch (_e) {}
-        try { if (typeof ResizeObserver !== 'undefined') new ResizeObserver(function() { requestAnimationFrame(_fabBehindPanel); }).observe(sb); } catch (_e2) {}
+        try { new MutationObserver(function() { _fabSchedule(); }).observe(sb, { attributes: true, attributeFilter: ['class', 'style'] }); } catch (_e) {}
+        try { if (typeof ResizeObserver !== 'undefined') new ResizeObserver(function() { _fabSchedule(); }).observe(sb); } catch (_e2) {}
         // Detecte aussi l'ouverture/fermeture de la fenetre raster (ajout/retrait au DOM).
-        try { new MutationObserver(function() { _watchFabModals(); _watchSidebarLive(); requestAnimationFrame(_fabBehindPanel); }).observe(document.body, { childList: true, subtree: true }); } catch (_e3) {}
-        window.addEventListener('resize', function() { requestAnimationFrame(_fabBehindPanel); });
+        try { new MutationObserver(function(recs) { if (!_fabHorsCarte(recs)) return; _watchFabModals(); _watchSidebarLive(); _fabSchedule(); }).observe(document.body, { childList: true, subtree: true }); } catch (_e3) {}
+        window.addEventListener('resize', function() { _fabSchedule(); });
         _watchFabModals();
         _fabBehindPanel();
         setTimeout(function() { _watchFabModals(); _fabBehindPanel(); }, 1200);
@@ -12591,4 +12618,102 @@
     st.id = 'pwaNoPullToRefresh';
     st.textContent = 'html,body{overscroll-behavior-y:contain;}';
     (document.head || document.documentElement).appendChild(st);
+})();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-10) : fluidite - classes a la place des :has().
+   Mesure du 2026-10-09 (banc Playwright, 2B273, ordinateur) : depuis le
+   theme "Something Found" (22-23/09), chaque recalcul de style coutait 2 a
+   3,5 fois plus qu'en juillet, a cause des 31 selecteurs :has() de
+   theme-found.css (body:has(...) oblige le navigateur a reexaminer la page
+   a chaque insertion de tuile ou de marqueur). Les retirer ramenait le
+   zoom et le deplacement au niveau de juillet. theme-found.css porte
+   desormais des classes (meme specificite, rendu identique) que ce module
+   pose sur <html> ou sur les elements concernes, UNIQUEMENT quand l'etat
+   change :
+     pwaHasLoader       #modernLoader present
+     pwaSearchOpen / pwaSearchCollapsed   etat de #searchContainer
+     pwaMdExp           #modernDetailPanel.detail-expanded
+     pwaCdExp           #detailCustomModalContent.detail-expanded
+     pwaCfLab / pwaCfNoLab   enfants div de #cfFilters avec / sans label direct
+     pwaHasColor        .draw-field(-row) contenant un input couleur
+   Les observateurs ne visent que ces elements (jamais le sous-arbre de la
+   carte).
+   ===================================================================== */
+(function pwaHasClassesSync() {
+    'use strict';
+    if (window._pwaHasClassesSync) return;
+    window._pwaHasClassesSync = true;
+    var root = document.documentElement;
+    var vus = (typeof WeakSet === 'function') ? new WeakSet() : null;
+
+    function setCls(el, c, on) {
+        if (el && el.classList.contains(c) !== !!on) el.classList.toggle(c, !!on);
+    }
+    function hasCls(id, c) {
+        var el = document.getElementById(id);
+        return !!(el && el.classList.contains(c));
+    }
+    function syncRoot() {
+        var sc = document.getElementById('searchContainer');
+        setCls(root, 'pwaHasLoader', !!document.getElementById('modernLoader'));
+        setCls(root, 'pwaSearchOpen', !!sc && !sc.classList.contains('collapsed'));
+        setCls(root, 'pwaSearchCollapsed', !!sc && sc.classList.contains('collapsed'));
+        setCls(root, 'pwaMdExp', hasCls('modernDetailPanel', 'detail-expanded'));
+        setCls(root, 'pwaCdExp', hasCls('detailCustomModalContent', 'detail-expanded'));
+    }
+    function syncPanel() {
+        var cf = document.getElementById('cfFilters');
+        if (cf) {
+            for (var i = 0; i < cf.children.length; i++) {
+                var d = cf.children[i];
+                if (d.tagName !== 'DIV') continue;
+                var lab = false;
+                for (var j = 0; j < d.children.length; j++) {
+                    if (d.children[j].tagName === 'LABEL') { lab = true; break; }
+                }
+                setCls(d, 'pwaCfLab', lab);
+                setCls(d, 'pwaCfNoLab', !lab);
+            }
+        }
+        var rows = document.querySelectorAll('.draw-field-row, .draw-field');
+        for (var k = 0; k < rows.length; k++) {
+            setCls(rows[k], 'pwaHasColor', !!rows[k].querySelector('input[type="color"]'));
+        }
+    }
+    function surveiller(el, opts, fn) {
+        if (!el || (vus && vus.has(el))) return;
+        if (vus) vus.add(el);
+        try { new MutationObserver(fn).observe(el, opts); } catch (e) {}
+    }
+    var attr = { attributes: true, attributeFilter: ['class'] };
+    var panelPending = false;
+    function panelSoon() {
+        if (panelPending) return;
+        panelPending = true;
+        requestAnimationFrame(function () { panelPending = false; syncPanel(); attacher(); });
+    }
+    function attacher() {
+        surveiller(document.getElementById('searchContainer'), attr, syncRoot);
+        surveiller(document.getElementById('modernDetailPanel'), attr, syncRoot);
+        surveiller(document.getElementById('detailCustomModalContent'), attr, syncRoot);
+        surveiller(document.getElementById('searchContainer'), { childList: true, subtree: true }, panelSoon);
+        surveiller(document.getElementById('drawTabNouveau'), { childList: true, subtree: true }, panelSoon);
+    }
+    function tout() { syncRoot(); syncPanel(); attacher(); }
+
+    tout();
+    /* #modernLoader et les fenetres sont des enfants directs de body : leur
+       ajout ou retrait se voit sans observer le sous-arbre de la carte. */
+    function bodyObs() {
+        if (!document.body) return false;
+        surveiller(document.body, { childList: true }, function () { syncRoot(); attacher(); });
+        return true;
+    }
+    if (!bodyObs()) document.addEventListener('DOMContentLoaded', function () { bodyObs(); tout(); });
+    document.addEventListener('DOMContentLoaded', tout);
+    window.addEventListener('load', tout);
+    /* Filet pendant le demarrage (elements crees tard, ou loader retire
+       ailleurs que sous body) : quelques passes, puis plus rien. */
+    var n = 0, iv = setInterval(function () { tout(); if (++n >= 20) clearInterval(iv); }, 1000);
 })();
