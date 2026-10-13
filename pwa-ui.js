@@ -13138,3 +13138,67 @@
     paresseux._pwaParesseux = true;
     window.initMapFromSearchData = paresseux;
 })();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-10) : application installee en plein ecran d'office.
+   Sur smartphone, le script cuit autoFullscreenMobile demande le plein
+   ecran au PREMIER APPUI (les navigateurs exigent un geste) : l'ecran
+   "sautait" juste apres le chargement, au moment ou l'on voulait deplacer
+   la carte. Decision de l'utilisatrice (2026-10-13) : l'application
+   installee demarre directement en plein ecran ; l'onglet du navigateur
+   garde le plein ecran au premier appui.
+   1. Le manifeste (fabrique a la volee par la carte et par pwa-ui.js)
+      passe en display "fullscreen" (repli "standalone"). Une application
+      deja installee ne relit pas ce reglage : effet a la reinstallation.
+   2. Quand l'application tourne deja en plein ecran (display-mode
+      fullscreen), la demande automatique du premier appui est ignoree ; le
+      bouton plein ecran de la carte reste actif. Une application installee
+      avant ce changement (standalone) garde le comportement d'avant.
+   ===================================================================== */
+(function pwaPleinEcranAppli() {
+    'use strict';
+    if (window._pwaPleinEcranAppli) return;
+    window._pwaPleinEcranAppli = true;
+
+    function retoucherManifeste() {
+        var l = document.querySelector('link[rel="manifest"]');
+        if (!l || l._pwaPE) return;
+        fetch(l.href).then(function (r) { return r.json(); }).then(function (m) {
+            if (!m || m.display === 'fullscreen') { l._pwaPE = true; return; }
+            m.display = 'fullscreen';
+            m.display_override = ['fullscreen', 'standalone'];
+            var url = URL.createObjectURL(new Blob([JSON.stringify(m)], { type: 'application/manifest+json' }));
+            document.querySelectorAll('link[rel="manifest"]').forEach(function (x) {
+                try { x.parentNode.removeChild(x); } catch (e) {}
+            });
+            var n = document.createElement('link');
+            n.rel = 'manifest';
+            n.href = url;
+            n._pwaPE = true;
+            document.head.appendChild(n);
+        }).catch(function () {});
+    }
+    retoucherManifeste();
+    document.addEventListener('DOMContentLoaded', retoucherManifeste);
+
+    var enPleinEcran = false;
+    try { enPleinEcran = !!(window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches); } catch (e) {}
+    if (!enPleinEcran) return;
+
+    /* Seul un appui sur le bouton plein ecran de la carte peut encore
+       demander le plein ecran (API Fullscreen). */
+    var SEL = '.leaflet-control-fullscreen, .leaflet-control-zoom-fullscreen, .leaflet-control-fullscreen-button';
+    var dernierBouton = 0;
+    document.addEventListener('pointerdown', function (e) {
+        if (e.target && e.target.closest && e.target.closest(SEL)) dernierBouton = Date.now();
+    }, true);
+    var el = document.documentElement;
+    ['requestFullscreen', 'webkitRequestFullscreen'].forEach(function (k) {
+        var o = el[k];
+        if (typeof o !== 'function') return;
+        el[k] = function () {
+            if (Date.now() - dernierBouton < 1500) return o.apply(this, arguments);
+            return Promise.resolve();
+        };
+    });
+})();
