@@ -13046,3 +13046,95 @@
     document.addEventListener('DOMContentLoaded', envelopper);
     window.addEventListener('load', envelopper);
 })();
+
+/* =====================================================================
+   PATCH RUNTIME (2026-10) : couches de toponymes construites a la demande.
+   Constat (carte Jules, 2026-10-13) : au demarrage, initMapFromSearchData
+   (rendu "OptDemo") construisait TOUS les polygones et marqueurs des
+   toponymes, deux fois (couche "Tous" + couche de chaque commune), soit
+   7 576 polygones, 7 576 marqueurs et autant d'infobulles pour 3 788
+   toponymes - meme quand ces couches sont masquees par defaut
+   (_defaultLayerVisibility.polygons/clusters = false). Sur un telephone
+   modeste, c'etait le principal poste du chargement.
+   Correctif sans regeneration : on laisse la carte creer ses couches VIDES
+   (meme noms dans le controle des calques, memes window._demoPolygonLayers,
+   _demoClusterGroup, _demoCommuneGroups), puis chaque couche se remplit a
+   son PREMIER affichage. Le reste de la carte ne fait qu'afficher ou
+   masquer ces couches (hasLayer/addLayer/removeLayer), sans lire leur
+   contenu. Une couche visible d'office est remplie tout de suite.
+   ===================================================================== */
+(function pwaToponymesParesseux() {
+    'use strict';
+    var orig = window.initMapFromSearchData;
+    if (typeof orig !== 'function' || orig._pwaParesseux) return;
+    if (window._demoPolygonLayers) return;   // rendu deja fait : trop tard, on ne touche a rien
+
+    function remplirPolys(groupe, items) {
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (!it.polygon || !it.polygon.length) continue;
+            try { groupe.addLayer(window._createPoly(it)); } catch (e) {}
+        }
+    }
+    function marqueurs(items) {
+        var out = [];
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (!it.polygon || !it.polygon.length) continue;
+            try { out.push(window._createMarker(it)); } catch (e) {}
+        }
+        return out;
+    }
+    function remplirCluster(cluster, items) {
+        var m = marqueurs(items);
+        try { cluster.addLayers ? cluster.addLayers(m) : m.forEach(function (x) { cluster.addLayer(x); }); } catch (e) {}
+    }
+    /* Remplit `groupe` a son premier ajout a la carte (ou tout de suite s'il
+       y est deja). */
+    function aLaDemande(groupe, remplir) {
+        if (!groupe || groupe._pwaRempli) return;
+        var faire = function () {
+            if (groupe._pwaRempli) return;
+            groupe._pwaRempli = true;
+            groupe.off('add', faire);
+            remplir();
+        };
+        if (groupe._map) faire(); else groupe.on('add', faire);
+    }
+
+    var paresseux = function () {
+        var vrai = window.searchData;
+        if (!vrai || !vrai.length || typeof L === 'undefined') return orig.apply(this, arguments);
+        /* Meme toponymes, sans geometrie : la carte cree ses couches (une par
+           commune, "Tous", "Clusters") vides, avec ses propres reglages. */
+        var vides = vrai.map(function (it) {
+            var c = {}; for (var k in it) c[k] = it[k];
+            c.polygon = null; return c;
+        });
+        var r;
+        try { window.searchData = vides; r = orig.apply(this, arguments); }
+        finally { window.searchData = vrai; }
+
+        var parCommune = {};
+        for (var i = 0; i < vrai.length; i++) {
+            var cn = vrai[i].commune || 'Autre';
+            (parCommune[cn] = parCommune[cn] || []).push(vrai[i]);
+        }
+        aLaDemande(window._demoPolygonLayers, function () { remplirPolys(window._demoPolygonLayers, vrai); });
+        aLaDemande(window._demoClusterGroup, function () { remplirCluster(window._demoClusterGroup, vrai); });
+        var cg = window._demoCommuneGroups || {};
+        Object.keys(cg).forEach(function (cn) {
+            var g = cg[cn], items = parCommune[cn] || [];
+            aLaDemande(g, function () {
+                var cluster = null;
+                g.eachLayer(function (l) { if (!cluster && L.MarkerClusterGroup && l instanceof L.MarkerClusterGroup) cluster = l; });
+                remplirPolys(g, items);
+                if (cluster) remplirCluster(cluster, items);
+            });
+        });
+        console.log('[PWA] Toponymes construits a la demande (' + vrai.length + ' toponymes, ' + Object.keys(cg).length + ' communes)');
+        return r;
+    };
+    paresseux._pwaParesseux = true;
+    window.initMapFromSearchData = paresseux;
+})();
